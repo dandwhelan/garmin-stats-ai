@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-garmin
+  labels:
+    {{- include "garmin-grafana.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-garmin
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-garmin
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-influxdb
+          image: curlimages/curl:latest
+          command: ['sh', '-c']
+          args:
+            - |
+              until curl -f http://{{ .Release.Name }}-influxdb:8086/ping; do
+                echo "Waiting for InfluxDB..."
+                sleep 5
+              done
+              echo "InfluxDB is ready!"
+      containers:
+        - name: garmin-fetch
+          image: "{{ .Values.garmin.image.repository }}:{{ .Values.garmin.image.tag }}"
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-credentials
+          env:
+{{- range .Values.garmin.env }}
+            - name: {{ .name }}
+              value: {{ tpl .value $ | quote }}
+{{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.garmin.port }}
+          volumeMounts:
+            - name: garmin-tokens
+              mountPath: /home/appuser/.garminconnect
+      volumes:
+        - name: garmin-tokens
+{{- if .Values.garmin.tokens.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-tokens
+{{- else }}
+          emptyDir: {}
+{{- end }}

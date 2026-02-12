@@ -1,0 +1,35 @@
+--- START DEBUG 2026-02-11 ---
+DEBUG: Date 2026-02-11 Sleep Shape: (1, 14)
+DEBUG: Sleep Columns: ['sleepScore', 'sleepTimeSeconds', 'deepSleepSeconds', 'lightSleepSeconds', 'remSleepSeconds', 'awakeSleepSeconds', 'avgSleepStress', 'avgOvernightHrv', 'bodyBatteryChange', 'restingHeartRate', 'averageSpO2Value', 'awakeCount', 'restlessMomentsCount', 'averageRespirationValue']
+DEBUG: Processing field 'sleepScore': 82 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_sleepScore' -> 82.0
+DEBUG: Processing field 'sleepTimeSeconds': 27180 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_sleepTimeSeconds' -> 27180.0
+DEBUG: Processing field 'deepSleepSeconds': 3480 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_deepSleepSeconds' -> 3480.0
+DEBUG: Processing field 'lightSleepSeconds': 14940 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_lightSleepSeconds' -> 14940.0
+DEBUG: Processing field 'remSleepSeconds': 8760 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_remSleepSeconds' -> 8760.0
+DEBUG: Processing field 'awakeSleepSeconds': 420 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_awakeSleepSeconds' -> 420.0
+DEBUG: Processing field 'avgSleepStress': 20.0 (Type: <class 'numpy.float64'>)
+DEBUG: Saved 'sleep_avgSleepStress' -> 20.0
+DEBUG: Processing field 'avgOvernightHrv': 40.0 (Type: <class 'numpy.float64'>)
+DEBUG: Saved 'sleep_avgOvernightHrv' -> 40.0
+DEBUG: Processing field 'bodyBatteryChange': 46 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_bodyBatteryChange' -> 46.0
+DEBUG: Processing field 'restingHeartRate': 54 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'restingHeartRate' -> 54.0
+DEBUG: Processing field 'averageSpO2Value': None (Type: <class 'NoneType'>)
+DEBUG: Skipped 'averageSpO2Value' due to None or nan
+DEBUG: Processing field 'awakeCount': 1 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_awakeCount' -> 1.0
+DEBUG: Processing field 'restlessMomentsCount': 45 (Type: <class 'numpy.int64'>)
+DEBUG: Saved 'sleep_restlessMomentsCount' -> 45.0
+DEBUG: Processing field 'averageRespirationValue': 10.0 (Type: <class 'numpy.float64'>)
+DEBUG: Saved 'sleep_averageRespirationValue' -> 10.0
+DEBUG: JSON dump success. Length: 902
+DEBUG: Immediate Retrieval Keys: ['activeKilocalories', 'bodyBatteryAtWakeTime', 'bodyBatteryChargedValue', 'bodyBatteryDrainedValue', 'bodyBatteryHighestValue', 'bodyBatteryLowestValue', 'date', 'highStressPercentage', 'is_complete', 'maxHeartRate', 'minHeartRate', 'moderateIntensityMinutes', 'restingHeartRate', 'sleep_averageRespirationValue', 'sleep_avgOvernightHrv', 'sleep_avgSleepStress', 'sleep_awakeCount', 'sleep_awakeSleepSeconds', 'sleep_bodyBatteryChange', 'sleep_deepSleepSeconds', 'sleep_lightSleepSeconds', 'sleep_remSleepSeconds', 'sleep_restlessMomentsCount', 'sleep_sleepScore', 'sleep_sleepTimeSeconds', 'sleepingSeconds', 'stressPercentage', 'totalDistanceMeters', 'totalSteps', 'vigorousIntensityMinutes']
+DEBUG: SUCCESS! sleep_sleepScore found in DB.
+--- END DEBUG ---

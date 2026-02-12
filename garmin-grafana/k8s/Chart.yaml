@@ -1,0 +1,11 @@
+apiVersion: v2
+name: garmin-grafana
+description: Helm chart for the arpanghosh8453/garmin-grafana
+type: application
+version: 0.1.0
+appVersion: "0.3.0"
+dependencies:
+  - name: grafana
+    version: 9.2.7
+    repository: https://grafana.github.io/helm-charts
+    condition: grafana.enabled

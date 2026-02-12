@@ -1,0 +1,17 @@
+{{- if .Values.garmin.tokens.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-tokens
+  labels:
+    {{- include "garmin-grafana.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.garmin.tokens.persistence.size }}
+{{- with .Values.garmin.tokens.persistence.storageClass }}
+  storageClassName: {{ . }}
+{{- end }}
+{{- end }}

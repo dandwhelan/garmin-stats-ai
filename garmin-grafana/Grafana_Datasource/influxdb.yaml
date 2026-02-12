@@ -1,0 +1,15 @@
+apiVersion: 1
+datasources:
+  - name: Garmin-InfluxDB
+    uid: garmin_influxdb
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    user: influxdb_user
+    database: GarminStats
+    isDefault: true
+    editable: true
+    secureJsonData:
+      password: influxdb_secret_password
+    jsonData:
+      httpMode: GET
