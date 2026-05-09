@@ -98,6 +98,13 @@ class HealthAgent:
         # Tool definitions never change — build once
         self._tools_cache = get_all_tools_anthropic(self._tool_handler)
 
+        # Opus 4.7+ supports "adaptive" thinking; older models use explicit budget
+        self._thinking = (
+            {"type": "adaptive"}
+            if "opus-4-7" in settings.claude_model
+            else {"type": "enabled", "budget_tokens": 8000}
+        )
+
         # Default history for CLI use; web callers pass their own list
         self._history: list[dict] = []
         self._key_findings: list[str] = []
@@ -144,7 +151,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
@@ -202,7 +209,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 ) as stream:
                     # Stream text deltas as they arrive
                     for event in stream:
