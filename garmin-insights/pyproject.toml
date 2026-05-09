@@ -1,0 +1,28 @@
+[project]
+name = "garmin-insights"
+version = "0.2.0"
+description = "A conversational health insights agent for Garmin data with web interface"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "pandas>=2.2.0",
+    "scipy>=1.14.0",
+    "rich>=13.9.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "schedule>=1.2.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[project.scripts]
+garmin-insights = "garmin_insights.cli:main"
+garmin-web = "garmin_insights.web.app:run_server"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,348 @@
+"""Statistical analysis tools — correlation, trend detection, anomaly flagging.
+
+These run locally in Python (no LLM cost) and can also be invoked by the
+LLM agent as tools via the tool-calling interface.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+import difflib
+
+from garmin_insights.db.memory import MemoryStore
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ComparisonResult:
+    behavior: str
+    metric: str
+    mean_with: float | None
+    mean_without: float | None
+    n_with: int
+    n_without: int
+    difference: float | None
+    pct_change: float | None
+    p_value: float | None
+    significant: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "behavior": self.behavior,
+            "metric": self.metric,
+            "mean_with": round(self.mean_with, 2) if self.mean_with is not None else None,
+            "mean_without": round(self.mean_without, 2) if self.mean_without is not None else None,
+            "n_with": self.n_with,
+            "n_without": self.n_without,
+            "difference": round(self.difference, 2) if self.difference is not None else None,
+            "pct_change": round(self.pct_change, 1) if self.pct_change is not None else None,
+            "p_value": round(self.p_value, 4) if self.p_value is not None else None,
+            "significant": self.significant,
+        }
+
+
+@dataclass
+class TrendResult:
+    metric: str
+    direction: str  # "increasing", "decreasing", "stable"
+    slope_per_day: float
+    r_squared: float
+    days_analyzed: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "metric": self.metric,
+            "direction": self.direction,
+            "slope_per_day": round(self.slope_per_day, 3),
+            "r_squared": round(self.r_squared, 3),
+            "days_analyzed": self.days_analyzed,
+        }
+
+
+@dataclass
+class AnomalyResult:
+    metric: str
+    date: str
+    value: float
+    baseline_mean: float
+    baseline_std: float
+    z_score: float
+    direction: str  # "above" or "below"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "metric": self.metric,
+            "date": self.date,
+            "value": round(self.value, 2),
+            "baseline_mean": round(self.baseline_mean, 2),
+            "baseline_std": round(self.baseline_std, 2),
+            "z_score": round(self.z_score, 2),
+            "direction": self.direction,
+        }
+
+
+# Metrics that accumulate throughout the day — incomplete days give false readings
+_CUMULATIVE_METRICS = {
+    "totalSteps", "totalDistanceMeters", "activeKilocalories",
+    "moderateIntensityMinutes", "vigorousIntensityMinutes",
+    "stressPercentage", "highStressPercentage",
+    "bodyBatteryDrainedValue", "bodyBatteryChargedValue",
+    "sleepingSeconds",
+}
+
+
+class AnalysisEngine:
+    """Statistical analysis functions for health data."""
+
+    def __init__(self, memory: MemoryStore) -> None:
+        self._memory = memory
+
+    def _filter_summaries(self, summaries: list, metric: str) -> list:
+        """Remove incomplete days if the metric is cumulative."""
+        if metric in _CUMULATIVE_METRICS:
+            return [s for s in summaries if s.get("is_complete", True)]
+        return summaries
+
+    def find_matching_behavior(self, target: str, available_behaviors: list[str]) -> str | None:
+        """Find the best match for a behavior name (case-insensitive, fuzzy)."""
+        target_lower = target.lower()
+        
+        # 1. Exact match (case-insensitive)
+        for b in available_behaviors:
+            if b.lower() == target_lower:
+                return b
+                
+        # 2. Substring match (e.g. "caffeine" -> "Morning Caffeine")
+        for b in available_behaviors:
+            if target_lower in b.lower():
+                return b
+
+        # 3. Fuzzy match (spelling mistakes)
+        matches = difflib.get_close_matches(target, available_behaviors, n=1, cutoff=0.7)
+        return matches[0] if matches else None
+
+    def compare_metric_with_behavior(
+        self, behavior: str, metric: str, days: int = 90
+    ) -> ComparisonResult | None:
+        """Split days by a lifestyle behavior (on/off) and compare a metric's means.
+
+        Uses Welch's t-test for significance. Supports fuzzy matching for behavior names.
+        """
+        from datetime import datetime, timedelta
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start, today)
+        summaries = self._filter_summaries(summaries, metric)
+
+        vals_with: list[float] = []
+        vals_without: list[float] = []
+
+        # Auto-detect lag for sleep metrics
+        # Behavior on Day T affects Sleep on Day T+1
+        shift_days = 0
+        SLEEP_METRICS = {
+            "sleepScore", "deepSleepSeconds", "remSleepSeconds", "lightSleepSeconds",
+            "awakeSleepSeconds", "avgOvernightHrv", "lowestHeartRate",
+            "restStressDuration", "avgStressLevel"  # Sometimes overnight stress
+        }
+        if metric in SLEEP_METRICS:
+            shift_days = 1
+
+        # Find the canonical behavior name from the data to ensure consistency
+        # We scan all summaries to find available behaviors first
+        all_behaviors = set()
+        for s in summaries:
+            all_behaviors.update(s.get("lifestyle", {}).keys())
+        
+        canonical_behavior = self.find_matching_behavior(behavior, list(all_behaviors))
+        if not canonical_behavior:
+            logger.warning("Behavior '%s' not found in recent data (checked %d behaviors).", 
+                           behavior, len(all_behaviors))
+            return None
+
+        for i, s in enumerate(summaries):
+            # Apply shift: Behavior at [i] affects Metric at [i + shift]
+            metric_idx = i + shift_days
+            if metric_idx >= len(summaries):
+                continue
+                
+            metric_val = summaries[metric_idx].get(metric)
+            if metric_val is None:
+                continue
+            
+            lifestyle = s.get("lifestyle", {})
+            behavior_data = lifestyle.get(canonical_behavior)
+            
+            # Check if behavior was present (status=1)
+            if behavior_data and behavior_data.get("status") == 1:
+                vals_with.append(float(metric_val))
+            else:
+                vals_without.append(float(metric_val))
+
+        # We allow N=1 for descriptive stats, even if significance test is impossible
+        if len(vals_with) < 1 or len(vals_without) < 1:
+            return None # Cannot compare if never occurred or always occurred
+
+        if len(vals_with) < 2 or len(vals_without) < 2:
+             # Not enough for t-test, but return means for descriptive insight
+             diff = None
+             if vals_with and vals_without:
+                 diff = float(np.mean(vals_with) - np.mean(vals_without))
+                 
+             return ComparisonResult(
+                behavior=behavior, metric=metric,
+                mean_with=np.mean(vals_with) if vals_with else None,
+                mean_without=np.mean(vals_without) if vals_without else None,
+                n_with=len(vals_with), n_without=len(vals_without),
+                difference=diff,
+                pct_change=None, p_value=None, significant=False,
+            )
+
+        mean_w = float(np.mean(vals_with))
+        mean_wo = float(np.mean(vals_without))
+        diff = mean_w - mean_wo
+        pct = (diff / abs(mean_wo) * 100) if mean_wo != 0 else None
+
+        t_stat, p_val = stats.ttest_ind(vals_with, vals_without, equal_var=False)
+
+        return ComparisonResult(
+            behavior=behavior, metric=metric,
+            mean_with=mean_w, mean_without=mean_wo,
+            n_with=len(vals_with), n_without=len(vals_without),
+            difference=diff, pct_change=pct,
+            p_value=float(p_val), significant=bool(p_val < 0.05),
+        )
+
+    def detect_trend(
+        self, metric: str, days: int = 30
+    ) -> TrendResult | None:
+        """Detect a linear trend over a rolling window."""
+        from datetime import datetime, timedelta
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start, today)
+        summaries = self._filter_summaries(summaries, metric)
+
+        values = []
+        for s in summaries:
+            val = s.get(metric)
+            if val is not None:
+                values.append(float(val))
+
+        if len(values) < 3:
+            return None
+
+        x = np.arange(len(values), dtype=float)
+        slope, intercept, r_val, p_val, std_err = stats.linregress(x, values)
+
+        if abs(r_val) > 0.3:
+            direction = "increasing" if slope > 0 else "decreasing"
+        else:
+            direction = "stable"
+
+        return TrendResult(
+            metric=metric,
+            direction=direction,
+            slope_per_day=float(slope),
+            r_squared=float(r_val ** 2),
+            days_analyzed=len(values),
+        )
+
+    def detect_anomalies(
+        self, metric: str, days: int = 7, threshold_sigma: float = 1.5
+    ) -> list[AnomalyResult]:
+        """Flag recent values that deviate from the 30-day baseline."""
+        baseline = self._memory.get_baseline(metric)
+        if not baseline or baseline.get("avg_30d") is None or baseline.get("std_7d") is None:
+            return []
+
+        mean = baseline["avg_30d"]
+        std = baseline["std_7d"]
+        if std == 0 or std is None:
+            return []
+
+        from datetime import datetime, timedelta
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start, today)
+        summaries = self._filter_summaries(summaries, metric)
+
+        anomalies = []
+        for s in summaries:
+            val = s.get(metric)
+            if val is None:
+                continue
+            z = (float(val) - mean) / std
+            if abs(z) >= threshold_sigma:
+                anomalies.append(AnomalyResult(
+                    metric=metric,
+                    date=s["date"],
+                    value=float(val),
+                    baseline_mean=mean,
+                    baseline_std=std,
+                    z_score=z,
+                    direction="above" if z > 0 else "below",
+                ))
+
+        return anomalies
+
+    def compute_correlation_matrix(
+        self, metrics: list[str], days: int = 90
+    ) -> dict[str, Any]:
+        """Pearson correlation between multiple metrics."""
+        from datetime import datetime, timedelta
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start, today)
+        # Exclude incomplete days if any metric in the set is cumulative
+        if any(m in _CUMULATIVE_METRICS for m in metrics):
+            summaries = [s for s in summaries if s.get("is_complete", True)]
+
+        data: dict[str, list[float | None]] = {m: [] for m in metrics}
+        for s in summaries:
+            for m in metrics:
+                data[m].append(s.get(m))
+
+        df = pd.DataFrame(data).dropna()
+        if len(df) < 3:
+            return {"error": "Not enough data points", "n": len(df)}
+
+        corr = df.corr(method="pearson")
+        # Return only off-diagonal pairs
+        pairs = []
+        for i, m1 in enumerate(metrics):
+            for j, m2 in enumerate(metrics):
+                if i < j:
+                    r = corr.loc[m1, m2]
+                    pairs.append({
+                        "metric_a": m1,
+                        "metric_b": m2,
+                        "correlation": round(float(r), 3),
+                        "strength": (
+                            "strong" if abs(r) > 0.7
+                            else "moderate" if abs(r) > 0.4
+                            else "weak"
+                        ),
+                    })
+
+        return {"n_days": len(df), "pairs": pairs}
+
+    def run_full_anomaly_scan(self) -> list[AnomalyResult]:
+        """Run anomaly detection on all baselined metrics."""
+        baselines = self._memory.get_baselines()
+        all_anomalies = []
+        for metric in baselines:
+            anomalies = self.detect_anomalies(metric, days=3, threshold_sigma=1.5)
+            all_anomalies.extend(anomalies)
+        return all_anomalies

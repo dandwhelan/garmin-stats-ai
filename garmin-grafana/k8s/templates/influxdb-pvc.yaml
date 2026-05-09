@@ -1,0 +1,17 @@
+{{- if .Values.influxdb.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-influxdb
+  labels:
+    {{- include "garmin-grafana.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.influxdb.persistence.size }}
+{{- with .Values.influxdb.persistence.storageClass }}
+  storageClassName: {{ . }}
+{{- end }}
+{{- end }}
