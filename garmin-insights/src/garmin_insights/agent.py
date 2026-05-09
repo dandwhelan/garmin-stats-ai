@@ -117,6 +117,9 @@ class HealthAgent:
         except Exception as e:
             logger.warning("Cache refresh failed: %s", e)
 
+    # Anthropic caches at 1024-token boundaries; ~4096 chars is a safe proxy.
+    _CACHE_THRESHOLD_CHARS = 4096
+
     def _dispatch_tool_call(self, tool_use_block) -> str:
         """Execute a tool call and return the result string."""
         name = tool_use_block.name
@@ -134,6 +137,19 @@ class HealthAgent:
         except Exception as e:
             logger.error("Tool %s failed: %s", name, e)
             return json.dumps({"error": f"Tool {name} failed: {str(e)}"})
+
+    def _build_tool_result(self, tool_id: str, result: str) -> dict:
+        """Wrap a tool result, adding cache_control for large payloads.
+
+        Large results (e.g. 30-day daily metrics) are re-sent on every subsequent
+        round. Marking them ephemeral means Anthropic serves them from cache after
+        the first round, cutting repeat-round input costs by ~80% for those tokens.
+        """
+        if len(result) >= self._CACHE_THRESHOLD_CHARS:
+            content = [{"type": "text", "text": result, "cache_control": {"type": "ephemeral"}}]
+        else:
+            content = result
+        return {"type": "tool_result", "tool_use_id": tool_id, "content": content}
 
     # ------------------------------------------------------------------
     # Non-streaming chat (CLI / scan reports)
@@ -167,11 +183,9 @@ class HealthAgent:
                 tool_results = []
                 for block in response.content:
                     if block.type == "tool_use":
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": self._dispatch_tool_call(block),
-                        })
+                        tool_results.append(
+                            self._build_tool_result(block.id, self._dispatch_tool_call(block))
+                        )
                 history.append({"role": "user", "content": tool_results})
                 logger.info("Round %d: dispatched %d tool calls", round_num + 1, len(tool_results))
                 continue
@@ -234,11 +248,9 @@ class HealthAgent:
                 for block in final.content:
                     if block.type == "tool_use":
                         tool_names.append(block.name)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": self._dispatch_tool_call(block),
-                        })
+                        tool_results.append(
+                            self._build_tool_result(block.id, self._dispatch_tool_call(block))
+                        )
 
                 yield {"type": "tool", "names": tool_names}
                 history.append({"role": "user", "content": tool_results})
