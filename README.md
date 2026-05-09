@@ -28,15 +28,23 @@ pip install -e garmin-insights
 
 ## Configuration
 
-Create a `.env` file (or set environment variables):
+Create a `.env` file in the **root of the repository** (`garmin-stats-ai/.env`) — both modules look for it in the current working directory, so running commands from the repo root means they share it automatically:
+
+```
+garmin-stats-ai/
+├── .env          ← create this file here
+├── garmin-grafana/
+├── garmin-insights/
+└── README.md
+```
 
 ```bash
 # Garmin credentials
 GARMINCONNECT_EMAIL=your@email.com
 GARMINCONNECT_PASSWORD=yourpassword
 
-# Shared database path
-SQLITE_DB_PATH=/absolute/path/to/garmin.db
+# Shared database path (use an absolute path)
+SQLITE_DB_PATH=/home/yourname/garmin-stats-ai/garmin.db
 
 # Claude AI (for garmin-insights)
 ANTHROPIC_API_KEY=sk-ant-...
