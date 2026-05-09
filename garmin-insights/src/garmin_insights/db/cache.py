@@ -97,7 +97,7 @@ class CacheBuilder:
         df_tr = self._repo.query_training_readiness(date, date)
         if not df_tr.empty:
             row = df_tr.iloc[0]
-            for f in ["score", "level", "sleepScore", "recoveryTime", "hrvFactorPercent"]:
+            for f in ["score", "level", "sleep_score", "recovery_time", "hrv_factor_percent"]:
                 val = row.get(f)
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
                     summary[f"training_{f}"] = float(val) if isinstance(val, (int, float, np.number)) else val

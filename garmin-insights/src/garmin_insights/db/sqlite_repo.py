@@ -13,6 +13,45 @@ from garmin_insights.config import Settings
 
 logger = logging.getLogger(__name__)
 
+# The DB uses snake_case columns; these maps let callers use camelCase names.
+# query_daily_stats / query_sleep_summary alias DB columns back to camelCase.
+_DAILY_STATS_COL_MAP: dict[str, str] = {
+    "restingHeartRate": "resting_heart_rate",
+    "minHeartRate": "min_heart_rate",
+    "maxHeartRate": "max_heart_rate",
+    "stressPercentage": "stress_percentage",
+    "highStressPercentage": "high_stress_percentage",
+    "bodyBatteryHighestValue": "body_battery_highest_value",
+    "bodyBatteryLowestValue": "body_battery_lowest_value",
+    "bodyBatteryChargedValue": "body_battery_charged_value",
+    "bodyBatteryDrainedValue": "body_battery_drained_value",
+    "bodyBatteryAtWakeTime": "body_battery_at_wake_time",
+    "totalSteps": "total_steps",
+    "totalDistanceMeters": "total_distance_meters",
+    "activeKilocalories": "active_kilocalories",
+    "sleepingSeconds": "sleeping_seconds",
+    "moderateIntensityMinutes": "moderate_intensity_minutes",
+    "vigorousIntensityMinutes": "vigorous_intensity_minutes",
+    "averageSpo2": "average_spo2",
+}
+
+_SLEEP_COL_MAP: dict[str, str] = {
+    "sleepScore": "sleep_score",
+    "sleepTimeSeconds": "sleep_time_seconds",
+    "deepSleepSeconds": "deep_sleep_seconds",
+    "lightSleepSeconds": "light_sleep_seconds",
+    "remSleepSeconds": "rem_sleep_seconds",
+    "awakeSleepSeconds": "awake_sleep_seconds",
+    "avgSleepStress": "avg_sleep_stress",
+    "avgOvernightHrv": "avg_overnight_hrv",
+    "bodyBatteryChange": "body_battery_change",
+    "restingHeartRate": "resting_heart_rate",
+    "averageSpO2Value": "average_spo2_value",
+    "awakeCount": "awake_count",
+    "restlessMomentsCount": "restless_moments_count",
+    "averageRespirationValue": "average_respiration_value",
+}
+
 
 class SqliteRepo:
     """Wrapper around SQLite for Garmin data queries, replacing InfluxRepo."""
@@ -50,13 +89,13 @@ class SqliteRepo:
         return f"time >= '{start}T00:00:00' AND time <= '{end}T23:59:59'"
 
     @staticmethod
-    def _fields_clause(fields: list[str] | None, table: str) -> str:
-        if fields:
-            # Map InfluxDB field names to SQLite column names if they differ
-            # For now assuming 1:1 mapping based on sqlite_manager.py
-            # But we might need to be careful with casing.
-            return ", ".join(f'"{f}"' for f in fields)
-        return "*"
+    def _fields_clause(fields: list[str], col_map: dict[str, str]) -> str:
+        """Build SELECT column list, aliasing camelCase names back from snake_case DB columns."""
+        parts = []
+        for f in fields:
+            db_col = col_map.get(f, f)
+            parts.append(f"{db_col} AS {f}" if db_col != f else db_col)
+        return ", ".join(parts)
 
     # ------------------------------------------------------------------
     # Daily-granularity measurements
@@ -68,14 +107,7 @@ class SqliteRepo:
         fields: list[str] | None = None,
     ) -> pd.DataFrame:
         """DailyStats — RHR, stress, body battery, steps, etc."""
-        # Map fields if necessary, or assume caller knows SQLite columns
-        # The agent.py might request specific fields.
-        # Let's start with basic implementation.
-        cols = "*"
-        if fields:
-            # Simple sanitization/mapping could go here
-            cols = ", ".join(fields)
-        
+        cols = self._fields_clause(fields, _DAILY_STATS_COL_MAP) if fields else "*"
         q = f"SELECT {cols} FROM daily_stats WHERE {self._date_clause(start, end)}"
         return self._query(q)
 
@@ -86,9 +118,7 @@ class SqliteRepo:
         fields: list[str] | None = None,
     ) -> pd.DataFrame:
         """SleepSummary — per-night sleep quality metrics."""
-        cols = "*"
-        if fields:
-            cols = ", ".join(fields)
+        cols = self._fields_clause(fields, _SLEEP_COL_MAP) if fields else "*"
         q = f"SELECT {cols} FROM sleep_summary WHERE {self._date_clause(start, end)}"
         return self._query(q)
 
