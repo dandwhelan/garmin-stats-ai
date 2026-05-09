@@ -30,6 +30,7 @@ ______________________________________________________________________
 """
 print(banner_text)
 
+dotenv.load_dotenv()
 env_override = dotenv.load_dotenv("override-default-vars.env", override=True)
 if env_override:
     logging.warning("System ENV variables are overridden with override-default-vars.env")
