@@ -57,7 +57,11 @@ trends and correlations, and recall/save context from previous sessions.
 
 
 class HealthAgent:
-    """Conversational health insights agent powered by Claude."""
+    """Conversational health insights agent powered by Claude.
+
+    Conversation history can either be managed internally (CLI use) or
+    passed in by the caller (web use, where each session has its own list).
+    """
 
     def __init__(self, settings: Settings | None = None) -> None:
         if settings is None:
@@ -91,11 +95,12 @@ class HealthAgent:
             }
         ]
 
+        # Tool definitions never change — build once
+        self._tools_cache = get_all_tools_anthropic(self._tool_handler)
+
+        # Default history for CLI use; web callers pass their own list
         self._history: list[dict] = []
         self._key_findings: list[str] = []
-
-    def _get_tools(self) -> list[dict]:
-        return get_all_tools_anthropic(self._tool_handler)
 
     def ensure_cache_fresh(self, days: int = 90) -> None:
         """Ensure recent daily summaries and baselines are up to date."""
@@ -123,34 +128,32 @@ class HealthAgent:
             logger.error("Tool %s failed: %s", name, e)
             return json.dumps({"error": f"Tool {name} failed: {str(e)}"})
 
-    def _run_round(self) -> anthropic.types.Message:
-        return self._client.messages.create(
-            model=self._settings.claude_model,
-            max_tokens=8096,
-            system=self._system,
-            tools=self._get_tools(),
-            messages=self._history,
-            thinking={"type": "adaptive"},
-        )
-
-    def chat(self, user_message: str) -> str:
+    # ------------------------------------------------------------------
+    # Non-streaming chat (CLI / scan reports)
+    # ------------------------------------------------------------------
+    def chat(self, user_message: str, history: list[dict] | None = None) -> str:
         """Send a message and get a response, executing tool calls as needed."""
-        self._history.append({"role": "user", "content": user_message})
+        history = self._history if history is None else history
+        history.append({"role": "user", "content": user_message})
 
         for round_num in range(10):
             try:
-                response = self._run_round()
+                response = self._client.messages.create(
+                    model=self._settings.claude_model,
+                    max_tokens=8096,
+                    system=self._system,
+                    tools=self._tools_cache,
+                    messages=history,
+                    thinking={"type": "adaptive"},
+                )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
                 return f"Error communicating with Claude: {e}"
 
-            self._history.append({"role": "assistant", "content": response.content})
+            history.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "end_turn":
-                text_parts = [
-                    block.text for block in response.content
-                    if block.type == "text"
-                ]
+                text_parts = [b.text for b in response.content if b.type == "text"]
                 return "\n".join(text_parts) if text_parts else ""
 
             if response.stop_reason == "tool_use":
@@ -162,7 +165,7 @@ class HealthAgent:
                             "tool_use_id": block.id,
                             "content": self._dispatch_tool_call(block),
                         })
-                self._history.append({"role": "user", "content": tool_results})
+                history.append({"role": "user", "content": tool_results})
                 logger.info("Round %d: dispatched %d tool calls", round_num + 1, len(tool_results))
                 continue
 
@@ -170,35 +173,58 @@ class HealthAgent:
 
         return "Maximum tool-calling rounds reached. Please try a simpler question."
 
-    def chat_stream(self, user_message: str) -> Generator[str, None, None]:
-        """Stream a chat response, yielding text/status chunks.
+    # ------------------------------------------------------------------
+    # Streaming chat (web SSE)
+    # ------------------------------------------------------------------
+    def chat_stream(
+        self,
+        user_message: str,
+        history: list[dict] | None = None,
+    ) -> Generator[dict, None, None]:
+        """Stream a chat response, yielding events as they arrive.
 
-        Tool calls are dispatched synchronously between rounds.
-        Yields status messages during tool calls and final text when done.
+        Each yielded event is a dict with a `type` field:
+          - {"type": "text", "text": "..."} — incremental text from the model
+          - {"type": "tool", "names": ["foo", "bar"]} — tools being dispatched
+          - {"type": "error", "error": "..."} — error happened mid-stream
+
+        Tool calls are dispatched synchronously between rounds; the generator
+        keeps yielding once the next round begins streaming.
         """
-        self._history.append({"role": "user", "content": user_message})
+        history = self._history if history is None else history
+        history.append({"role": "user", "content": user_message})
 
         for round_num in range(10):
             try:
-                response = self._run_round()
+                with self._client.messages.stream(
+                    model=self._settings.claude_model,
+                    max_tokens=8096,
+                    system=self._system,
+                    tools=self._tools_cache,
+                    messages=history,
+                    thinking={"type": "adaptive"},
+                ) as stream:
+                    # Stream text deltas as they arrive
+                    for event in stream:
+                        if event.type == "content_block_delta":
+                            delta = event.delta
+                            if getattr(delta, "type", None) == "text_delta":
+                                yield {"type": "text", "text": delta.text}
+                    final = stream.get_final_message()
             except Exception as e:
-                yield f"\n\nError communicating with Claude: {e}"
+                logger.error("Stream error: %s", e)
+                yield {"type": "error", "error": str(e)}
                 return
 
-            self._history.append({"role": "assistant", "content": response.content})
+            history.append({"role": "assistant", "content": final.content})
 
-            if response.stop_reason == "end_turn":
-                text_parts = [
-                    block.text for block in response.content
-                    if block.type == "text"
-                ]
-                yield "\n".join(text_parts) if text_parts else ""
+            if final.stop_reason == "end_turn":
                 return
 
-            if response.stop_reason == "tool_use":
+            if final.stop_reason == "tool_use":
                 tool_results = []
                 tool_names = []
-                for block in response.content:
+                for block in final.content:
                     if block.type == "tool_use":
                         tool_names.append(block.name)
                         tool_results.append({
@@ -207,16 +233,19 @@ class HealthAgent:
                             "content": self._dispatch_tool_call(block),
                         })
 
-                yield f"_Querying: {', '.join(tool_names)}..._\n\n"
-                self._history.append({"role": "user", "content": tool_results})
+                yield {"type": "tool", "names": tool_names}
+                history.append({"role": "user", "content": tool_results})
                 logger.info("Stream round %d: dispatched %d tool calls",
                             round_num + 1, len(tool_results))
                 continue
 
             break
 
-        yield "Maximum tool-calling rounds reached. Please try a simpler question."
+        yield {"type": "text", "text": "\n\n_Maximum tool-calling rounds reached._"}
 
+    # ------------------------------------------------------------------
+    # Scan reports & session save
+    # ------------------------------------------------------------------
     def generate_scan_report(self, focus: str = "general", context: str = "") -> str:
         """Generate a proactive insight report without user prompting."""
         scan_prompts = {
@@ -263,18 +292,14 @@ class HealthAgent:
         else:
             prompt = base_prompt
 
-        saved_history = self._history
-        self._history = []
-        try:
-            result = self.chat(prompt)
-        finally:
-            self._history = saved_history
+        # Scans use a fresh transient history so they don't pollute conversations
+        scan_history: list[dict] = []
+        return self.chat(prompt, history=scan_history)
 
-        return result
-
-    def save_session(self) -> None:
-        """Save a summary of the current conversation session to memory."""
-        if len(self._history) < 2:
+    def save_session(self, history: list[dict] | None = None) -> None:
+        """Save a summary of a conversation to memory."""
+        history = self._history if history is None else history
+        if len(history) < 2:
             return
 
         summary_prompt = (
@@ -283,19 +308,20 @@ class HealthAgent:
             "This summary will be used to maintain context in the next session."
         )
 
-        saved_history = self._history.copy()
+        # Don't mutate the caller's history when generating the summary
+        summary_history = list(history)
         try:
-            summary = self.chat(summary_prompt)
+            summary = self.chat(summary_prompt, history=summary_history)
             self._memory.save_session(
                 summary=summary,
                 key_findings=self._key_findings,
             )
             logger.info("Session saved.")
-        finally:
-            self._history = saved_history
+        except Exception as e:
+            logger.warning("Failed to save session: %s", e)
 
     def reset_conversation(self) -> None:
-        """Clear the current conversation history."""
+        """Clear the agent's internal CLI conversation history."""
         self._history = []
         self._key_findings = []
 

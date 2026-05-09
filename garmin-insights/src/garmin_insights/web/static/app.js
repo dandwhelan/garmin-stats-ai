@@ -224,6 +224,10 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const resetBtn = document.getElementById('reset-btn');
 
+// Per-browser session id, persisted in localStorage
+const SESSION_KEY = 'garmin-chat-session';
+let sessionId = localStorage.getItem(SESSION_KEY) || null;
+
 // Auto-resize textarea
 chatInput.addEventListener('input', () => {
   chatInput.style.height = 'auto';
@@ -241,7 +245,13 @@ chatInput.addEventListener('keydown', e => {
 sendBtn.addEventListener('click', sendMessage);
 
 resetBtn.addEventListener('click', async () => {
-  await fetch('/api/chat/reset', { method: 'POST' });
+  if (sessionId) {
+    await fetch('/api/chat/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+  }
   chatMessages.innerHTML = `
     <div class="message assistant">
       <div class="message-bubble">
@@ -265,6 +275,7 @@ function addMessage(role, html, extraClass = '') {
 }
 
 function addTypingIndicator() {
+  if (document.getElementById('typing-indicator')) return;
   const div = document.createElement('div');
   div.className = 'message assistant';
   div.id = 'typing-indicator';
@@ -292,11 +303,19 @@ async function sendMessage() {
   let assistantDiv = null;
   let assistantContent = '';
 
+  function ensureAssistantBubble() {
+    if (!assistantDiv) {
+      removeTypingIndicator();
+      assistantDiv = addMessage('assistant', `<strong>Health Agent</strong><div class="md-content"></div>`);
+    }
+    return assistantDiv.querySelector('.md-content');
+  }
+
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, session_id: sessionId }),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -305,7 +324,7 @@ async function sendMessage() {
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
+    outer: while (true) {
       const { value, done } = await reader.read();
       if (done) break;
 
@@ -316,47 +335,46 @@ async function sendMessage() {
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const raw = line.slice(6).trim();
-        if (raw === '[DONE]') break;
+        if (raw === '[DONE]') break outer;
 
-        let payload;
-        try { payload = JSON.parse(raw); } catch { continue; }
+        let evt;
+        try { evt = JSON.parse(raw); } catch { continue; }
 
-        if (payload.error) {
-          removeTypingIndicator();
-          addMessage('assistant', `<strong>Health Agent</strong><p style="color:var(--red)">Error: ${escapeHtml(payload.error)}</p>`);
-          return;
+        switch (evt.type) {
+          case 'session':
+            // Server assigned (or confirmed) our session id
+            sessionId = evt.session_id;
+            localStorage.setItem(SESSION_KEY, sessionId);
+            break;
+          case 'tool':
+            // Tool dispatch — show a status message before the next round
+            const names = (evt.names || []).join(', ');
+            addMessage('assistant', `<em>Querying: ${escapeHtml(names)}…</em>`, 'tool-status');
+            // Reset the assistant bubble so the next round starts a new bubble
+            assistantDiv = null;
+            assistantContent = '';
+            addTypingIndicator();
+            break;
+          case 'text':
+            assistantContent += evt.text || '';
+            ensureAssistantBubble().innerHTML = marked.parse(assistantContent);
+            scrollToBottom();
+            break;
+          case 'error':
+            removeTypingIndicator();
+            addMessage('assistant', `<strong>Health Agent</strong><p style="color:var(--red)">Error: ${escapeHtml(evt.error)}</p>`);
+            break outer;
         }
-
-        const chunk = payload.text || '';
-        if (!chunk) continue;
-
-        // Tool status messages (italics lines)
-        if (chunk.startsWith('_') && chunk.includes('Querying:')) {
-          removeTypingIndicator();
-          addMessage('assistant', escapeHtml(chunk), 'tool-status');
-          addTypingIndicator();
-          continue;
-        }
-
-        // Regular text — build up the assistant bubble
-        removeTypingIndicator();
-        assistantContent += chunk;
-
-        if (!assistantDiv) {
-          assistantDiv = addMessage('assistant', `<strong>Health Agent</strong><div class="md-content"></div>`);
-        }
-        assistantDiv.querySelector('.md-content').innerHTML = marked.parse(assistantContent);
-        scrollToBottom();
       }
     }
   } catch (e) {
     removeTypingIndicator();
     addMessage('assistant', `<strong>Health Agent</strong><p style="color:var(--red)">Connection error: ${escapeHtml(e.message)}</p>`);
   } finally {
+    removeTypingIndicator();
     sendBtn.disabled = false;
     chatInput.disabled = false;
     chatInput.focus();
-    removeTypingIndicator();
   }
 }
 

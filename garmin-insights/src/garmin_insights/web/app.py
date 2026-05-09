@@ -1,38 +1,40 @@
-"""FastAPI web server — dashboard and streaming chat interface."""
+"""FastAPI web server — dashboard, per-session chat, and AI scans."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from garmin_insights.agent import HealthAgent
 from garmin_insights.config import get_settings
+from garmin_insights.web.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
-# Global agent instance — initialised on startup
+# Module-level singletons set up by the lifespan handler
 _agent: HealthAgent | None = None
+_sessions: SessionManager | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _agent
+    global _agent, _sessions
     settings = get_settings()
     logger.info("Initialising health agent...")
     _agent = HealthAgent(settings)
+    _sessions = SessionManager(ttl_seconds=3600, max_sessions=200)
     try:
         _agent.ensure_cache_fresh(days=90)
         logger.info("Agent ready.")
@@ -40,8 +42,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Cache refresh on startup failed: %s", e)
     yield
     if _agent:
-        logger.info("Saving session and closing agent...")
-        _agent.save_session()
+        logger.info("Closing agent...")
         _agent.close()
 
 
@@ -50,16 +51,20 @@ app = FastAPI(
     description="Personal health analytics dashboard with AI chat",
     lifespan=lifespan,
 )
-
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 # ------------------------------------------------------------------
-# Request / response models
+# Request models
 # ------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None
+
+
+class ResetRequest(BaseModel):
+    session_id: str
 
 
 class ScanRequest(BaseModel):
@@ -72,8 +77,7 @@ class ScanRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    html_path = _STATIC_DIR / "index.html"
-    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content=(_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
 @app.get("/api/health")
@@ -86,6 +90,7 @@ async def health_check():
             "status": "ok",
             "database": repo_health,
             "model": _agent._settings.claude_model,
+            "sessions": _sessions.stats() if _sessions else {},
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -94,7 +99,7 @@ async def health_check():
 
 @app.get("/api/dashboard")
 async def dashboard():
-    """Return the last 30 days of daily summaries for the dashboard."""
+    """Return the last 30 days of daily summaries plus baselines."""
     if _agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialised")
 
@@ -102,8 +107,11 @@ async def dashboard():
     start = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
 
     try:
-        summaries = _agent._memory.get_daily_summaries_range(start, end)
-        baselines = _agent._memory.get_baselines()
+        loop = asyncio.get_event_loop()
+        summaries = await loop.run_in_executor(
+            None, _agent._memory.get_daily_summaries_range, start, end
+        )
+        baselines = await loop.run_in_executor(None, _agent._memory.get_baselines)
         return {
             "summaries": summaries,
             "baselines": baselines,
@@ -116,26 +124,29 @@ async def dashboard():
 
 @app.post("/api/chat")
 async def chat(body: ChatRequest):
-    """Stream a chat response via Server-Sent Events."""
-    if _agent is None:
+    """Stream a chat response via Server-Sent Events with per-session history."""
+    if _agent is None or _sessions is None:
         raise HTTPException(status_code=503, detail="Agent not initialised")
 
+    session_id, history = _sessions.get_or_create(body.session_id)
+
     async def sse_generator() -> AsyncGenerator[str, None]:
+        # Send the session id first so the client can store it
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
+
         loop = asyncio.get_event_loop()
-        gen = _agent.chat_stream(body.message)
+        gen = _agent.chat_stream(body.message, history=history)
         sentinel = object()
 
         try:
             while True:
-                # Run the blocking next() call in a thread pool so we don't block the event loop
-                chunk = await loop.run_in_executor(None, next, gen, sentinel)
-                if chunk is sentinel:
+                event = await loop.run_in_executor(None, next, gen, sentinel)
+                if event is sentinel:
                     break
-                payload = json.dumps({"text": chunk})
-                yield f"data: {payload}\n\n"
+                yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
-            logger.error("Chat stream error: %s", e)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.exception("Chat stream failed")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         finally:
             yield "data: [DONE]\n\n"
 
@@ -145,17 +156,17 @@ async def chat(body: ChatRequest):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 
 
 @app.post("/api/chat/reset")
-async def chat_reset():
-    """Clear the current conversation history."""
-    if _agent is None:
+async def chat_reset(body: ResetRequest):
+    if _sessions is None:
         raise HTTPException(status_code=503, detail="Agent not initialised")
-    _agent.reset_conversation()
-    return {"reset": True}
+    _sessions.reset(body.session_id)
+    return {"reset": True, "session_id": body.session_id}
 
 
 @app.post("/api/scan")
