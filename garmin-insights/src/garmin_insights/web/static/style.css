@@ -200,6 +200,19 @@ nav {
 
 .chart-container { position: relative; height: 260px; }
 
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 32px;
+}
+
+.charts-row .chart-section { margin-bottom: 0; }
+
+@media (max-width: 880px) {
+  .charts-row { grid-template-columns: 1fr; }
+}
+
 /* Scan section */
 .scan-section {
   background: var(--surface);

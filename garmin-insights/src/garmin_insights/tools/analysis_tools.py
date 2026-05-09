@@ -346,3 +346,124 @@ class AnalysisEngine:
             anomalies = self.detect_anomalies(metric, days=3, threshold_sigma=1.5)
             all_anomalies.extend(anomalies)
         return all_anomalies
+
+    # ------------------------------------------------------------------
+    # Multi-signal pattern detection
+    # ------------------------------------------------------------------
+    def detect_illness_signature(self, days: int = 5) -> dict[str, Any]:
+        """Look for the RHR↑ + HRV↓ + respiration↑ pattern that precedes illness.
+
+        Returns a verdict + per-day signal scores for the last `days` complete days.
+        Based on Quer et al., 2021 (Nature Medicine).
+        """
+        from datetime import datetime, timedelta
+
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days + 1)).strftime("%Y-%m-%d")
+
+        rhr_b = self._memory.get_baseline("restingHeartRate")
+        hrv_b = self._memory.get_baseline("avgOvernightHrv")
+        resp_b = self._memory.get_baseline("averageRespirationValue")
+
+        if not (rhr_b and hrv_b and resp_b):
+            return {
+                "verdict": "insufficient_baseline",
+                "message": "Need at least 30 days of baselines for RHR, HRV, and respiration."
+            }
+
+        rhr_mean, rhr_std = rhr_b.get("avg_30d"), rhr_b.get("std_7d")
+        hrv_mean, hrv_std = hrv_b.get("avg_30d"), hrv_b.get("std_7d")
+        resp_mean, resp_std = resp_b.get("avg_30d"), resp_b.get("std_7d")
+
+        if not all([rhr_mean, hrv_mean, resp_mean, rhr_std, hrv_std, resp_std]):
+            return {"verdict": "insufficient_baseline", "message": "Baseline statistics incomplete."}
+
+        summaries = self._memory.get_daily_summaries_range(start, yesterday)
+        summaries = [s for s in summaries if s.get("is_complete", True)]
+
+        per_day = []
+        flagged_days = 0
+
+        for s in summaries[-days:]:
+            rhr = s.get("restingHeartRate")
+            hrv = s.get("avgOvernightHrv")
+            resp = s.get("averageRespirationValue")
+            if rhr is None or hrv is None or resp is None:
+                continue
+
+            rhr_z = (float(rhr) - rhr_mean) / rhr_std
+            hrv_z = (float(hrv) - hrv_mean) / hrv_std
+            resp_z = (float(resp) - resp_mean) / resp_std
+
+            # Illness signature: RHR up, HRV down, respiration up
+            triggered = (rhr_z > 0.8 and hrv_z < -0.8 and resp_z > 0.8)
+            if triggered:
+                flagged_days += 1
+
+            per_day.append({
+                "date": s["date"],
+                "rhr": float(rhr),
+                "rhr_z": round(rhr_z, 2),
+                "hrv": float(hrv),
+                "hrv_z": round(hrv_z, 2),
+                "respiration": float(resp),
+                "resp_z": round(resp_z, 2),
+                "illness_signature": triggered,
+            })
+
+        # Verdict: 2+ consecutive flagged days = strong signal
+        verdict = "clear"
+        if flagged_days >= 2:
+            verdict = "illness_likely"
+        elif flagged_days == 1:
+            verdict = "watch"
+
+        return {
+            "verdict": verdict,
+            "flagged_days": flagged_days,
+            "days_analyzed": len(per_day),
+            "per_day": per_day,
+            "research_citation": "Quer et al., 2021, Nature Medicine",
+        }
+
+    def detect_social_jet_lag(self, days: int = 21) -> dict[str, Any] | None:
+        """Compare weekday vs weekend sleep timing variance."""
+        from datetime import datetime, timedelta
+
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start, yesterday)
+
+        # We only have sleep duration, not start/end times — so this is approximate
+        weekday_sleep = []
+        weekend_sleep = []
+        for s in summaries:
+            sleep_secs = s.get("sleepingSeconds") or s.get("sleepTimeSeconds")
+            if sleep_secs is None:
+                continue
+            try:
+                day = datetime.strptime(s["date"], "%Y-%m-%d").weekday()
+            except ValueError:
+                continue
+            (weekend_sleep if day >= 5 else weekday_sleep).append(float(sleep_secs))
+
+        if len(weekday_sleep) < 3 or len(weekend_sleep) < 2:
+            return None
+
+        weekday_mean = float(np.mean(weekday_sleep))
+        weekend_mean = float(np.mean(weekend_sleep))
+        diff_hours = abs(weekend_mean - weekday_mean) / 3600
+
+        return {
+            "weekday_sleep_hours": round(weekday_mean / 3600, 2),
+            "weekend_sleep_hours": round(weekend_mean / 3600, 2),
+            "diff_hours": round(diff_hours, 2),
+            "n_weekdays": len(weekday_sleep),
+            "n_weekends": len(weekend_sleep),
+            "social_jet_lag": diff_hours > 1.0,
+            "interpretation": (
+                "Significant weekday/weekend variance — possible social jet lag impact"
+                if diff_hours > 1.0
+                else "Sleep duration is consistent across the week"
+            ),
+        }

@@ -57,7 +57,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>14-Day Trends</h2>
+        <h2>14-Day Trend</h2>
         <div class="chart-controls">
           <button class="chart-toggle active" data-metric="sleepScore">Sleep</button>
           <button class="chart-toggle" data-metric="restingHeartRate">RHR</button>
@@ -70,6 +70,46 @@
         <canvas id="trend-chart"></canvas>
       </div>
     </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Sleep Architecture (last 14 nights)</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="sleep-architecture-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Recovery Signals (normalized to 7-day baseline)</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="recovery-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Activity Intensity (minutes/day)</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="activity-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Stress vs Body Battery</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="stress-chart"></canvas>
+        </div>
+      </section>
+    </div>
 
     <section class="scan-section">
       <h2>AI Health Scan</h2>

@@ -396,6 +396,319 @@ INSIGHT_RULES: list[InsightRule] = [
             "13-23% of total sleep as deep sleep. Deficit impairs next-day cognition."
         ),
     ),
+
+    # ===== MULTI-SIGNAL ILLNESS DETECTION =====
+    InsightRule(
+        name="illness_signature_multisignal",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "Multi-signal illness pattern detected: RHR elevated {rhr_z:+.1f}σ, "
+            "HRV depressed {hrv_z:+.1f}σ, respiration {resp_z:+.1f}σ from baseline."
+        ),
+        research_citation="Quer et al., 2021, Nature Medicine",
+        research_summary=(
+            "The combination of elevated RHR (>3 bpm above baseline), depressed HRV "
+            "(>10% below baseline), and elevated respiration rate (>1 br/min above) "
+            "for 2+ consecutive days is 80%+ specific for impending illness — including "
+            "respiratory infection — 1-3 days before symptom onset. Single-signal anomalies "
+            "are far less specific."
+        ),
+    ),
+
+    # ===== RESPIRATION RATE AS EARLY WARNING =====
+    InsightRule(
+        name="elevated_respiration_rate",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="averageRespirationValue",
+        comparison_metric="restingHeartRate",
+        direction="higher_is_worse",
+        description_template=(
+            "Overnight respiration rate is {value:.1f} br/min — "
+            "{z_score:+.1f}σ above your baseline of {baseline_mean:.1f}."
+        ),
+        research_citation="Natarajan et al., 2020, BMJ Open",
+        research_summary=(
+            "Resting respiration rate above 16 br/min, or >1 br/min above personal "
+            "baseline for 2+ nights, is a sensitive marker for systemic inflammation, "
+            "infection, or overtraining. It often rises before subjective symptoms appear "
+            "and tracks alongside HRV decline."
+        ),
+    ),
+
+    # ===== ACUTE:CHRONIC WORKLOAD RATIO =====
+    InsightRule(
+        name="acwr_injury_risk",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="acwr_factor_percent",
+        comparison_metric=None,
+        direction="higher_is_worse",
+        description_template=(
+            "Your acute:chronic workload ratio is in the danger zone "
+            "(ACWR factor {value:.0f}%) — recent training load is outpacing "
+            "your fitness base."
+        ),
+        research_citation="Gabbett, 2016, British Journal of Sports Medicine",
+        research_summary=(
+            "Athletes whose 7-day training load exceeds 1.5× their 28-day average have "
+            "a 4-5× higher injury risk in the following 1-2 weeks. The 'sweet spot' is "
+            "an ACWR between 0.8 and 1.3. Garmin reports this as a percentage factor in "
+            "training readiness."
+        ),
+    ),
+
+    # ===== OVERTRAINING SIGNATURE =====
+    InsightRule(
+        name="overreaching_pattern",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="avgOvernightHrv",
+        comparison_metric="acute_load",
+        direction="lower_is_worse",
+        description_template=(
+            "Overreaching signature: training load rising while HRV trending "
+            "{hrv_direction} (slope {slope_per_day:+.1f} ms/day over {days} days)."
+        ),
+        research_citation="Bellenger et al., 2016, Sports Medicine",
+        research_summary=(
+            "When training load is rising but HRV is dropping or flat over 7+ days, "
+            "the body is failing to absorb the training stimulus. Continuing in this state "
+            "leads to non-functional overreaching, performance decline, and elevated injury "
+            "risk. The fix is a 3-7 day deload, not more training."
+        ),
+    ),
+
+    # ===== SOCIAL JET LAG =====
+    InsightRule(
+        name="social_jet_lag",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="sleep_midpoint_variance",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "Sleep midpoint varies by {variance_hours:.1f}h between weekdays and "
+            "weekends — equivalent to flying across {variance_hours:.0f} timezones weekly."
+        ),
+        research_citation="Wittmann et al., 2006, Chronobiology International",
+        research_summary=(
+            "A weekday-weekend bedtime drift of more than 1 hour ('social jet lag') "
+            "is associated with metabolic dysregulation, weight gain, depression, and "
+            "reduced cognitive performance — independent of total sleep duration. "
+            "Consistency of sleep timing matters as much as quantity."
+        ),
+    ),
+
+    # ===== REM SLEEP DRIFT =====
+    InsightRule(
+        name="rem_sleep_decline",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="remSleepSeconds",
+        comparison_metric="sleepScore",
+        direction="lower_is_worse",
+        description_template=(
+            "REM sleep is trending down — averaging {pct_of_total:.0f}% of total "
+            "sleep vs the recommended 20-25%."
+        ),
+        research_citation="Leary et al., 2020, JAMA Neurology",
+        research_summary=(
+            "REM sleep is essential for emotional processing, memory consolidation, and "
+            "cognitive performance. A 5%+ drop in REM percentage over 2 weeks is associated "
+            "with increased mortality risk and impaired mood. Common causes include alcohol, "
+            "late meals, SSRIs, and inconsistent sleep timing."
+        ),
+    ),
+
+    # ===== STRESS RECOVERY (BODY BATTERY FLOOR) =====
+    InsightRule(
+        name="body_battery_floor_decline",
+        category="stress",
+        trigger_behavior=None,
+        trigger_metric="bodyBatteryLowestValue",
+        comparison_metric="stressPercentage",
+        direction="lower_is_worse",
+        description_template=(
+            "Body battery is bottoming out at {value:.0f} (baseline: "
+            "{baseline_mean:.0f}) — recovery isn't keeping up with daily demands."
+        ),
+        research_citation="McEwen, 2007, Physiological Reviews",
+        research_summary=(
+            "A persistently low body battery floor (lowest-of-day value below 20) "
+            "indicates allostatic load: cumulative stress that recovery sleep is failing "
+            "to clear. Sustained for 2+ weeks, this predicts burnout, immune suppression, "
+            "and HPA-axis dysregulation."
+        ),
+    ),
+
+    # ===== AEROBIC TRAINING DISTRIBUTION =====
+    InsightRule(
+        name="grey_zone_training",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="hr_time_in_zone_3",
+        comparison_metric="vo2_max_value",
+        direction="correlation",
+        description_template=(
+            "{pct_zone3:.0f}% of activity time is in HR zone 3 (tempo) "
+            "vs only {pct_zone2:.0f}% in zone 2 — classic 'grey zone' pattern."
+        ),
+        research_citation="Seiler, 2010, International Journal of Sports Physiology",
+        research_summary=(
+            "Polarized training (~80% easy/Z1-Z2, ~20% hard/Z4-Z5) consistently "
+            "outperforms 'grey zone' training (mostly Z3). Excessive Z3 produces fatigue "
+            "without optimal aerobic adaptation, plateauing VO2 max and increasing injury risk."
+        ),
+    ),
+
+    # ===== HYDRATION + RHR =====
+    InsightRule(
+        name="hydration_rhr_impact",
+        category="lifestyle",
+        trigger_behavior=None,
+        trigger_metric="hydration",
+        comparison_metric="restingHeartRate",
+        direction="correlation",
+        description_template=(
+            "Lower hydration days show RHR of {mean_low:.0f} bpm vs "
+            "{mean_high:.0f} bpm on well-hydrated days."
+        ),
+        research_citation="Watso & Farquhar, 2019, Nutrients",
+        research_summary=(
+            "Even mild dehydration (1-2% body mass loss) elevates resting heart rate "
+            "by 3-5 bpm and reduces cardiovascular efficiency. Chronic underhydration "
+            "is associated with elevated cortisol and lower HRV."
+        ),
+    ),
+
+    # ===== VO2 MAX TRAJECTORY =====
+    InsightRule(
+        name="vo2_max_plateau",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="vo2_max_value",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "VO2 max has been flat at {value:.1f} for {days_analyzed} days — "
+            "your current training stimulus may have reached its ceiling."
+        ),
+        research_citation="Bacon et al., 2013, PLOS ONE (meta-analysis)",
+        research_summary=(
+            "VO2 max typically plateaus 3-4 months into a consistent training routine. "
+            "Breaking through requires a new stimulus: structured intervals, increased "
+            "volume, or strength training. Continued same-stimulus training won't restart "
+            "adaptation."
+        ),
+    ),
+
+    # ===== STEPS-STRESS INVERSE COUPLING =====
+    InsightRule(
+        name="sedentary_stress_coupling",
+        category="stress",
+        trigger_behavior=None,
+        trigger_metric="totalSteps",
+        comparison_metric="stressPercentage",
+        direction="correlation",
+        description_template=(
+            "Lower-step days correlate with {pct_change:+.0f}% higher stress — "
+            "stillness, not just absence of exercise, is loading you up."
+        ),
+        research_citation="Choi et al., 2019, JAMA Internal Medicine",
+        research_summary=(
+            "Days with fewer than 5,000 steps show measurably higher physiological stress "
+            "markers — independent of formal exercise. The mechanism is reduced parasympathetic "
+            "tone from sedentary behavior; brief walking breaks every 1-2 hours partially restore it."
+        ),
+    ),
+
+    # ===== SLEEP FRAGMENTATION =====
+    InsightRule(
+        name="sleep_fragmentation_hrv",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="awakeCount",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "{value:.0f} awakenings per night ({restless_moments:.0f} restless moments) "
+            "are reducing your overnight HRV recovery."
+        ),
+        research_citation="Stein & Pu, 2012, Sleep Medicine Reviews",
+        research_summary=(
+            "Sleep fragmentation (frequent awakenings or restless moments) prevents the "
+            "normal HRV rebound that occurs in deep and REM sleep. Even with adequate total "
+            "sleep duration, fragmented sleep produces next-day HRV 10-15% below intact sleep."
+        ),
+    ),
+
+    # ===== MORNING HR REBOUND =====
+    InsightRule(
+        name="cardio_reserve_drift",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate",
+        comparison_metric="vo2_max_value",
+        direction="higher_is_worse",
+        description_template=(
+            "Resting HR has drifted up {bpm_change:+.0f} bpm over {days_analyzed} days "
+            "while VO2 max is unchanged — possible cardiovascular reserve loss."
+        ),
+        research_citation="Cooney et al., 2010, American Journal of Cardiology",
+        research_summary=(
+            "An RHR drift upward of 3-5 bpm over weeks, without a matching VO2 max "
+            "change, is an early signal of reduced cardiovascular fitness, accumulated "
+            "fatigue, or systemic inflammation. RHR is one of the most prognostic vital "
+            "signs for all-cause mortality."
+        ),
+    ),
+
+    # ===== BODY COMPOSITION + HRV =====
+    InsightRule(
+        name="visceral_fat_hrv",
+        category="body_comp",
+        trigger_behavior=None,
+        trigger_metric="visceral_fat",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "Visceral fat trending up correlates with HRV trending down "
+            "(r={correlation:.2f} over {days_analyzed} days)."
+        ),
+        research_citation="Felber Dietrich et al., 2006, European Heart Journal",
+        research_summary=(
+            "Visceral adipose tissue is metabolically active and directly suppresses "
+            "parasympathetic (vagal) tone, lowering HRV. The relationship is dose-dependent "
+            "and reversible — every 1% reduction in visceral fat produces measurable HRV "
+            "improvements within 6-8 weeks."
+        ),
+    ),
+
+    # ===== SPO2 + SLEEP DISORDER =====
+    InsightRule(
+        name="overnight_spo2_disordered_breathing",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="lowest_spo2_value",
+        comparison_metric="awakeCount",
+        direction="lower_is_worse",
+        description_template=(
+            "Overnight SpO2 dropped to {value:.0f}% with {awake_count:.0f} awakenings — "
+            "consider screening for sleep-disordered breathing."
+        ),
+        research_citation="Berry et al., 2017, AASM Clinical Practice Guidelines",
+        research_summary=(
+            "Sustained overnight SpO2 below 92%, especially combined with frequent "
+            "awakenings, is suggestive of sleep apnea or other disordered breathing. "
+            "These patterns are strongly associated with daytime fatigue, hypertension, "
+            "and elevated cardiovascular risk if left unaddressed."
+        ),
+    ),
 ]
 
 
