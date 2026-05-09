@@ -71,6 +71,10 @@ class MemoryStore:
         conn.row_factory = sqlite3.Row  # Access columns by name
         return conn
 
+    def close(self) -> None:
+        """No-op — connections are short-lived per query."""
+        pass
+
     def initialise_schema(self) -> None:
         """Create tables if they don't exist."""
         conn = self._get_conn()
