@@ -139,6 +139,16 @@ class QueryToolHandler:
         result = self._analysis.compute_correlation_matrix(metrics, days)
         return json.dumps(result, default=str)
 
+    def detect_illness_signature(self, days: int = 5) -> str:
+        result = self._analysis.detect_illness_signature(days)
+        return json.dumps(result, default=str)
+
+    def detect_social_jet_lag(self, days: int = 21) -> str:
+        result = self._analysis.detect_social_jet_lag(days)
+        if result is None:
+            return json.dumps({"message": "Not enough data to compute sleep timing variance"})
+        return json.dumps(result, default=str)
+
     # ------------------------------------------------------------------
     # Memory tools
     # ------------------------------------------------------------------
@@ -358,6 +368,43 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                     },
                 },
                 "required": ["metrics"],
+            },
+        },
+        {
+            "name": "detect_illness_signature",
+            "description": (
+                "Check the last several days for the multi-signal illness pattern: "
+                "elevated resting heart rate + depressed overnight HRV + elevated respiration "
+                "rate (Quer et al. 2021). Returns a verdict ('clear', 'watch', or 'illness_likely') "
+                "with per-day z-scores. Use this for 'am I getting sick?' or recovery questions."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of recent days to scan. Default 5.",
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "detect_social_jet_lag",
+            "description": (
+                "Compare weekday vs weekend sleep duration to detect circadian misalignment "
+                "('social jet lag'). Returns mean sleep duration for each and the variance "
+                "in hours. Variance >1h is considered metabolically significant."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of recent days to analyse. Default 21.",
+                    },
+                },
+                "required": [],
             },
         },
         {

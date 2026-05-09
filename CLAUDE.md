@@ -41,7 +41,7 @@ garmin-insights status        # check DB + API connectivity
 | File | Purpose |
 |------|---------|
 | `garmin-insights/src/garmin_insights/agent.py` | Core Claude agent — tool-calling loop, prompt caching, streaming |
-| `garmin-insights/src/garmin_insights/tools/query_tools.py` | 15 tool definitions (Anthropic JSON schema) + handler methods |
+| `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (Anthropic JSON schema) + handler methods |
 | `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard, scan endpoints |
 | `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js` |
 | `garmin-insights/src/garmin_insights/db/sqlite_repo.py` | SQLite query layer (pandas DataFrames) |
@@ -114,4 +114,4 @@ All data lives in a single `garmin.db`. Key tables:
 
 - Today's data is always marked `is_complete=False` — the agent is instructed not to compare cumulative metrics (steps, calories) for today against baselines
 - The cache is refreshed on agent startup and every 5 minutes via the dashboard endpoint
-- The medical knowledge base (`knowledge/medical.py`) contains 18 evidence-backed insight rules injected into the system prompt
+- The medical knowledge base (`knowledge/medical.py`) contains 34 evidence-backed insight rules injected into the system prompt (covers sleep, lifestyle, recovery, training load, illness detection, body composition)

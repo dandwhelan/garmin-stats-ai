@@ -166,6 +166,192 @@ function renderChart(summaries, metric) {
   });
 }
 
+// ---- Auxiliary charts ----
+const auxCharts = {};
+
+function destroyAux(key) {
+  if (auxCharts[key]) {
+    auxCharts[key].destroy();
+    delete auxCharts[key];
+  }
+}
+
+function lastNDays(summaries, n) {
+  return [...summaries]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-n);
+}
+
+function commonScales(yLabel = '') {
+  return {
+    x: {
+      ticks: { color: '#8892a4', maxTicksLimit: 7, maxRotation: 0 },
+      grid: { color: '#2e3350' },
+    },
+    y: {
+      ticks: { color: '#8892a4' },
+      grid: { color: '#2e3350' },
+      title: yLabel ? { display: true, text: yLabel, color: '#8892a4' } : { display: false },
+    },
+  };
+}
+
+function commonPlugins(extra = {}) {
+  return {
+    legend: { labels: { color: '#8892a4', boxWidth: 12, padding: 10 } },
+    tooltip: {
+      backgroundColor: '#22263a',
+      borderColor: '#2e3350',
+      borderWidth: 1,
+      titleColor: '#e2e8f0',
+      bodyColor: '#8892a4',
+    },
+    ...extra,
+  };
+}
+
+function renderSleepArchitecture(summaries) {
+  const recent = lastNDays(summaries, 14);
+  const labels = recent.map(s => s.date.slice(5));
+  const toHours = secs => secs == null ? null : +(secs / 3600).toFixed(2);
+
+  destroyAux('sleep');
+  auxCharts.sleep = new Chart(document.getElementById('sleep-architecture-chart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Deep',  data: recent.map(s => toHours(s.deepSleepSeconds)),  backgroundColor: '#4f9cf9' },
+        { label: 'REM',   data: recent.map(s => toHours(s.remSleepSeconds)),   backgroundColor: '#7c6af7' },
+        { label: 'Light', data: recent.map(s => toHours(s.lightSleepSeconds)), backgroundColor: '#34d399' },
+        { label: 'Awake', data: recent.map(s => toHours(s.awakeSleepSeconds)), backgroundColor: '#f87171' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, ...commonScales().x },
+        y: { stacked: true, ...commonScales('hours').y },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderRecoveryChart(summaries, baselines) {
+  const recent = lastNDays(summaries, 14);
+  const labels = recent.map(s => s.date.slice(5));
+
+  // Normalize each metric to % of 7-day baseline so they share a Y scale
+  function normalized(metric) {
+    const base = baselines?.[metric]?.avg_7d;
+    if (!base) return recent.map(() => null);
+    return recent.map(s => s[metric] != null ? +((s[metric] / base) * 100).toFixed(1) : null);
+  }
+
+  destroyAux('recovery');
+  auxCharts.recovery = new Chart(document.getElementById('recovery-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Sleep score', data: normalized('sleepScore'),       borderColor: '#4f9cf9', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'HRV',         data: normalized('avgOvernightHrv'),  borderColor: '#34d399', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'RHR (inv)',   data: normalized('restingHeartRate').map(v => v == null ? null : 200 - v), borderColor: '#fbbf24', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, borderDash: [4, 4] },
+        { label: 'Body Battery',data: normalized('bodyBatteryAtWakeTime'), borderColor: '#7c6af7', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: commonScales('% of baseline'),
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a',
+          borderColor: '#2e3350',
+          borderWidth: 1,
+          titleColor: '#e2e8f0',
+          bodyColor: '#8892a4',
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y + '%'}`,
+          },
+        },
+      }),
+    },
+  });
+}
+
+function renderActivityChart(summaries) {
+  const recent = lastNDays(summaries, 14);
+  const labels = recent.map(s => s.date.slice(5));
+
+  destroyAux('activity');
+  auxCharts.activity = new Chart(document.getElementById('activity-chart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Moderate', data: recent.map(s => s.moderateIntensityMinutes ?? 0), backgroundColor: '#34d399' },
+        { label: 'Vigorous', data: recent.map(s => s.vigorousIntensityMinutes ?? 0), backgroundColor: '#f87171' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, ...commonScales().x },
+        y: { stacked: true, ...commonScales('minutes').y },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderStressChart(summaries) {
+  const recent = lastNDays(summaries, 14);
+  const labels = recent.map(s => s.date.slice(5));
+
+  destroyAux('stress');
+  auxCharts.stress = new Chart(document.getElementById('stress-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Stress %',
+          data: recent.map(s => s.stressPercentage ?? null),
+          borderColor: '#f87171',
+          backgroundColor: 'rgba(248,113,113,0.1)',
+          tension: 0.3,
+          yAxisID: 'y',
+          spanGaps: true,
+        },
+        {
+          label: 'Body Battery (peak)',
+          data: recent.map(s => s.bodyBatteryHighestValue ?? null),
+          borderColor: '#34d399',
+          backgroundColor: 'rgba(52,211,153,0.1)',
+          tension: 0.3,
+          yAxisID: 'y1',
+          spanGaps: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('stress %').y, position: 'left', min: 0, max: 100 },
+        y1: { ...commonScales('battery').y, position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
 async function loadDashboard() {
   try {
     const res = await fetch('/api/dashboard');
@@ -174,6 +360,10 @@ async function loadDashboard() {
     const { summaries, baselines } = dashboardData;
     renderCards(summaries, baselines);
     renderChart(summaries, activeMetric);
+    renderSleepArchitecture(summaries);
+    renderRecoveryChart(summaries, baselines);
+    renderActivityChart(summaries);
+    renderStressChart(summaries);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
