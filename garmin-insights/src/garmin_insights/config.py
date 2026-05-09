@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Claude / Anthropic
     anthropic_api_key: str = ""
-    claude_model: str = "claude-opus-4-7"
+    claude_model: str = "claude-sonnet-4-6"
 
     # Web server
     web_host: str = "0.0.0.0"

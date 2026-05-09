@@ -38,6 +38,10 @@ let chartInstance = null;
 let dashboardData = null;
 let activeMetric = 'sleepScore';
 
+// Date range state — null means "use default" (30d)
+let selectedStart = null;
+let selectedEnd = null;
+
 const METRIC_CONFIG = {
   sleepScore:            { label: 'Sleep Score',        unit: '',    decimals: 0, good: v => v >= 80, warn: v => v >= 60 },
   restingHeartRate:      { label: 'Resting HR',         unit: ' bpm', decimals: 0, good: v => v <= 58, warn: v => v <= 65 },
@@ -106,7 +110,6 @@ function renderCards(summaries, baselines) {
 function getMetricSeries(summaries, key) {
   return [...summaries]
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-14)
     .map(s => ({ x: s.date, y: s[key] ?? null }));
 }
 
@@ -211,7 +214,7 @@ function commonPlugins(extra = {}) {
 }
 
 function renderSleepArchitecture(summaries) {
-  const recent = lastNDays(summaries, 14);
+  const recent = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const labels = recent.map(s => s.date.slice(5));
   const toHours = secs => secs == null ? null : +(secs / 3600).toFixed(2);
 
@@ -240,7 +243,7 @@ function renderSleepArchitecture(summaries) {
 }
 
 function renderRecoveryChart(summaries, baselines) {
-  const recent = lastNDays(summaries, 14);
+  const recent = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const labels = recent.map(s => s.date.slice(5));
 
   // Normalize each metric to % of 7-day baseline so they share a Y scale
@@ -283,7 +286,7 @@ function renderRecoveryChart(summaries, baselines) {
 }
 
 function renderActivityChart(summaries) {
-  const recent = lastNDays(summaries, 14);
+  const recent = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const labels = recent.map(s => s.date.slice(5));
 
   destroyAux('activity');
@@ -309,7 +312,7 @@ function renderActivityChart(summaries) {
 }
 
 function renderStressChart(summaries) {
-  const recent = lastNDays(summaries, 14);
+  const recent = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const labels = recent.map(s => s.date.slice(5));
 
   destroyAux('stress');
@@ -352,12 +355,31 @@ function renderStressChart(summaries) {
   });
 }
 
+function buildDashboardUrl() {
+  const params = new URLSearchParams();
+  if (selectedStart) params.set('start', selectedStart);
+  if (selectedEnd) params.set('end', selectedEnd);
+  const qs = params.toString();
+  return qs ? `/api/dashboard?${qs}` : '/api/dashboard';
+}
+
+function updateChartTitles(dateRange) {
+  const { start, end } = dateRange;
+  const days = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
+  const label = selectedStart ? `${start} → ${end}` : `${days}-Day`;
+  const title = document.getElementById('trend-chart-title');
+  if (title) title.textContent = `${label} Trend`;
+  const sleepTitle = document.getElementById('sleep-chart-title');
+  if (sleepTitle) sleepTitle.textContent = `Sleep Architecture (${label})`;
+}
+
 async function loadDashboard() {
   try {
-    const res = await fetch('/api/dashboard');
+    const res = await fetch(buildDashboardUrl());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     dashboardData = await res.json();
-    const { summaries, baselines } = dashboardData;
+    const { summaries, baselines, date_range } = dashboardData;
+    updateChartTitles(date_range);
     renderCards(summaries, baselines);
     renderChart(summaries, activeMetric);
     renderSleepArchitecture(summaries);
@@ -379,23 +401,97 @@ document.querySelectorAll('.chart-toggle').forEach(btn => {
   });
 });
 
+// ---- Date range controls ----
+const dateStartInput = document.getElementById('date-start');
+const dateEndInput = document.getElementById('date-end');
+
+function setActivePreset(days) {
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.days === String(days));
+  });
+}
+
+function applyPreset(days) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - (days - 1));
+  selectedEnd = end.toISOString().slice(0, 10);
+  selectedStart = start.toISOString().slice(0, 10);
+  dateStartInput.value = selectedStart;
+  dateEndInput.value = selectedEnd;
+  setActivePreset(days);
+  loadDashboard();
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyPreset(Number(btn.dataset.days)));
+});
+
+document.getElementById('date-apply-btn').addEventListener('click', () => {
+  const s = dateStartInput.value;
+  const e = dateEndInput.value;
+  if (!s || !e) return;
+  if (s > e) { alert('Start date must be before end date.'); return; }
+  selectedStart = s;
+  selectedEnd = e;
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  loadDashboard();
+});
+
+// Initialise date inputs with default 30d range
+(function initDateInputs() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 29);
+  dateStartInput.value = start.toISOString().slice(0, 10);
+  dateEndInput.value = end.toISOString().slice(0, 10);
+  dateStartInput.max = end.toISOString().slice(0, 10);
+  dateEndInput.max = end.toISOString().slice(0, 10);
+})();
+
 loadDashboard();
 setInterval(loadDashboard, 5 * 60_000); // refresh every 5 min
 
 // ---- AI Scan ----
+const scanDateStart = document.getElementById('scan-date-start');
+const scanDateEnd = document.getElementById('scan-date-end');
+const scanDateClear = document.getElementById('scan-date-clear');
+
+if (scanDateClear) {
+  scanDateClear.addEventListener('click', () => {
+    scanDateStart.value = '';
+    scanDateEnd.value = '';
+  });
+}
+
 document.querySelectorAll('.scan-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const focus = btn.dataset.focus;
     const output = document.getElementById('scan-output');
     document.querySelectorAll('.scan-btn').forEach(b => b.disabled = true);
     output.classList.remove('hidden');
-    output.innerHTML = '<em>Running scan, please wait...</em>';
+
+    const startVal = scanDateStart?.value || null;
+    const endVal = scanDateEnd?.value || null;
+
+    if (startVal && endVal && startVal > endVal) {
+      output.innerHTML = `<span style="color:var(--red)">Start date must be before end date.</span>`;
+      document.querySelectorAll('.scan-btn').forEach(b => b.disabled = false);
+      return;
+    }
+
+    const dateNote = startVal && endVal ? ` <em style="color:var(--muted);font-size:0.85em">(${startVal} → ${endVal})</em>` : '';
+    output.innerHTML = `<em>Running scan, please wait...${dateNote}</em>`;
+
+    const body = { focus };
+    if (startVal) body.start_date = startVal;
+    if (endVal) body.end_date = endVal;
 
     try {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ focus }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();

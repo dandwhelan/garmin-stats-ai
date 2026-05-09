@@ -98,6 +98,13 @@ class HealthAgent:
         # Tool definitions never change — build once
         self._tools_cache = get_all_tools_anthropic(self._tool_handler)
 
+        # Opus 4.7+ supports "adaptive" thinking; older models use explicit budget
+        self._thinking = (
+            {"type": "adaptive"}
+            if "opus-4-7" in settings.claude_model
+            else {"type": "enabled", "budget_tokens": 8000}
+        )
+
         # Default history for CLI use; web callers pass their own list
         self._history: list[dict] = []
         self._key_findings: list[str] = []
@@ -144,7 +151,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
@@ -202,7 +209,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 ) as stream:
                     # Stream text deltas as they arrive
                     for event in stream:
@@ -246,7 +253,13 @@ class HealthAgent:
     # ------------------------------------------------------------------
     # Scan reports & session save
     # ------------------------------------------------------------------
-    def generate_scan_report(self, focus: str = "general", context: str = "") -> str:
+    def generate_scan_report(
+        self,
+        focus: str = "general",
+        context: str = "",
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> str:
         """Generate a proactive insight report without user prompting."""
         scan_prompts = {
             "morning": (
@@ -281,6 +294,14 @@ class HealthAgent:
         }
 
         base_prompt = scan_prompts.get(focus, scan_prompts["general"])
+
+        if start_date and end_date:
+            date_context = (
+                f"IMPORTANT: The user has selected a custom date range: {start_date} to {end_date}. "
+                f"Restrict your analysis to this date range when fetching data and drawing conclusions. "
+                f"Use these exact dates as the start and end for any tool calls that require a date range.\n\n"
+            )
+            base_prompt = date_context + base_prompt
 
         if context:
             prompt = (

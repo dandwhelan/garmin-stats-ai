@@ -5,7 +5,7 @@
 Two-module Python monorepo:
 
 - **`garmin-grafana/`** — Data ingestion: fetches Garmin Connect metrics → SQLite
-- **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI, powered by Claude (`claude-opus-4-7`)
+- **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI, powered by Claude (`claude-sonnet-4-6` by default; override with `CLAUDE_MODEL=claude-opus-4-7`)
 
 ## Commands
 
@@ -85,7 +85,7 @@ QueryToolHandler (tools/query_tools.py)
 
 ## Claude API Design
 
-- **Model**: `claude-opus-4-7` with `thinking: {"type": "adaptive"}`
+- **Model**: `claude-sonnet-4-6` by default (set `CLAUDE_MODEL=claude-opus-4-7` for Opus). Opus uses `thinking: {"type": "adaptive"}`; Sonnet uses `{"type": "enabled", "budget_tokens": 8000}`
 - **Prompt caching**: System prompt (medical knowledge, ~2k tokens) has `cache_control: {"type": "ephemeral"}` — cached after the first call, saving ~80% of system prompt tokens on repeat queries
 - **Tool loop**: Manual (not automatic function calling) — dispatches tool calls, appends results, loops until `stop_reason == "end_turn"` (max 10 rounds)
 - **Streaming**: `chat_stream()` generator used by the SSE endpoint; yields status messages during tool calls, final text when done

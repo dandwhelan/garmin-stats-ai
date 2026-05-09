@@ -101,6 +101,113 @@ nav {
   padding: 24px 20px 40px;
 }
 
+/* Date range toolbar */
+.date-range-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 18px;
+  margin-bottom: 20px;
+}
+
+.date-presets {
+  display: flex;
+  gap: 6px;
+}
+
+.preset-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 20px;
+  padding: 4px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.preset-btn:hover { color: var(--text); border-color: var(--accent2); }
+.preset-btn.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+
+.date-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.date-sep {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+input[type="date"] {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  font-family: inherit;
+}
+
+input[type="date"]:focus { outline: none; border-color: var(--accent); }
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+
+.date-apply-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.date-apply-btn:hover { opacity: 0.88; }
+
+/* Scan date row */
+.scan-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.scan-date-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.scan-date-input {
+  font-size: 0.82rem;
+  padding: 4px 8px;
+}
+
+.scan-date-clear {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.scan-date-clear:hover { color: var(--red); border-color: var(--red); }
+
 /* Metric cards */
 .metrics-grid {
   display: grid;

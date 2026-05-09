@@ -22,6 +22,21 @@
 
   <!-- Dashboard Tab -->
   <main id="tab-dashboard" class="tab-panel active">
+    <div class="date-range-toolbar">
+      <div class="date-presets">
+        <button class="preset-btn" data-days="7">7d</button>
+        <button class="preset-btn" data-days="14">14d</button>
+        <button class="preset-btn active" data-days="30">30d</button>
+        <button class="preset-btn" data-days="90">90d</button>
+      </div>
+      <div class="date-custom">
+        <input type="date" id="date-start" />
+        <span class="date-sep">to</span>
+        <input type="date" id="date-end" />
+        <button id="date-apply-btn" class="date-apply-btn">Apply</button>
+      </div>
+    </div>
+
     <section class="metrics-grid" id="metrics-grid">
       <div class="metric-card skeleton" id="card-sleepScore">
         <div class="metric-label">Sleep Score</div>
@@ -57,7 +72,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>14-Day Trend</h2>
+        <h2 id="trend-chart-title">30-Day Trend</h2>
         <div class="chart-controls">
           <button class="chart-toggle active" data-metric="sleepScore">Sleep</button>
           <button class="chart-toggle" data-metric="restingHeartRate">RHR</button>
@@ -74,7 +89,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Sleep Architecture (last 14 nights)</h2>
+          <h2 id="sleep-chart-title">Sleep Architecture</h2>
         </div>
         <div class="chart-container">
           <canvas id="sleep-architecture-chart"></canvas>
@@ -113,6 +128,13 @@
 
     <section class="scan-section">
       <h2>AI Health Scan</h2>
+      <div class="scan-date-row">
+        <span class="scan-date-label">Date range (optional):</span>
+        <input type="date" id="scan-date-start" class="scan-date-input" />
+        <span class="date-sep">to</span>
+        <input type="date" id="scan-date-end" class="scan-date-input" />
+        <button id="scan-date-clear" class="scan-date-clear">Clear</button>
+      </div>
       <div class="scan-buttons">
         <button class="scan-btn" data-focus="general">General Scan</button>
         <button class="scan-btn" data-focus="morning">Morning Brief</button>
