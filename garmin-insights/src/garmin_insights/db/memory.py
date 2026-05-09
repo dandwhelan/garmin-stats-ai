@@ -71,6 +71,9 @@ class MemoryStore:
         conn.row_factory = sqlite3.Row  # Access columns by name
         return conn
 
+    def close(self) -> None:
+        pass  # Connections are per-call; nothing to close
+
     def initialise_schema(self) -> None:
         """Create tables if they don't exist."""
         conn = self._get_conn()
