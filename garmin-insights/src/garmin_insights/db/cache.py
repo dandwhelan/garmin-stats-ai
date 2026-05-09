@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from garmin_insights.db.influxdb import InfluxRepo
+from garmin_insights.db.sqlite_repo import SqliteRepo
 from garmin_insights.db.memory import MemoryStore
 
 logger = logging.getLogger(__name__)

@@ -1,102 +1,109 @@
 # Garmin Stats AI
 
-A powerful, localized health analytics platform that fetches data from Garmin Connect, stores it in a privacy-focused text-based database (SQLite), and uses AI (Google Gemini) to provide actionable health insights.
+A privacy-first health analytics platform: fetches data from Garmin Connect, stores it locally in SQLite, and uses Claude AI to provide actionable health insights via a web dashboard and chat interface.
 
 ## Project Structure
 
-- **`garmin-grafana`**: The data ingestion engine. Fetches metrics (HR, sleep, stress, activities) from Garmin and writes them to SQLite.
-- **`garmin-insights`**: The AI analysis layer. A conversational agent that can query your database, find correlations, and answer questions about your health.
+- **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
+- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat) and CLI, powered by Claude (`claude-opus-4-7`).
 
 ## Prerequisites
 
-- **Python 3.10+**
-- **Garmin Connect Account**
-- **Google Cloud API Key** (for Gemini AI)
-- **Git**
+- Python 3.11+
+- Garmin Connect account
+- Anthropic API key ([get one here](https://console.anthropic.com))
 
 ## Installation
 
-1. **Clone the repository:**
+```bash
+git clone https://github.com/dandwhelan/garmin-stats-ai.git
+cd garmin-stats-ai
 
-    ```bash
-    git clone https://github.com/dandwhelan/garmin-stats-ai.git
-    cd garmin-stats-ai
-    ```
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-2. **Create a virtual environment (Recommended):**
-
-    ```bash
-    python -m venv .venv
-    # Windows
-    .\.venv\Scripts\activate
-    # Mac/Linux
-    source .venv/bin/activate
-    ```
-
-3. **Install dependencies:**
-
-    ```bash
-    pip install -e garmin-grafana
-    pip install -e garmin-insights
-    ```
+pip install -e garmin-grafana
+pip install -e garmin-insights
+```
 
 ## Configuration
 
-### 1. Garmin Fetcher (`garmin-grafana`)
-
-The fetcher is configured via environment variables. You can create a `.env` file or set them in your shell.
-
-**Essential Variables:**
-
-- `GARMINCONNECT_EMAIL`: Your Garmin Connect login email.
-- `GARMINCONNECT_PASSWORD`: Your Garmin Connect password (base64 encoded recommended, or just plain text if testing).
-- `SQLITE_DB_PATH`: Path to your database file (default: `garmin.db`).
-
-**Example Run:**
-On first run, it will prompt for credentials if not found.
+Create a `.env` file (or set environment variables):
 
 ```bash
-# Run the fetcher
-python -m garmin_grafana.garmin_fetch
-```
+# Garmin credentials
+GARMINCONNECT_EMAIL=your@email.com
+GARMINCONNECT_PASSWORD=yourpassword
 
-It will create `garmin.db` and start populating it with historical data.
+# Shared database path
+SQLITE_DB_PATH=/absolute/path/to/garmin.db
 
-### 2. Insights Agent (`garmin-insights`)
-
-Requires a Google Gemini API key.
-
-**Essential Variables:**
-
-- `GEMINI_API_KEY`: Your Google AI Studio API key.
-- `SQLITE_DB_PATH`: Must point to the SAME `garmin.db` populated by the fetcher.
-
-**Example Run:**
-
-```bash
-# Start the interactive chat
-garmin-insights chat
+# Claude AI (for garmin-insights)
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ## Usage
 
-### Fetching Data
-
-To keep your data up to date, run the fetcher periodically (e.g., via cron or Task Scheduler).
+### Step 1 — Fetch your Garmin data
 
 ```bash
 python -m garmin_grafana.garmin_fetch
 ```
 
-### Analyzing Data
+This creates `garmin.db` and populates it with your health history (up to 1 year back on first run). Re-run daily to keep data fresh.
 
-Interactively ask questions about your health:
-> "How does my alcohol consumption affect my sleep score?"
-> "What's my trend in resting heart rate over the last month?"
-> "Draft a training plan based on my current body battery."
+### Step 2 — Start the web interface
+
+```bash
+garmin-insights web
+```
+
+Open **http://localhost:8080** in your browser.
+
+The web interface has two views:
+
+- **Dashboard** — metric cards (sleep score, RHR, HRV, body battery, steps, stress) with 14-day trend charts and AI scan buttons
+- **Chat** — conversational AI with full access to your health data
+
+### CLI alternatives
+
+```bash
+garmin-insights chat          # interactive terminal chat
+garmin-insights scan          # one-off general health scan
+garmin-insights scan --weekly # full weekly summary
+garmin-insights status        # check DB + API connectivity
+```
+
+## Example questions for the chat
+
+- "How has my sleep been this week compared to my baseline?"
+- "Does alcohol affect my overnight HRV? Show me the data."
+- "What's been happening with my resting heart rate over the last month?"
+- "Am I recovering well enough between workouts?"
+- "Which behaviors have the biggest impact on my sleep score?"
+
+## AI Architecture
+
+The agent uses **Claude `claude-opus-4-7`** with:
+
+- **Adaptive thinking** — Claude reasons about complex health patterns before responding
+- **Prompt caching** — the large medical knowledge system prompt is cached, reducing API costs on repeat queries by ~80%
+- **15 analysis tools** — for querying health data, detecting trends, finding anomalies, computing correlations, and comparing lifestyle behaviors
+- **Medical knowledge base** — 18 evidence-backed insight rules (sleep, HRV, stress, exercise, nutrition) injected into the system prompt with research citations
+- **Session memory** — conversation summaries are saved so the agent remembers context across sessions
+
+## Privacy
+
+All data stays local. Nothing is sent to external servers except:
+- Garmin Connect API (to fetch your own data)
+- Anthropic API (to generate AI responses — only the content of your queries and health summaries, not raw data)
 
 ## Troubleshooting
 
-- **Login Issues:** Delete the `~/.garminconnect` folder to clear stale tokens.
-- **Database Locks:** Ensure only one process is writing to `garmin.db` at a time.
-- **Missing Data:** Check `logs.txt` generated by the fetcher for sync errors.
+- **Login issues**: Delete `~/.garminconnect` to clear stale tokens, then re-run the fetcher
+- **No data in dashboard**: Run the fetcher first, then restart the web server so it rebuilds the cache
+- **Database locked**: Only one process should write to `garmin.db` at a time — don't run the fetcher while the web server is actively caching
+
+## For developers
+
+See [CLAUDE.md](CLAUDE.md) for architecture details, file map, and instructions for extending the agent.

@@ -40,7 +40,6 @@ def cmd_chat(args: argparse.Namespace) -> None:
     from garmin_insights.agent import HealthAgent
 
     console = Console(theme=_THEME)
-    settings = get_settings()
 
     console.print(Panel(
         "[bold]🏥 Garmin Health Insights Agent[/bold]\n\n"
@@ -51,7 +50,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
     ))
 
     console.print("[info]Initialising...[/info]")
-    agent = HealthAgent(settings)
+    agent = HealthAgent()
     agent.ensure_cache_fresh(days=90)
     console.print("[success]Ready! ✓[/success]\n")
 
@@ -143,10 +142,9 @@ def cmd_scan(args: argparse.Namespace) -> None:
     from garmin_insights.insights.proactive import InsightScanner
 
     console = Console(theme=_THEME)
-    settings = get_settings()
 
     console.print("[info]Initialising...[/info]")
-    agent = HealthAgent(settings)
+    agent = HealthAgent()
     agent.ensure_cache_fresh(days=90)
 
     focus = "weekly" if args.weekly else "general"
@@ -184,6 +182,21 @@ def cmd_scan(args: argparse.Namespace) -> None:
     agent.close()
 
 
+def cmd_web(args: argparse.Namespace) -> None:
+    """Start the web interface server."""
+    from garmin_insights.web.app import run_server
+
+    console = Console(theme=_THEME)
+    settings = get_settings()
+    console.print(Panel(
+        f"[bold]🌐 Garmin Health Insights — Web Interface[/bold]\n\n"
+        f"[dim]Dashboard + AI Chat\n"
+        f"Open: [link]http://{settings.web_host}:{settings.web_port}[/link][/dim]",
+        border_style="cyan",
+    ))
+    run_server()
+
+
 def cmd_schedule(args: argparse.Namespace) -> None:
     """Start the 4x daily scan scheduler."""
     from garmin_insights.scheduler import start_scheduler
@@ -202,26 +215,22 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     console.print("[heading]System Status[/heading]\n")
 
-    # SQLite Database (Repo & Memory)
+    # SQLite Database
     try:
         repo = SqliteRepo(settings)
         memory = MemoryStore(settings)
         memory.initialise_schema()
-        
+
         repo_health = repo.health_check()
         mem_health = memory.health_check()
-        
+
         if repo_health.get("connected") and mem_health.get("connected"):
             console.print(f"[success]✓ SQLite Database[/success] ({settings.sqlite_db_path})")
-            
-            # Repo stats
-            console.print("[dim]Metrics:[/dim]")
-            console.print(f"  Measurements: {repo_health.get('measurement_count', 0)}")
+            console.print("[dim]Measurements:[/dim]")
+            console.print(f"  Tables: {repo_health.get('measurement_count', 0)}")
             if 'date_range' in repo_health:
                 dr = repo_health['date_range']
                 console.print(f"  Range: {dr.get('start')} → {dr.get('end')}")
-            
-            # Memory stats
             console.print("[dim]Memory:[/dim]")
             console.print(f"  Daily summaries: {mem_health.get('daily_summaries', 0)}")
             console.print(f"  Baselines: {mem_health.get('baselines', 0)}")
@@ -232,24 +241,17 @@ def cmd_status(args: argparse.Namespace) -> None:
                 console.print(f"  Repo Error: {repo_health['error']}")
             if "error" in mem_health:
                 console.print(f"  Memory Error: {mem_health['error']}")
-                
+
         memory.close()
     except Exception as e:
         console.print(f"[error]✗ SQLite: {e}[/error]")
 
-    # Gemini
-    try:
-        from google import genai
-        if settings.gemini_api_key:
-            client = genai.Client(api_key=settings.gemini_api_key)
-            # Simple check, maybe listing models or just assuming config is valid if key is present
-            # calling the API might cost money or quota, so let's just check if key is set
-            console.print("[success]✓ Gemini API[/success]")
-            console.print(f"  Model: {settings.gemini_model}")
-        else:
-            console.print("[warning]! Gemini API: Key not set[/warning]")
-    except Exception as e:
-        console.print(f"[error]✗ Gemini: {e}[/error]")
+    # Claude / Anthropic
+    if settings.anthropic_api_key:
+        console.print("[success]✓ Anthropic API[/success]")
+        console.print(f"  Model: {settings.claude_model}")
+    else:
+        console.print("[warning]! Anthropic API: ANTHROPIC_API_KEY not set[/warning]")
 
 
 def main() -> None:
@@ -268,6 +270,9 @@ def main() -> None:
     scan_p = sub.add_parser("scan", help="Run proactive health scan")
     scan_p.add_argument("--weekly", action="store_true", help="Full weekly summary")
 
+    # web
+    sub.add_parser("web", help="Start the web interface (dashboard + AI chat)")
+
     # schedule
     sub.add_parser("schedule", help="Start 4x daily scan scheduler")
 
@@ -281,6 +286,8 @@ def main() -> None:
         cmd_chat(args)
     elif args.command == "scan":
         cmd_scan(args)
+    elif args.command == "web":
+        cmd_web(args)
     elif args.command == "schedule":
         cmd_schedule(args)
     elif args.command == "status":

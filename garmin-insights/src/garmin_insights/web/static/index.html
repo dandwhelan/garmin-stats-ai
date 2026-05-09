@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Garmin Health Insights</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">⌚ Garmin Health Insights</span>
+      <nav>
+        <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="tab-btn" data-tab="chat">Chat</button>
+      </nav>
+      <span id="status-dot" class="status-dot" title="Checking..."></span>
+    </div>
+  </header>
+
+  <!-- Dashboard Tab -->
+  <main id="tab-dashboard" class="tab-panel active">
+    <section class="metrics-grid" id="metrics-grid">
+      <div class="metric-card skeleton" id="card-sleepScore">
+        <div class="metric-label">Sleep Score</div>
+        <div class="metric-value" id="val-sleepScore">—</div>
+        <div class="metric-sub" id="sub-sleepScore"></div>
+      </div>
+      <div class="metric-card skeleton" id="card-restingHeartRate">
+        <div class="metric-label">Resting HR</div>
+        <div class="metric-value" id="val-restingHeartRate">—</div>
+        <div class="metric-sub" id="sub-restingHeartRate"></div>
+      </div>
+      <div class="metric-card skeleton" id="card-avgOvernightHrv">
+        <div class="metric-label">Overnight HRV</div>
+        <div class="metric-value" id="val-avgOvernightHrv">—</div>
+        <div class="metric-sub" id="sub-avgOvernightHrv"></div>
+      </div>
+      <div class="metric-card skeleton" id="card-bodyBatteryAtWakeTime">
+        <div class="metric-label">Body Battery (wake)</div>
+        <div class="metric-value" id="val-bodyBatteryAtWakeTime">—</div>
+        <div class="metric-sub" id="sub-bodyBatteryAtWakeTime"></div>
+      </div>
+      <div class="metric-card skeleton" id="card-totalSteps">
+        <div class="metric-label">Steps (yesterday)</div>
+        <div class="metric-value" id="val-totalSteps">—</div>
+        <div class="metric-sub" id="sub-totalSteps"></div>
+      </div>
+      <div class="metric-card skeleton" id="card-stressPercentage">
+        <div class="metric-label">Stress %</div>
+        <div class="metric-value" id="val-stressPercentage">—</div>
+        <div class="metric-sub" id="sub-stressPercentage"></div>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>14-Day Trends</h2>
+        <div class="chart-controls">
+          <button class="chart-toggle active" data-metric="sleepScore">Sleep</button>
+          <button class="chart-toggle" data-metric="restingHeartRate">RHR</button>
+          <button class="chart-toggle" data-metric="avgOvernightHrv">HRV</button>
+          <button class="chart-toggle" data-metric="bodyBatteryAtWakeTime">Battery</button>
+          <button class="chart-toggle" data-metric="totalSteps">Steps</button>
+        </div>
+      </div>
+      <div class="chart-container">
+        <canvas id="trend-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="scan-section">
+      <h2>AI Health Scan</h2>
+      <div class="scan-buttons">
+        <button class="scan-btn" data-focus="general">General Scan</button>
+        <button class="scan-btn" data-focus="morning">Morning Brief</button>
+        <button class="scan-btn" data-focus="weekly">Weekly Summary</button>
+      </div>
+      <div id="scan-output" class="scan-output hidden"></div>
+    </section>
+  </main>
+
+  <!-- Chat Tab -->
+  <main id="tab-chat" class="tab-panel">
+    <div class="chat-container">
+      <div class="chat-messages" id="chat-messages">
+        <div class="message assistant">
+          <div class="message-bubble">
+            <strong>Health Agent</strong>
+            <p>Hello! I'm your personal health insights agent. I can analyse your Garmin data — ask me about your sleep, heart rate, HRV, activity history, lifestyle patterns, and more.</p>
+            <p>Try: <em>"How has my sleep been this week?"</em> or <em>"Does alcohol affect my HRV?"</em></p>
+          </div>
+        </div>
+      </div>
+      <div class="chat-footer">
+        <button id="reset-btn" class="reset-btn" title="Clear conversation">↺</button>
+        <textarea
+          id="chat-input"
+          placeholder="Ask about your health data..."
+          rows="1"
+        ></textarea>
+        <button id="send-btn" class="send-btn">Send</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

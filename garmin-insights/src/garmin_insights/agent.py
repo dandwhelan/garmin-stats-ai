@@ -1,22 +1,21 @@
-"""Core Gemini agent — tool-calling conversation loop with medical context."""
+"""Core Claude agent — tool-calling conversation loop with medical context."""
 
 from __future__ import annotations
 
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Generator
 
-from google import genai
-from google.genai import types
+import anthropic
 
-from garmin_insights.config import Settings
-from garmin_insights.db.influxdb import InfluxRepo
+from garmin_insights.config import Settings, get_settings
+from garmin_insights.db.sqlite_repo import SqliteRepo
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.db.cache import CacheBuilder
 from garmin_insights.knowledge.medical import get_rules_summary_for_llm
 from garmin_insights.tools.analysis_tools import AnalysisEngine
-from garmin_insights.tools.query_tools import QueryToolHandler, get_all_tools
+from garmin_insights.tools.query_tools import QueryToolHandler, get_all_tools_anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ _SYSTEM_PROMPT = """\
 You are a personal health insights agent analyzing Garmin wearable data.
 
 ## Your Capabilities
-You have access to tools that query the user's health data from InfluxDB, analyze \
+You have access to tools that query the user's health data, analyze \
 trends and correlations, and recall/save context from previous sessions.
 
 ## Communication Style
@@ -58,44 +57,45 @@ trends and correlations, and recall/save context from previous sessions.
 
 
 class HealthAgent:
-    """Conversational health insights agent powered by Gemini."""
+    """Conversational health insights agent powered by Claude."""
 
-    def __init__(self) -> None:
-        settings = get_settings()
-        # self._settings = settings # This line was removed in the diff, but not explicitly stated. Re-adding for consistency if settings are used elsewhere.
-        # If settings are only used for initialization, then removing self._settings is fine.
-        # For now, I'll assume it's not needed as per the diff's implied change.
+    def __init__(self, settings: Settings | None = None) -> None:
+        if settings is None:
+            settings = get_settings()
+        self._settings = settings
 
-        # Initialize infrastructure
         self._repo = SqliteRepo(settings)
         self._memory = MemoryStore(settings)
         self._memory.initialise_schema()
         self._cache = CacheBuilder(self._repo, self._memory)
         self._analysis = AnalysisEngine(self._memory)
 
-        # Tool handler
         self._tool_handler = QueryToolHandler(
             repo=self._repo,
             memory=self._memory,
             analysis=self._analysis,
         )
 
-        # Gemini client
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-        # Build system prompt with medical knowledge
-        self._system_prompt = _SYSTEM_PROMPT.format(
+        system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(),
             today=datetime.utcnow().strftime("%Y-%m-%d"),
         )
+        # Cache the large system prompt to reduce token costs on repeat calls
+        self._system = [
+            {
+                "type": "text",
+                "text": system_content,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
-        # Conversation history for current session
-        self._history: list[types.Content] = []
+        self._history: list[dict] = []
         self._key_findings: list[str] = []
 
-    def _get_tools(self) -> list[callable]:
-        """Return all registered tool functions."""
-        return get_all_tools(self._tool_handler)
+    def _get_tools(self) -> list[dict]:
+        return get_all_tools_anthropic(self._tool_handler)
 
     def ensure_cache_fresh(self, days: int = 90) -> None:
         """Ensure recent daily summaries and baselines are up to date."""
@@ -105,10 +105,10 @@ class HealthAgent:
         except Exception as e:
             logger.warning("Cache refresh failed: %s", e)
 
-    def _dispatch_tool_call(self, function_call) -> str:
+    def _dispatch_tool_call(self, tool_use_block) -> str:
         """Execute a tool call and return the result string."""
-        name = function_call.name
-        args = dict(function_call.args) if function_call.args else {}
+        name = tool_use_block.name
+        args = dict(tool_use_block.input) if tool_use_block.input else {}
         logger.info("Tool call: %s(%s)", name, args)
 
         method = getattr(self._tool_handler, name, None)
@@ -123,89 +123,102 @@ class HealthAgent:
             logger.error("Tool %s failed: %s", name, e)
             return json.dumps({"error": f"Tool {name} failed: {str(e)}"})
 
-    def chat(self, user_message: str) -> str:
-        """Send a message and get a response, executing tool calls as needed.
-
-        Uses manual function calling: we inspect response parts, dispatch
-        tool calls locally, and feed results back until the model produces
-        a text-only response (max 10 rounds).
-        """
-        # Add user message to history
-        self._history.append(
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=user_message)],
-            )
-        )
-
-        # Config with automatic function calling DISABLED
-        config = types.GenerateContentConfig(
-            system_instruction=self._system_prompt,
+    def _run_round(self) -> anthropic.types.Message:
+        return self._client.messages.create(
+            model=self._settings.claude_model,
+            max_tokens=8096,
+            system=self._system,
             tools=self._get_tools(),
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                disable=True,
-            ),
-            temperature=0.7,
+            messages=self._history,
+            thinking={"type": "adaptive"},
         )
 
-        max_rounds = 10
-        for round_num in range(max_rounds):
+    def chat(self, user_message: str) -> str:
+        """Send a message and get a response, executing tool calls as needed."""
+        self._history.append({"role": "user", "content": user_message})
+
+        for round_num in range(10):
             try:
-                response = self._client.models.generate_content(
-                    model=self._settings.gemini_model,
-                    contents=self._history,
-                    config=config,
-                )
+                response = self._run_round()
             except Exception as e:
-                error_msg = f"Error communicating with Gemini: {e}"
-                logger.error(error_msg)
-                return error_msg
+                logger.error("Claude API error: %s", e)
+                return f"Error communicating with Claude: {e}"
 
-            if not response.candidates or not response.candidates[0].content:
-                return "No response from Gemini."
+            self._history.append({"role": "assistant", "content": response.content})
 
-            content = response.candidates[0].content
-            self._history.append(content)
-
-            # Check if there are function calls to dispatch
-            function_calls = [
-                part for part in content.parts if part.function_call
-            ]
-
-            if not function_calls:
-                # Pure text response — we're done
-                text_parts = [part.text for part in content.parts if part.text]
+            if response.stop_reason == "end_turn":
+                text_parts = [
+                    block.text for block in response.content
+                    if block.type == "text"
+                ]
                 return "\n".join(text_parts) if text_parts else ""
 
-            # Dispatch each function call and build response parts
-            tool_response_parts = []
-            for part in function_calls:
-                result_str = self._dispatch_tool_call(part.function_call)
-                tool_response_parts.append(
-                    types.Part.from_function_response(
-                        name=part.function_call.name,
-                        response={"result": result_str},
-                    )
-                )
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": self._dispatch_tool_call(block),
+                        })
+                self._history.append({"role": "user", "content": tool_results})
+                logger.info("Round %d: dispatched %d tool calls", round_num + 1, len(tool_results))
+                continue
 
-            # Add tool results to history
-            self._history.append(
-                types.Content(role="user", parts=tool_response_parts)
-            )
-
-            logger.info("Round %d: dispatched %d tool calls, continuing...",
-                        round_num + 1, len(function_calls))
+            break
 
         return "Maximum tool-calling rounds reached. Please try a simpler question."
 
-    def generate_scan_report(self, focus: str = "general", context: str = "") -> str:
-        """Generate a proactive insight report without user prompting.
+    def chat_stream(self, user_message: str) -> Generator[str, None, None]:
+        """Stream a chat response, yielding text/status chunks.
 
-        Args:
-            focus: The type of report ('general', 'weekly', 'sleep', 'training').
-            context: Optional text context (e.g. locally detected anomalies) to
-                     include in the prompt.
+        Tool calls are dispatched synchronously between rounds.
+        Yields status messages during tool calls and final text when done.
         """
+        self._history.append({"role": "user", "content": user_message})
+
+        for round_num in range(10):
+            try:
+                response = self._run_round()
+            except Exception as e:
+                yield f"\n\nError communicating with Claude: {e}"
+                return
+
+            self._history.append({"role": "assistant", "content": response.content})
+
+            if response.stop_reason == "end_turn":
+                text_parts = [
+                    block.text for block in response.content
+                    if block.type == "text"
+                ]
+                yield "\n".join(text_parts) if text_parts else ""
+                return
+
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                tool_names = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        tool_names.append(block.name)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": self._dispatch_tool_call(block),
+                        })
+
+                yield f"_Querying: {', '.join(tool_names)}..._\n\n"
+                self._history.append({"role": "user", "content": tool_results})
+                logger.info("Stream round %d: dispatched %d tool calls",
+                            round_num + 1, len(tool_results))
+                continue
+
+            break
+
+        yield "Maximum tool-calling rounds reached. Please try a simpler question."
+
+    def generate_scan_report(self, focus: str = "general", context: str = "") -> str:
+        """Generate a proactive insight report without user prompting."""
         scan_prompts = {
             "morning": (
                 "Generate a morning health briefing. Check last night's sleep quality, "
@@ -239,7 +252,7 @@ class HealthAgent:
         }
 
         base_prompt = scan_prompts.get(focus, scan_prompts["general"])
-        
+
         if context:
             prompt = (
                 f"Here are some preliminary findings from a local analysis:\n\n"
@@ -250,7 +263,6 @@ class HealthAgent:
         else:
             prompt = base_prompt
 
-        # Use a fresh history for scans
         saved_history = self._history
         self._history = []
         try:
@@ -265,7 +277,6 @@ class HealthAgent:
         if len(self._history) < 2:
             return
 
-        # Ask the LLM to summarize the session
         summary_prompt = (
             "Summarize our conversation in 2-3 sentences. "
             "Focus on what health questions were asked and what key findings were discussed. "
@@ -282,6 +293,11 @@ class HealthAgent:
             logger.info("Session saved.")
         finally:
             self._history = saved_history
+
+    def reset_conversation(self) -> None:
+        """Clear the current conversation history."""
+        self._history = []
+        self._key_findings = []
 
     def close(self) -> None:
         """Clean up resources."""

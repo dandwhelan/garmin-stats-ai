@@ -16,9 +16,13 @@ class Settings(BaseSettings):
     # Database
     sqlite_db_path: str = "garmin.db"
 
-    # Gemini
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # Claude / Anthropic
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-4-7"
+
+    # Web server
+    web_host: str = "0.0.0.0"
+    web_port: int = 8080
 
     # Scheduler
     scan_times: str = "06:00,12:00,18:00,22:00"
