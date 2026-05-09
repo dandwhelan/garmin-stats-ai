@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -69,6 +69,8 @@ class ResetRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     focus: str = "general"
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 # ------------------------------------------------------------------
@@ -98,13 +100,16 @@ async def health_check():
 
 
 @app.get("/api/dashboard")
-async def dashboard():
-    """Return the last 30 days of daily summaries plus baselines."""
+async def dashboard(
+    start: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
+    end: str | None = Query(default=None, description="End date YYYY-MM-DD"),
+):
+    """Return daily summaries plus baselines for the requested date range (default: last 30 days)."""
     if _agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialised")
 
-    end = datetime.utcnow().strftime("%Y-%m-%d")
-    start = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+    end = end or datetime.utcnow().strftime("%Y-%m-%d")
+    start = start or (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
 
     try:
         loop = asyncio.get_event_loop()
@@ -182,7 +187,7 @@ async def scan(body: ScanRequest):
     try:
         loop = asyncio.get_event_loop()
         report = await loop.run_in_executor(
-            None, _agent.generate_scan_report, body.focus
+            None, _agent.generate_scan_report, body.focus, "", body.start_date, body.end_date
         )
         return {"focus": body.focus, "report": report, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:

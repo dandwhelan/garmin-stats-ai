@@ -246,7 +246,13 @@ class HealthAgent:
     # ------------------------------------------------------------------
     # Scan reports & session save
     # ------------------------------------------------------------------
-    def generate_scan_report(self, focus: str = "general", context: str = "") -> str:
+    def generate_scan_report(
+        self,
+        focus: str = "general",
+        context: str = "",
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> str:
         """Generate a proactive insight report without user prompting."""
         scan_prompts = {
             "morning": (
@@ -281,6 +287,14 @@ class HealthAgent:
         }
 
         base_prompt = scan_prompts.get(focus, scan_prompts["general"])
+
+        if start_date and end_date:
+            date_context = (
+                f"IMPORTANT: The user has selected a custom date range: {start_date} to {end_date}. "
+                f"Restrict your analysis to this date range when fetching data and drawing conclusions. "
+                f"Use these exact dates as the start and end for any tool calls that require a date range.\n\n"
+            )
+            base_prompt = date_context + base_prompt
 
         if context:
             prompt = (
