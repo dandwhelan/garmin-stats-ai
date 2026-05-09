@@ -8,6 +8,7 @@ dependencies = [
     "dotenv==0.9.9",
     "fitparse==1.2.0",
     "garminconnect>=0.2.35",
+    "garth>=0.4.38",
     "pandas==2.2.3",
 ]
 
