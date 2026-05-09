@@ -71,6 +71,9 @@ class MemoryStore:
         conn.row_factory = sqlite3.Row  # Access columns by name
         return conn
 
+    def close(self) -> None:
+        pass  # Connections are per-call; nothing to close
+
     def initialise_schema(self) -> None:
         """Create tables if they don't exist."""
         conn = self._get_conn()
@@ -153,12 +156,27 @@ class MemoryStore:
             conn.close()
 
     def get_uncached_dates(self, start: str, end: str) -> list[str]:
-        """Return dates in range that don't have a cached daily summary."""
+        """Return dates in range that don't have a valid cached daily summary.
+
+        A summary is considered valid only if it contains at least one real
+        metric beyond the base keys (date, is_complete). Empty summaries written
+        by a broken cache build are treated as uncached so they get rebuilt.
+        """
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
+            # A real summary has at least one metric from daily_stats or sleep_summary.
+            # Check for restingHeartRate or sleepScore as proxies for a valid entry.
             cursor.execute(
-                "SELECT date FROM daily_summaries WHERE date >= ? AND date <= ?",
+                """
+                SELECT date FROM daily_summaries
+                WHERE date >= ? AND date <= ?
+                  AND (
+                    json_extract(metric_json, '$.restingHeartRate') IS NOT NULL
+                    OR json_extract(metric_json, '$.sleepScore') IS NOT NULL
+                    OR json_extract(metric_json, '$.totalSteps') IS NOT NULL
+                  )
+                """,
                 (start, end),
             )
             cached = {row["date"] for row in cursor.fetchall()}
