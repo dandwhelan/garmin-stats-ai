@@ -3,9 +3,9 @@ name = "garmin-grafana"
 version = "0.3.0"
 description = "A Python application to fetch Garmin health data and populate it in an InfluxDB Database, for visualizing long term health trends with Grafana"
 readme = "README.md"
-requires-python = "==3.13.*"
+requires-python = ">=3.11"
 dependencies = [
-    "dotenv==0.9.9",
+    "python-dotenv>=1.0.0",
     "fitparse==1.2.0",
     "garminconnect>=0.2.35",
     "pandas==2.2.3",
