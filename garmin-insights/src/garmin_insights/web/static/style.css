@@ -567,6 +567,115 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   .dual-clock { grid-template-columns: 1fr; }
 }
 
+/* ---- Show / hide customization ---- */
+.customize-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+}
+.customize-btn:hover { color: var(--text); border-color: var(--accent2); }
+
+.customize-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+.customize-panel.hidden { display: none; }
+
+.customize-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+.customize-header strong { color: var(--accent); font-size: 0.95rem; }
+.customize-actions { display: flex; gap: 6px; }
+.customize-mini {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.customize-mini:hover { color: var(--text); border-color: var(--accent); }
+
+.customize-list { display: flex; flex-direction: column; gap: 14px; }
+.customize-group-title {
+  font-size: 0.78rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+.customize-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 14px;
+}
+.customize-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 0;
+}
+.customize-item input { accent-color: var(--accent); cursor: pointer; }
+.customize-item:hover span { color: var(--accent); }
+
+/* Hidden chart sections (also hide their parent .charts-row gap if both hidden) */
+.chart-hidden { display: none !important; }
+
+/* Collapsible chart header */
+.collapsible-header { cursor: pointer; user-select: none; position: relative; }
+.collapsible-header h2::before {
+  content: '▾';
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.chart-collapsed .collapsible-header h2::before { transform: rotate(-90deg); }
+.chart-collapsed .chart-container,
+.chart-collapsed .chart-container-tall,
+.chart-collapsed .heatmap-container,
+.chart-collapsed .heatmap-legend,
+.chart-collapsed .anomaly-container,
+.chart-collapsed .anomaly-legend,
+.chart-collapsed .correlation-container,
+.chart-collapsed .dual-clock,
+.chart-collapsed .caffeine-grid,
+.chart-collapsed .habit-list,
+.chart-collapsed .streak-container,
+.chart-collapsed .trigger-list,
+.chart-collapsed .alert-list,
+.chart-collapsed .big-stat,
+.chart-collapsed .behavior-note,
+.chart-collapsed canvas {
+  display: none;
+}
+
+/* Collapsible group divider */
+.collapsible-divider { cursor: pointer; user-select: none; }
+.collapsible-divider:hover { color: var(--accent2); }
+
 .charts-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

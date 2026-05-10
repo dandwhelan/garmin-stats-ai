@@ -1887,3 +1887,167 @@ function renderCycleHrv(payload) {
     el.textContent = 'Cycle visualization coming soon.';
   }
 }
+
+/* =========================================================
+   Show / hide and collapse for chart sections
+   ========================================================= */
+
+const PREFS_KEY = 'garmin-chart-prefs-v1';
+
+function slugify(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+}
+
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function savePrefs(prefs) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+function initChartCustomization() {
+  const dash = document.getElementById('tab-dashboard');
+  if (!dash) return;
+
+  const prefs = loadPrefs();
+
+  // Walk through every chart-section AND charts-row, assign an id, and
+  // group them by the most recent .section-divider.
+  let currentGroup = 'Recovery & Activity';
+  const groups = new Map(); // group label -> [{id, label, el}]
+  groups.set(currentGroup, []);
+
+  const nodes = dash.querySelectorAll('h2.section-divider, .chart-section');
+  const idCounts = new Map();
+  nodes.forEach(node => {
+    if (node.classList.contains('section-divider')) {
+      currentGroup = node.textContent.trim();
+      if (!groups.has(currentGroup)) groups.set(currentGroup, []);
+      // Tag the divider too so the group itself can collapse
+      const gid = `group-${slugify(currentGroup)}`;
+      node.dataset.groupId = gid;
+      node.classList.add('collapsible-divider');
+      node.addEventListener('click', () => toggleGroup(gid, currentGroup));
+      return;
+    }
+    const h2 = node.querySelector('.chart-header h2');
+    const label = (h2 && h2.textContent.trim()) || 'Chart';
+    let id = slugify(label);
+    const n = (idCounts.get(id) || 0) + 1;
+    idCounts.set(id, n);
+    if (n > 1) id = `${id}-${n}`;
+    node.dataset.chartId = id;
+    groups.get(currentGroup).push({ id, label, el: node });
+
+    // Apply hidden pref
+    if (prefs[id] === false) node.classList.add('chart-hidden');
+
+    // Make header collapsible (independent of show/hide)
+    const header = node.querySelector('.chart-header');
+    if (header) {
+      header.classList.add('collapsible-header');
+      const collapseKey = `collapsed:${id}`;
+      if (prefs[collapseKey]) node.classList.add('chart-collapsed');
+      header.addEventListener('click', e => {
+        // Don't collapse when clicking a button/toggle inside the header
+        if (e.target.closest('button, input')) return;
+        node.classList.toggle('chart-collapsed');
+        const updated = loadPrefs();
+        updated[collapseKey] = node.classList.contains('chart-collapsed');
+        savePrefs(updated);
+      });
+    }
+  });
+
+  // Build the customize panel
+  const list = document.getElementById('customize-list');
+  if (list) {
+    list.innerHTML = '';
+    for (const [groupName, items] of groups) {
+      if (!items.length) continue;
+      const wrap = document.createElement('div');
+      wrap.className = 'customize-group';
+      wrap.innerHTML = `<div class="customize-group-title">${escapeHtml(groupName)}</div>`;
+      const itemsEl = document.createElement('div');
+      itemsEl.className = 'customize-items';
+      items.forEach(({ id, label, el }) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'customize-item';
+        const checked = !el.classList.contains('chart-hidden');
+        lbl.innerHTML = `<input type="checkbox" data-chart-id="${id}" ${checked ? 'checked' : ''}/> <span>${escapeHtml(label)}</span>`;
+        itemsEl.appendChild(lbl);
+      });
+      wrap.appendChild(itemsEl);
+      list.appendChild(wrap);
+    }
+    list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.chartId;
+        const sec = dash.querySelector(`[data-chart-id="${id}"]`);
+        if (!sec) return;
+        sec.classList.toggle('chart-hidden', !cb.checked);
+        const updated = loadPrefs();
+        updated[id] = cb.checked;
+        savePrefs(updated);
+      });
+    });
+  }
+
+  function toggleGroup(gid, name) {
+    const sections = dash.querySelectorAll(`[data-chart-id]`);
+    // A group "owns" sections between its divider and the next divider
+    let active = false;
+    let allHidden = true;
+    const owned = [];
+    dash.querySelectorAll('h2.section-divider, .chart-section').forEach(node => {
+      if (node.classList.contains('section-divider')) {
+        active = node.dataset.groupId === gid;
+        return;
+      }
+      if (active) {
+        owned.push(node);
+        if (!node.classList.contains('chart-hidden')) allHidden = false;
+      }
+    });
+    // If any visible, hide all; if all hidden, show all
+    const newHidden = !allHidden;
+    const updated = loadPrefs();
+    owned.forEach(sec => {
+      sec.classList.toggle('chart-hidden', newHidden);
+      updated[sec.dataset.chartId] = !newHidden;
+      const cb = document.querySelector(`#customize-list input[data-chart-id="${sec.dataset.chartId}"]`);
+      if (cb) cb.checked = !newHidden;
+    });
+    savePrefs(updated);
+  }
+
+  // Wire panel buttons
+  document.getElementById('customize-btn')?.addEventListener('click', () => {
+    document.getElementById('customize-panel')?.classList.toggle('hidden');
+  });
+  document.getElementById('customize-close-btn')?.addEventListener('click', () => {
+    document.getElementById('customize-panel')?.classList.add('hidden');
+  });
+  document.getElementById('customize-all-btn')?.addEventListener('click', () => {
+    setAllVisible(true);
+  });
+  document.getElementById('customize-none-btn')?.addEventListener('click', () => {
+    setAllVisible(false);
+  });
+
+  function setAllVisible(visible) {
+    const updated = loadPrefs();
+    dash.querySelectorAll('[data-chart-id]').forEach(sec => {
+      sec.classList.toggle('chart-hidden', !visible);
+      updated[sec.dataset.chartId] = visible;
+    });
+    document.querySelectorAll('#customize-list input[type="checkbox"]').forEach(cb => {
+      cb.checked = visible;
+    });
+    savePrefs(updated);
+  }
+}
+
+initChartCustomization();

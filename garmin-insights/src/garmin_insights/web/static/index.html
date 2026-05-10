@@ -35,6 +35,19 @@
         <input type="date" id="date-end" />
         <button id="date-apply-btn" class="date-apply-btn">Apply</button>
       </div>
+      <button id="customize-btn" class="customize-btn" title="Show / hide charts">⚙ Customize</button>
+    </div>
+
+    <div id="customize-panel" class="customize-panel hidden">
+      <div class="customize-header">
+        <strong>Show / hide charts</strong>
+        <div class="customize-actions">
+          <button id="customize-all-btn" class="customize-mini">Show all</button>
+          <button id="customize-none-btn" class="customize-mini">Hide all</button>
+          <button id="customize-close-btn" class="customize-mini">Close</button>
+        </div>
+      </div>
+      <div id="customize-list" class="customize-list"></div>
     </div>
 
     <section class="metrics-grid" id="metrics-grid">
