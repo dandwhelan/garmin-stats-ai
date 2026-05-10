@@ -438,6 +438,135 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   color: #fff;
 }
 
+/* ---- Lifestyle insights ---- */
+.section-divider {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 32px 0 18px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-sub {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-style: italic;
+  font-weight: normal;
+  margin-left: 12px;
+}
+
+.alert-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.alert {
+  background: rgba(248,113,113,0.1);
+  border-left: 3px solid var(--red);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.alert.ok {
+  background: rgba(52,211,153,0.08);
+  border-left-color: var(--green);
+  color: var(--muted);
+}
+
+.big-stat {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dual-clock {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 16px 0;
+}
+.clock {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  text-align: center;
+}
+.clock-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.clock-time { font-size: 1.6rem; font-weight: 700; margin: 6px 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.clock-sub { font-size: 0.75rem; color: var(--muted); }
+.clock.delta.warn .clock-time { color: var(--red); }
+.clock.delta.ok .clock-time { color: var(--green); }
+
+.caffeine-grid { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; }
+.caffeine-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.5fr 0.7fr 0.7fr 0.7fr 0.7fr;
+  gap: 8px;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+.caffeine-row:nth-child(odd) { background: var(--surface2); }
+.caffeine-head { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
+.caffeine-label { font-weight: 600; }
+
+.habit-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.habit-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.7fr 0.7fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+.habit-name { font-weight: 600; }
+.habit-meta { color: var(--muted); font-size: 0.78rem; }
+.habit-days { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+.habit-days.fresh { color: var(--green); }
+.habit-days.warn  { color: var(--yellow); }
+.habit-days.stale { color: var(--red); }
+
+.streak-container { overflow-x: auto; }
+.streak-grid { display: grid; gap: 1px; min-width: 600px; }
+.streak-cell { aspect-ratio: 1/1; min-width: 8px; border-radius: 1px; }
+.streak-row-label { font-size: 0.78rem; color: var(--muted); padding: 4px 8px 4px 0; text-align: right; align-self: center; }
+.streak-col-label { font-size: 0.65rem; color: var(--muted); text-align: center; align-self: center; }
+
+.trigger-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.trigger-head { font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
+.trigger-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 60px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+.trigger-name { color: var(--text); }
+.trigger-bar { height: 14px; background: var(--surface2); border-radius: 7px; overflow: hidden; }
+.trigger-fill { height: 100%; border-radius: 7px; transition: width 0.3s; }
+.trigger-lift { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+
+.dose-toggle {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: 4px;
+}
+.dose-toggle:hover { color: var(--text); border-color: var(--accent2); }
+.dose-toggle.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+
+@media (max-width: 880px) {
+  .dual-clock { grid-template-columns: 1fr; }
+}
+
 .charts-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

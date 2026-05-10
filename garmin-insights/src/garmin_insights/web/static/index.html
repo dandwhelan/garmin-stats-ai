@@ -224,6 +224,193 @@
       <div class="correlation-container" id="correlation-matrix"></div>
     </section>
 
+    <h2 class="section-divider">Lifestyle &amp; Health Insights</h2>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Pre-symptom Illness Radar</h2>
+        <span class="chart-sub">RHR + HRV-inverted + respiration z-scores (Quer 2021)</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="illness-radar-chart"></canvas>
+      </div>
+      <div id="illness-alerts" class="alert-list"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Recovery Debt (cumulative wake battery deficit)</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="recovery-debt-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Inflammation Index</h2>
+          <span class="chart-sub">RHR + respiration − sleep efficiency, z-scored</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="inflammation-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Sleep Regularity Index</h2>
+          <span class="chart-sub">7-day rolling consistency of sleep midpoint (Windred 2024)</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="sri-chart"></canvas>
+        </div>
+        <div id="sri-current" class="big-stat"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Social Jet Lag</h2>
+          <span class="chart-sub">Weekday vs weekend sleep midpoint</span>
+        </div>
+        <div id="social-jetlag" class="dual-clock"></div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Stress Resilience Score</h2>
+        <span class="chart-sub">Daily, normalised against your 30-day stress baseline</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="resilience-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Body Battery Decay Slope</h2>
+        <span class="chart-sub">Points lost per hour over the day — steeper = faster autonomic drain</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="bb-decay-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Recovery Cost</h2>
+        <span class="chart-sub">Median days for HRV to return within 0.5σ of baseline after each behavior</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="recovery-cost-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Dose-Response</h2>
+        <span class="chart-sub">For behaviors logged with a numeric value (e.g. drinks, caffeine cups)</span>
+        <div class="chart-controls" id="dose-controls"></div>
+      </div>
+      <div class="chart-container">
+        <canvas id="dose-response-chart"></canvas>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Caffeine Timing Comparison</h2>
+        </div>
+        <div id="caffeine-cutoff" class="caffeine-grid"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Habit Half-Life</h2>
+          <span class="chart-sub">Days since last logged · 30d frequency</span>
+        </div>
+        <div id="habit-half-life" class="habit-list"></div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Streak Calendar</h2>
+        <span class="chart-sub">Top 12 logged behaviors</span>
+      </div>
+      <div id="streak-calendar" class="streak-container"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Behavior Co-occurrence</h2>
+          <span class="chart-sub">How often these behaviors are logged on the same day</span>
+        </div>
+        <div id="cooccurrence-matrix" class="correlation-container"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Stress Trigger Leaderboard</h2>
+          <span class="chart-sub">Behaviors over-represented on top-quintile stress days</span>
+        </div>
+        <div id="stress-triggers" class="trigger-list"></div>
+      </section>
+    </div>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Step-Count Survival Curve</h2>
+          <span class="chart-sub">Reference lines: 7,500 (mortality benefit) / 10,000 (Paluch 2022)</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="step-cdf-chart"></canvas>
+        </div>
+        <div id="step-cdf-stats" class="big-stat"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>WHO Activity Target (150 min/wk equiv)</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="who-target-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Stress Hour-of-Day Fingerprint</h2>
+        <span class="chart-sub">Average stress level per hour, weekday vs weekend</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="stress-fingerprint-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>VO2 Max / Fitness Age</h2>
+      </div>
+      <div class="chart-container">
+        <canvas id="fitness-age-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Cycle Phase HRV</h2>
+      </div>
+      <div id="cycle-hrv" class="empty-state"></div>
+    </section>
+
     <section class="scan-section">
       <h2>AI Health Scan</h2>
       <div class="scan-date-row">

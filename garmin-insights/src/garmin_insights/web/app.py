@@ -19,6 +19,7 @@ from garmin_insights.agent import HealthAgent
 from garmin_insights.config import get_settings
 from garmin_insights.web.sessions import SessionManager
 from garmin_insights.web.visualizations import VisualizationService
+from garmin_insights.web.lifestyle_viz import LifestyleService
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +29,18 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _agent: HealthAgent | None = None
 _sessions: SessionManager | None = None
 _viz: VisualizationService | None = None
+_lifestyle: LifestyleService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _agent, _sessions, _viz
+    global _agent, _sessions, _viz, _lifestyle
     settings = get_settings()
     logger.info("Initialising health agent...")
     _agent = HealthAgent(settings)
     _sessions = SessionManager(ttl_seconds=3600, max_sessions=200)
     _viz = VisualizationService(settings.sqlite_db_path)
+    _lifestyle = LifestyleService(settings.sqlite_db_path)
     try:
         _agent.ensure_cache_fresh(days=90)
         logger.info("Agent ready.")
@@ -169,6 +172,56 @@ async def visualizations(
     except Exception as e:
         logger.exception("Visualizations query failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/lifestyle")
+async def lifestyle(
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Bundle the 19 lifestyle/health visualizations."""
+    if _lifestyle is None:
+        raise HTTPException(status_code=503, detail="Service not initialised")
+    start, end = _resolve_range(start, end, default_days=90)
+    loop = asyncio.get_event_loop()
+    svc = _lifestyle
+
+    async def _run(fn, *args):
+        try:
+            return await loop.run_in_executor(None, fn, *args)
+        except Exception as exc:
+            logger.warning("Lifestyle %s failed: %s", fn.__name__, exc)
+            return {"error": str(exc)}
+
+    results = await asyncio.gather(
+        _run(svc.behavior_dose_response, start, end),
+        _run(svc.caffeine_cutoff, start, end),
+        _run(svc.sleep_regularity, start, end),
+        _run(svc.social_jet_lag, start, end),
+        _run(svc.behavior_recovery_cost, start, end),
+        _run(svc.stress_resilience, start, end),
+        _run(svc.body_battery_decay, start, end),
+        _run(svc.illness_radar, start, end),
+        _run(svc.inflammation_index, start, end),
+        _run(svc.recovery_debt, start, end),
+        _run(svc.behavior_streak_calendar, start, end),
+        _run(svc.habit_half_life, end),
+        _run(svc.behavior_cooccurrence, start, end),
+        _run(svc.step_distribution, start, end),
+        _run(svc.fitness_age_delta, start, end),
+        _run(svc.who_intensity_target, start, end),
+        _run(svc.cycle_hrv, start, end),
+        _run(svc.stress_hour_fingerprint, start, end),
+        _run(svc.stress_trigger_leaderboard, start, end),
+    )
+    keys = [
+        "dose_response", "caffeine_cutoff", "sleep_regularity", "social_jet_lag",
+        "recovery_cost", "stress_resilience", "body_battery_decay", "illness_radar",
+        "inflammation_index", "recovery_debt", "streak_calendar", "habit_half_life",
+        "cooccurrence", "step_distribution", "fitness_age_delta", "who_target",
+        "cycle_hrv", "stress_hour_fingerprint", "stress_triggers",
+    ]
+    return {"date_range": {"start": start, "end": end}, **dict(zip(keys, results))}
 
 
 @app.get("/api/intraday/heatmap")

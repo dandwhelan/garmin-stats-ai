@@ -388,6 +388,7 @@ async function loadDashboard() {
     renderStressChart(summaries);
     loadVisualizations(date_range.start, date_range.end);
     loadIntradayHeatmap(activeHeatmapMetric);
+    loadLifestyle(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1256,4 +1257,633 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/* =========================================================
+   Lifestyle visualizations (19 charts)
+   ========================================================= */
+
+let lifestyleData = null;
+let activeDoseBehavior = null;
+
+async function loadLifestyle(start, end) {
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    const res = await fetch(`/api/lifestyle?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    lifestyleData = await res.json();
+    renderIllnessRadar(lifestyleData.illness_radar);
+    renderRecoveryDebt(lifestyleData.recovery_debt);
+    renderInflammation(lifestyleData.inflammation_index);
+    renderSRI(lifestyleData.sleep_regularity);
+    renderSocialJetLag(lifestyleData.social_jet_lag);
+    renderResilience(lifestyleData.stress_resilience);
+    renderBBDecay(lifestyleData.body_battery_decay);
+    renderRecoveryCost(lifestyleData.recovery_cost);
+    renderDoseControls(lifestyleData.dose_response);
+    renderCaffeineCutoff(lifestyleData.caffeine_cutoff);
+    renderHabitHalfLife(lifestyleData.habit_half_life);
+    renderStreakCalendar(lifestyleData.streak_calendar);
+    renderCooccurrence(lifestyleData.cooccurrence);
+    renderStressTriggers(lifestyleData.stress_triggers);
+    renderStepCDF(lifestyleData.step_distribution);
+    renderWhoTarget(lifestyleData.who_target);
+    renderStressFingerprint(lifestyleData.stress_hour_fingerprint);
+    renderFitnessAge(lifestyleData.fitness_age_delta);
+    renderCycleHrv(lifestyleData.cycle_hrv);
+  } catch (e) {
+    console.error('Lifestyle load failed:', e);
+  }
+}
+
+// 8. Illness radar
+function renderIllnessRadar(data) {
+  const series = data?.series || [];
+  const labels = series.map(r => r.date.slice(5));
+  destroyAux('illnessRadar');
+  const ctx = document.getElementById('illness-radar-chart');
+  if (!ctx) return;
+  auxCharts.illnessRadar = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'RHR z',         data: series.map(r => r.z_rhr),     borderColor: '#f87171', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'HRV z (inv)',   data: series.map(r => r.z_hrv_inv), borderColor: '#fbbf24', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Respiration z', data: series.map(r => r.z_resp),    borderColor: '#7c6af7', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Composite',     data: series.map(r => r.composite), borderColor: '#e2e8f0', backgroundColor: 'rgba(226,232,240,0.08)', tension: 0.3, spanGaps: true, fill: true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('z-score').y, suggestedMin: -2, suggestedMax: 3 } },
+      plugins: commonPlugins(),
+    },
+  });
+  const alertEl = document.getElementById('illness-alerts');
+  const alerts = data?.alerts || [];
+  if (alertEl) {
+    alertEl.innerHTML = alerts.length
+      ? alerts.map(a => `<div class="alert"><strong>${a.date}</strong> · ${a.note} (composite z=${a.composite})</div>`).join('')
+      : '<div class="alert ok">No illness signature in the current window.</div>';
+  }
+}
+
+// 10. Recovery debt
+function renderRecoveryDebt(rows) {
+  const data = rows || [];
+  const labels = data.map(r => r.date.slice(5));
+  destroyAux('recoveryDebt');
+  const ctx = document.getElementById('recovery-debt-chart');
+  if (!ctx) return;
+  auxCharts.recoveryDebt = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Cumulative debt', data: data.map(r => r.cumulative_debt), borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.2)', tension: 0.3, spanGaps: true, fill: true, yAxisID: 'y' },
+        { label: 'Wake battery',    data: data.map(r => r.wake_battery),    borderColor: '#34d399', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('debt').y, position: 'left' },
+        y1: { ...commonScales('battery').y, position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// 9. Inflammation index
+function renderInflammation(rows) {
+  const data = rows || [];
+  destroyAux('inflammation');
+  const ctx = document.getElementById('inflammation-chart');
+  if (!ctx) return;
+  auxCharts.inflammation = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'Inflammation z-sum',
+        data: data.map(r => r.index),
+        borderColor: '#fb923c',
+        backgroundColor: 'rgba(251,146,60,0.15)',
+        tension: 0.3, spanGaps: true, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: commonScales('z-sum').y },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+}
+
+// 3. Sleep Regularity Index
+function renderSRI(payload) {
+  const series = payload?.series || [];
+  destroyAux('sri');
+  const ctx = document.getElementById('sri-chart');
+  if (!ctx) return;
+  auxCharts.sri = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: series.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'SRI',
+        data: series.map(r => r.sri),
+        borderColor: '#7c6af7',
+        backgroundColor: 'rgba(124,106,247,0.15)',
+        tension: 0.3, spanGaps: true, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('SRI').y, min: 0, max: 100 } },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+  const cur = document.getElementById('sri-current');
+  if (cur) {
+    const v = payload?.current;
+    cur.textContent = v == null ? 'No data' : `Current SRI: ${v.toFixed(1)} / 100`;
+  }
+}
+
+// 4. Social jet lag
+function renderSocialJetLag(d) {
+  const el = document.getElementById('social-jetlag');
+  if (!el) return;
+  if (!d || d.weekday_midpoint_h == null || d.weekend_midpoint_h == null) {
+    el.innerHTML = '<div class="empty-state">Not enough sleep records</div>';
+    return;
+  }
+  const fmt = h => {
+    const x = ((h % 24) + 24) % 24;
+    const hh = Math.floor(x).toString().padStart(2, '0');
+    const mm = Math.round((x % 1) * 60).toString().padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+  el.innerHTML = `
+    <div class="clock">
+      <div class="clock-label">Weekday midpoint</div>
+      <div class="clock-time">${fmt(d.weekday_midpoint_h)}</div>
+      <div class="clock-sub">n=${d.weekday_n}</div>
+    </div>
+    <div class="clock">
+      <div class="clock-label">Weekend midpoint</div>
+      <div class="clock-time">${fmt(d.weekend_midpoint_h)}</div>
+      <div class="clock-sub">n=${d.weekend_n}</div>
+    </div>
+    <div class="clock delta ${d.delta_h > 1 ? 'warn' : 'ok'}">
+      <div class="clock-label">Δ Social jet lag</div>
+      <div class="clock-time">${d.delta_h.toFixed(2)}h</div>
+      <div class="clock-sub">${d.delta_h > 1 ? '⚠ &gt; 1h is metabolically significant' : 'Within healthy range'}</div>
+    </div>
+  `;
+}
+
+// 6. Stress resilience
+function renderResilience(rows) {
+  const data = rows || [];
+  destroyAux('resilience');
+  const ctx = document.getElementById('resilience-chart');
+  if (!ctx) return;
+  auxCharts.resilience = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'Resilience',
+        data: data.map(r => r.resilience),
+        borderColor: '#34d399',
+        backgroundColor: 'rgba(52,211,153,0.15)',
+        tension: 0.3, spanGaps: true, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('score').y, min: 0, max: 100 } },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+}
+
+// 7. Body battery decay slope
+function renderBBDecay(rows) {
+  const data = rows || [];
+  destroyAux('bbDecay');
+  const ctx = document.getElementById('bb-decay-chart');
+  if (!ctx) return;
+  auxCharts.bbDecay = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'Decay (pts/h)',
+        data: data.map(r => r.decay_per_hour),
+        backgroundColor: data.map(r => (r.decay_per_hour ?? 0) < -3 ? '#f87171' : '#7c6af7'),
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: commonScales('points/hour').y },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+}
+
+// 5. Behavior recovery cost
+function renderRecoveryCost(rows) {
+  const data = rows || [];
+  destroyAux('recoveryCost');
+  const ctx = document.getElementById('recovery-cost-chart');
+  if (!ctx) return;
+  auxCharts.recoveryCost = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(r => r.behavior),
+      datasets: [{
+        label: 'Median days to baseline',
+        data: data.map(r => r.median_recovery_days),
+        backgroundColor: '#fbbf24',
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales('days').x, ticks: { color: '#8892a4' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+      },
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
+          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          callbacks: {
+            afterBody: items => {
+              const r = data[items[0]?.dataIndex ?? 0];
+              return r ? [`${r.n_events} events · max ${r.max_recovery_days}d`] : '';
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+// 1. Behavior dose-response
+function renderDoseControls(payload) {
+  const behaviors = payload?.behaviors || [];
+  const ctrl = document.getElementById('dose-controls');
+  if (!ctrl) return;
+  if (!behaviors.length) {
+    ctrl.innerHTML = '';
+    destroyAux('dose');
+    const ctx = document.getElementById('dose-response-chart');
+    if (ctx) {
+      const c = ctx.getContext('2d');
+      c.clearRect(0, 0, ctx.width, ctx.height);
+    }
+    return;
+  }
+  if (!activeDoseBehavior || !behaviors.find(b => b.behavior === activeDoseBehavior)) {
+    activeDoseBehavior = behaviors[0].behavior;
+  }
+  ctrl.innerHTML = behaviors.map(b =>
+    `<button class="dose-toggle ${b.behavior === activeDoseBehavior ? 'active' : ''}" data-behavior="${escapeHtml(b.behavior)}">${escapeHtml(b.behavior)} (${b.n})</button>`
+  ).join('');
+  ctrl.querySelectorAll('.dose-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeDoseBehavior = btn.dataset.behavior;
+      renderDoseControls(payload);
+      renderDoseResponse(payload);
+    });
+  });
+  renderDoseResponse(payload);
+}
+
+function renderDoseResponse(payload) {
+  const behaviors = payload?.behaviors || [];
+  const target = behaviors.find(b => b.behavior === activeDoseBehavior);
+  if (!target) return;
+  const points = target.points || [];
+  destroyAux('dose');
+  const ctx = document.getElementById('dose-response-chart');
+  if (!ctx) return;
+  auxCharts.dose = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [
+        { label: 'Sleep score',     data: points.map(p => ({x: p.value, y: p.sleepScore})),     backgroundColor: '#4f9cf9' },
+        { label: 'HRV (ms)',        data: points.map(p => ({x: p.value, y: p.hrv})),            backgroundColor: '#34d399' },
+        { label: 'Deep sleep (h)*10', data: points.map(p => ({x: p.value, y: p.deepSleepHours == null ? null : p.deepSleepHours * 10})), backgroundColor: '#7c6af7' },
+        { label: 'RHR',             data: points.map(p => ({x: p.value, y: p.rhr})),            backgroundColor: '#f87171' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales(`${target.behavior} (logged value)`).x, type: 'linear' },
+        y: commonScales().y,
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// 2. Caffeine cutoff comparison
+function renderCaffeineCutoff(payload) {
+  const el = document.getElementById('caffeine-cutoff');
+  if (!el) return;
+  const groups = payload?.groups || [];
+  if (!groups.length || groups.every(g => g.n === 0)) {
+    el.innerHTML = '<div class="empty-state">Log "Caffeine" / "Late Caffeine" in Garmin Connect to populate</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="caffeine-row caffeine-head">
+      <div></div><div>n</div><div>Sleep</div><div>Deep h</div><div>HRV</div><div>Wake-ups</div>
+    </div>
+    ${groups.map(g => `
+      <div class="caffeine-row">
+        <div class="caffeine-label">${escapeHtml(g.group)}</div>
+        <div>${g.n}</div>
+        <div>${g.sleep_score ?? '—'}</div>
+        <div>${g.deep_sleep_h ?? '—'}</div>
+        <div>${g.hrv ?? '—'}</div>
+        <div>${g.awakenings ?? '—'}</div>
+      </div>
+    `).join('')}
+  `;
+}
+
+// 12. Habit half-life
+function renderHabitHalfLife(rows) {
+  const el = document.getElementById('habit-half-life');
+  if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="empty-state">No habits logged in last 90 days</div>';
+    return;
+  }
+  el.innerHTML = rows.map(r => {
+    const stale = r.days_since > 7 ? 'stale' : (r.days_since > 3 ? 'warn' : 'fresh');
+    return `
+      <div class="habit-row">
+        <div class="habit-name">${escapeHtml(r.behavior)}</div>
+        <div class="habit-meta">${r.frequency_30d}× /30d</div>
+        <div class="habit-days ${stale}">${r.days_since}d ago</div>
+      </div>`;
+  }).join('');
+}
+
+// 11. Streak calendar
+function renderStreakCalendar(payload) {
+  const el = document.getElementById('streak-calendar');
+  if (!el) return;
+  el.innerHTML = '';
+  const dates = payload?.dates || [];
+  const behaviors = payload?.behaviors || [];
+  if (!dates.length || !behaviors.length) {
+    el.innerHTML = '<div class="empty-state">No lifestyle journal entries</div>';
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'streak-grid';
+  grid.style.gridTemplateColumns = `140px repeat(${dates.length}, 1fr)`;
+  grid.appendChild(document.createElement('div'));
+  dates.forEach((d, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'streak-col-label';
+    lbl.textContent = (i % 7 === 0) ? d.slice(5) : '';
+    grid.appendChild(lbl);
+  });
+  behaviors.forEach(b => {
+    const lbl = document.createElement('div');
+    lbl.className = 'streak-row-label';
+    lbl.textContent = `${b.behavior} (${b.count})`;
+    grid.appendChild(lbl);
+    b.cells.forEach((v, i) => {
+      const cell = document.createElement('div');
+      cell.className = 'streak-cell';
+      cell.style.background = v == null ? '#1a1d27' : '#34d399';
+      cell.title = `${b.behavior} · ${dates[i]} · ${v == null ? '—' : v}`;
+      grid.appendChild(cell);
+    });
+  });
+  el.appendChild(grid);
+}
+
+// 13. Co-occurrence
+function renderCooccurrence(payload) {
+  const el = document.getElementById('cooccurrence-matrix');
+  if (!el) return;
+  el.innerHTML = '';
+  const keys = payload?.behaviors || [];
+  const matrix = payload?.matrix || [];
+  if (!keys.length) { el.innerHTML = '<div class="empty-state">No data</div>'; return; }
+  let max = 0;
+  matrix.forEach(row => row.forEach(v => { if (v > max) max = v; }));
+  const grid = document.createElement('div');
+  grid.className = 'correlation-grid';
+  grid.style.gridTemplateColumns = `120px repeat(${keys.length}, minmax(50px, 1fr))`;
+  grid.appendChild(document.createElement('div'));
+  keys.forEach(k => {
+    const h = document.createElement('div');
+    h.className = 'corr-col-label';
+    h.textContent = k;
+    grid.appendChild(h);
+  });
+  keys.forEach((rk, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'corr-row-label';
+    lbl.textContent = rk;
+    grid.appendChild(lbl);
+    matrix[i].forEach((v, j) => {
+      const cell = document.createElement('div');
+      cell.className = 'corr-cell';
+      const a = max ? v / max : 0;
+      cell.style.background = `rgba(124, 106, 247, ${0.15 + a * 0.7})`;
+      cell.textContent = v;
+      cell.title = `${rk} & ${keys[j]}: ${v} days`;
+      grid.appendChild(cell);
+    });
+  });
+  el.appendChild(grid);
+}
+
+// 19. Stress trigger leaderboard
+function renderStressTriggers(payload) {
+  const el = document.getElementById('stress-triggers');
+  if (!el) return;
+  const triggers = payload?.triggers || [];
+  if (!triggers.length) {
+    el.innerHTML = '<div class="empty-state">Not enough stress + lifestyle overlap</div>';
+    return;
+  }
+  const max = Math.max(...triggers.map(t => Math.abs(t.lift)), 0.001);
+  el.innerHTML = `
+    <div class="trigger-head">High-stress threshold: ${payload.top_quintile_threshold}% stress</div>
+    ${triggers.map(t => {
+      const w = Math.abs(t.lift) / max * 100;
+      const color = t.lift > 0 ? 'var(--red)' : 'var(--green)';
+      return `
+        <div class="trigger-row">
+          <div class="trigger-name">${escapeHtml(t.behavior)}</div>
+          <div class="trigger-bar"><div class="trigger-fill" style="width:${w}%;background:${color}"></div></div>
+          <div class="trigger-lift">${t.lift > 0 ? '+' : ''}${(t.lift * 100).toFixed(0)}pp</div>
+        </div>`;
+    }).join('')}
+  `;
+}
+
+// 14. Step CDF
+function renderStepCDF(payload) {
+  const sorted = payload?.sorted_steps || [];
+  destroyAux('stepCdf');
+  const ctx = document.getElementById('step-cdf-chart');
+  if (!ctx) return;
+  // Build CDF: rank vs steps
+  const points = sorted.map((v, i) => ({ x: 100 * i / Math.max(sorted.length - 1, 1), y: v }));
+  auxCharts.stepCdf = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'Steps survival',
+          data: points,
+          borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)',
+          tension: 0.1, fill: true, pointRadius: 0 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      parsing: false,
+      scales: {
+        x: { ...commonScales('% of days').x, type: 'linear', min: 0, max: 100 },
+        y: commonScales('steps').y,
+      },
+      plugins: commonPlugins({
+        legend: { display: false },
+        annotation: undefined,
+      }),
+    },
+  });
+  const stat = document.getElementById('step-cdf-stats');
+  if (stat) {
+    stat.innerHTML = payload && payload.median != null
+      ? `Median ${payload.median.toLocaleString()} steps · ${payload.pct_over_7500}% of days ≥ 7.5k · ${payload.pct_over_10000}% ≥ 10k`
+      : 'No step data';
+  }
+}
+
+// 16. WHO target
+function renderWhoTarget(payload) {
+  const weeks = payload?.weeks || [];
+  destroyAux('who');
+  const ctx = document.getElementById('who-target-chart');
+  if (!ctx) return;
+  auxCharts.who = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: weeks.map(w => w.week.slice(5)),
+      datasets: [
+        { label: 'Moderate',         data: weeks.map(w => w.moderate), backgroundColor: '#34d399', stack: 's' },
+        { label: 'Vigorous (×2)',    data: weeks.map(w => w.vigorous * 2), backgroundColor: '#f87171', stack: 's' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, ...commonScales().x },
+        y: { stacked: true, ...commonScales('min/wk equiv').y,
+             ticks: { color: '#8892a4' },
+             grid: { color: ctx => ctx.tick.value === 150 ? '#fbbf24' : '#2e3350' } },
+      },
+      plugins: commonPlugins({
+        annotation: undefined,
+        tooltip: {
+          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
+          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          callbacks: {
+            afterBody: items => {
+              const w = weeks[items[0]?.dataIndex];
+              return w ? [`${w.target_pct}% of WHO target`] : '';
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+// 18. Stress hour-of-day fingerprint
+function renderStressFingerprint(payload) {
+  destroyAux('stressFp');
+  const ctx = document.getElementById('stress-fingerprint-chart');
+  if (!ctx) return;
+  auxCharts.stressFp = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: (payload?.hours || []).map(h => `${h}:00`),
+      datasets: [
+        { label: 'Weekday', data: payload?.weekday || [], borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.4, spanGaps: true, fill: true },
+        { label: 'Weekend', data: payload?.weekend || [], borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)', tension: 0.4, spanGaps: true, fill: true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('avg stress').y, min: 0, max: 100 } },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// 15. VO2 max / fitness age
+function renderFitnessAge(rows) {
+  const data = rows || [];
+  destroyAux('fitnessAge');
+  const ctx = document.getElementById('fitness-age-chart');
+  if (!ctx) return;
+  if (!data.length) {
+    auxCharts.fitnessAge = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: { responsive: true, maintainAspectRatio: false } });
+    return;
+  }
+  // Find numeric columns (excluding 'date')
+  const numericKeys = Object.keys(data[0]).filter(k => k !== 'date' && typeof data[0][k] === 'number');
+  auxCharts.fitnessAge = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: numericKeys.map((k, i) => ({
+        label: k,
+        data: data.map(r => r[k]),
+        borderColor: ['#4f9cf9', '#34d399', '#fbbf24', '#7c6af7'][i % 4],
+        backgroundColor: 'transparent',
+        tension: 0.3, spanGaps: true,
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: commonScales().y },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// 17. Cycle HRV (placeholder)
+function renderCycleHrv(payload) {
+  const el = document.getElementById('cycle-hrv');
+  if (!el) return;
+  if (payload?.available === false) {
+    el.textContent = payload.note || 'Cycle data not available.';
+  } else {
+    el.textContent = 'Cycle visualization coming soon.';
+  }
 }
