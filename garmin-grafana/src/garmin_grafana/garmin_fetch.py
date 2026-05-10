@@ -9,7 +9,6 @@ try:
 except ImportError:
     from sqlite_manager import GarminDB
 import xml.etree.ElementTree as ET
-from garth.exc import GarthHTTPError
 from garminconnect import (
     Garmin,
     GarminConnectAuthenticationError,
@@ -106,7 +105,7 @@ def garmin_login():
         garmin.login(TOKEN_DIR)
         logging.info("login to Garmin Connect successful using stored session tokens.")
 
-    except (FileNotFoundError, GarthHTTPError, GarminConnectAuthenticationError):
+    except (FileNotFoundError, GarminConnectConnectionError, GarminConnectAuthenticationError):
         logging.warning("Session is expired or login information not present/incorrect. You'll need to log in again...login with your Garmin Connect credentials to generate them.")
         try:
             user_email = GARMINCONNECT_EMAIL or input("Enter Garminconnect Login e-mail: ")
@@ -119,7 +118,7 @@ def garmin_login():
                 mfa_code = input("MFA one-time code (via email or SMS): ")
                 garmin.resume_login(result2, mfa_code)
 
-            garmin.garth.dump(TOKEN_DIR)
+            garmin.client.dump(TOKEN_DIR)
             logging.info(f"Oauth tokens stored in '{TOKEN_DIR}' directory for future use")
 
             garmin.login(TOKEN_DIR)
@@ -128,7 +127,7 @@ def garmin_login():
 
         except (
             FileNotFoundError,
-            GarthHTTPError,
+            GarminConnectConnectionError,
             GarminConnectAuthenticationError,
             requests.exceptions.HTTPError,
         ) as err:
@@ -143,7 +142,7 @@ def write_points_to_db(points):
         if len(points) != 0:
             if TAG_MEASUREMENTS_WITH_USER_EMAIL:
                 for item in points:
-                    item['tags'].update({'User_ID': garmin_obj.garth.profile.get('userName','Unknown')})
+                    item['tags'].update({'User_ID': getattr(garmin_obj, 'display_name', None) or 'Unknown'})
             
             garmin_db.insert_points(points)
             logging.info("Success : updated SQLite database with new points")
