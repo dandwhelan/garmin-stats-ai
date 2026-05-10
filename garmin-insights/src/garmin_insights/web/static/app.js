@@ -386,10 +386,596 @@ async function loadDashboard() {
     renderRecoveryChart(summaries, baselines);
     renderActivityChart(summaries);
     renderStressChart(summaries);
+    loadVisualizations(date_range.start, date_range.end);
+    loadIntradayHeatmap(activeHeatmapMetric);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
 }
+
+// ---- Auxiliary visualizations ----
+let vizData = null;
+let activeBehaviorMetric = 'sleep';
+let activeHeatmapMetric = 'stress';
+
+async function loadVisualizations(start, end) {
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    const res = await fetch(`/api/visualizations?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    vizData = await res.json();
+    renderAcwrChart(vizData.training);
+    renderReadinessChart(vizData.training);
+    renderSleepTimeline(vizData.sleep_timeline);
+    renderBodyComposition(vizData.body_composition);
+    renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric);
+    renderAnomalyCalendar(vizData.anomaly_calendar);
+    renderHrZones(vizData.hr_zones);
+    renderCorrelationMatrix(vizData.correlations);
+  } catch (e) {
+    console.error('Visualizations load failed:', e);
+  }
+}
+
+async function loadIntradayHeatmap(metric) {
+  try {
+    const res = await fetch(`/api/intraday/heatmap?metric=${metric}&days=14`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderIntradayHeatmap(data);
+  } catch (e) {
+    console.error('Intraday heatmap load failed:', e);
+  }
+}
+
+function renderAcwrChart(training) {
+  const ts = training?.training_status || [];
+  const labels = ts.map(r => r.date.slice(5));
+
+  destroyAux('acwr');
+  const ctx = document.getElementById('acwr-chart');
+  if (!ctx) return;
+  auxCharts.acwr = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Acute load (7d)',
+          data: ts.map(r => r.acute_load ?? null),
+          borderColor: '#f87171',
+          backgroundColor: 'rgba(248,113,113,0.1)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'Chronic load (28d)',
+          data: ts.map(r => r.chronic_load ?? null),
+          borderColor: '#4f9cf9',
+          backgroundColor: 'rgba(79,156,249,0.1)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'ACWR (%)',
+          data: ts.map(r => r.acwr_percent ?? null),
+          borderColor: '#fbbf24',
+          backgroundColor: 'transparent',
+          borderDash: [4, 4],
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('load').y, position: 'left' },
+        y1: { ...commonScales('ACWR %').y, position: 'right', grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderReadinessChart(training) {
+  const tr = training?.training_readiness || [];
+  const labels = tr.map(r => r.date.slice(5));
+
+  destroyAux('readiness');
+  const ctx = document.getElementById('readiness-chart');
+  if (!ctx) return;
+  auxCharts.readiness = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Sleep',     data: tr.map(r => r.f_sleep ?? 0),    backgroundColor: '#4f9cf9' },
+        { label: 'Recovery',  data: tr.map(r => r.f_recovery ?? 0), backgroundColor: '#34d399' },
+        { label: 'ACWR',      data: tr.map(r => r.f_acwr ?? 0),     backgroundColor: '#fbbf24' },
+        { label: 'Stress',    data: tr.map(r => r.f_stress ?? 0),   backgroundColor: '#f87171' },
+        { label: 'HRV',       data: tr.map(r => r.f_hrv ?? 0),      backgroundColor: '#7c6af7' },
+        {
+          label: 'Score',
+          type: 'line',
+          data: tr.map(r => r.score ?? null),
+          borderColor: '#e2e8f0',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, pointRadius: 3,
+          yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, ...commonScales().x },
+        y: { stacked: true, ...commonScales('factor %').y, beginAtZero: true },
+        y1: { ...commonScales('score').y, position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderSleepTimeline(timeline) {
+  const data = timeline || [];
+  const labels = data.map(r => r.date.slice(5));
+
+  destroyAux('sleepTimeline');
+  const ctx = document.getElementById('sleep-timeline-chart');
+  if (!ctx) return;
+
+  // Plot bedtime (hours past noon, e.g. 23:00 = 23) and waketime separately.
+  // To get meaningful "sleep band", plot bedtime as start, waketime as end.
+  auxCharts.sleepTimeline = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Bedtime',
+          data: data.map(r => r.bedtime),
+          borderColor: '#7c6af7',
+          backgroundColor: 'transparent',
+          tension: 0.25,
+          pointRadius: 3, spanGaps: true,
+        },
+        {
+          label: 'Waketime',
+          data: data.map(r => r.waketime),
+          borderColor: '#fbbf24',
+          backgroundColor: 'transparent',
+          tension: 0.25,
+          pointRadius: 3, spanGaps: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: commonScales().x,
+        y: {
+          ...commonScales('hour of day').y,
+          ticks: {
+            color: '#8892a4',
+            callback: v => {
+              const h = ((v % 24) + 24) % 24;
+              return `${Math.floor(h).toString().padStart(2, '0')}:${Math.round((h % 1) * 60).toString().padStart(2, '0')}`;
+            },
+          },
+          reverse: false,
+        },
+      },
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a',
+          borderColor: '#2e3350',
+          borderWidth: 1,
+          titleColor: '#e2e8f0',
+          bodyColor: '#8892a4',
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed.y;
+              if (v == null) return `${ctx.dataset.label}: —`;
+              const h = ((v % 24) + 24) % 24;
+              const hh = Math.floor(h).toString().padStart(2, '0');
+              const mm = Math.round((h % 1) * 60).toString().padStart(2, '0');
+              return `${ctx.dataset.label}: ${hh}:${mm}`;
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+function renderBodyComposition(records) {
+  const data = records || [];
+  const labels = data.map(r => r.date.slice(5));
+
+  destroyAux('bodyComp');
+  const ctx = document.getElementById('body-comp-chart');
+  if (!ctx) return;
+
+  if (!data.length) {
+    auxCharts.bodyComp = new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
+    });
+    return;
+  }
+
+  auxCharts.bodyComp = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Weight (kg)',
+          data: data.map(r => r.weight ?? null),
+          borderColor: '#4f9cf9',
+          backgroundColor: 'rgba(79,156,249,0.1)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'Body fat %',
+          data: data.map(r => r.body_fat ?? null),
+          borderColor: '#f87171',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+        },
+        {
+          label: 'Muscle mass',
+          data: data.map(r => r.muscle_mass ?? null),
+          borderColor: '#34d399',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+          borderDash: [4, 4],
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('kg').y, position: 'left' },
+        y1: { ...commonScales('%').y, position: 'right', grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderBehaviorImpact(rows, metric) {
+  const data = (rows || []).filter(r => r[`${metric}_with`] != null && r[`${metric}_without`] != null);
+  const labels = data.map(r => r.behavior);
+  const ctx = document.getElementById('behavior-impact-chart');
+  if (!ctx) return;
+
+  destroyAux('behavior');
+
+  const note = document.getElementById('behavior-note');
+  if (note) {
+    note.textContent = data.length
+      ? `Showing ${data.length} behavior${data.length === 1 ? '' : 's'} with ≥3 occurrences. Bars show the average ${metric.toUpperCase()} on days WITH vs WITHOUT the behavior.`
+      : 'Not enough lifestyle journal entries to compare. Log behaviours in Garmin Connect to populate this chart.';
+  }
+
+  auxCharts.behavior = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: `Without (${metric})`,
+          data: data.map(r => r[`${metric}_without`]),
+          backgroundColor: '#3a3f5a',
+        },
+        {
+          label: `With (${metric})`,
+          data: data.map(r => r[`${metric}_with`]),
+          backgroundColor: '#4f9cf9',
+        },
+      ],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+      },
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a',
+          borderColor: '#2e3350',
+          borderWidth: 1,
+          titleColor: '#e2e8f0',
+          bodyColor: '#8892a4',
+          callbacks: {
+            afterBody: items => {
+              const i = items[0]?.dataIndex;
+              if (i == null) return '';
+              const r = data[i];
+              const delta = r[`${metric}_delta`];
+              const sign = delta >= 0 ? '+' : '';
+              return [`Δ ${sign}${delta} (${r.n_with} with / ${r.n_without} without)`];
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+function renderAnomalyCalendar(payload) {
+  const container = document.getElementById('anomaly-calendar');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const { dates = [], keys = [], matrix = [] } = payload || {};
+  if (!dates.length) {
+    container.innerHTML = '<div class="empty-state">No data in range</div>';
+    return;
+  }
+
+  const labelMap = {
+    sleepScore: 'Sleep',
+    avgOvernightHrv: 'HRV',
+    restingHeartRate: 'RHR',
+    stressPercentage: 'Stress',
+    bodyBatteryAtWakeTime: 'Battery',
+  };
+
+  // For metrics where lower is better (RHR, stress), flip sign so green = good.
+  const inverted = new Set(['restingHeartRate', 'stressPercentage']);
+
+  function colorFor(z, key) {
+    if (z == null) return '#1a1d27';
+    const adj = inverted.has(key) ? -z : z;
+    // Clamp z between -3 and +3
+    const c = Math.max(-3, Math.min(3, adj));
+    if (c >= 0) {
+      const a = Math.min(1, c / 2);
+      return `rgba(52, 211, 153, ${0.15 + a * 0.7})`;
+    }
+    const a = Math.min(1, -c / 2);
+    return `rgba(248, 113, 113, ${0.15 + a * 0.7})`;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'anomaly-grid';
+  grid.style.gridTemplateColumns = `120px repeat(${dates.length}, 1fr)`;
+
+  // Header row
+  grid.appendChild(document.createElement('div'));
+  dates.forEach(d => {
+    const h = document.createElement('div');
+    h.className = 'anomaly-col-label';
+    h.textContent = d.slice(5);
+    grid.appendChild(h);
+  });
+
+  keys.forEach((key, i) => {
+    const label = document.createElement('div');
+    label.className = 'anomaly-row-label';
+    label.textContent = labelMap[key] || key;
+    grid.appendChild(label);
+    matrix[i].forEach((z, j) => {
+      const cell = document.createElement('div');
+      cell.className = 'anomaly-cell';
+      cell.style.background = colorFor(z, key);
+      cell.title = `${labelMap[key] || key} · ${dates[j]}\nz = ${z == null ? '—' : z.toFixed(2)}`;
+      grid.appendChild(cell);
+    });
+  });
+
+  container.appendChild(grid);
+}
+
+function renderHrZones(payload) {
+  const rows = payload?.by_type || [];
+  const ctx = document.getElementById('hr-zones-chart');
+  if (!ctx) return;
+
+  destroyAux('hrZones');
+  auxCharts.hrZones = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.activity_type),
+      datasets: [
+        { label: 'Z1 warm-up',  data: rows.map(r => r.z1), backgroundColor: '#4f9cf9' },
+        { label: 'Z2 easy',     data: rows.map(r => r.z2), backgroundColor: '#34d399' },
+        { label: 'Z3 aerobic',  data: rows.map(r => r.z3), backgroundColor: '#fbbf24' },
+        { label: 'Z4 threshold', data: rows.map(r => r.z4), backgroundColor: '#fb923c' },
+        { label: 'Z5 max',      data: rows.map(r => r.z5), backgroundColor: '#f87171' },
+      ],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, ...commonScales('minutes').x, ticks: { color: '#8892a4' } },
+        y: { stacked: true, ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderCorrelationMatrix(payload) {
+  const container = document.getElementById('correlation-matrix');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const { keys = [], matrix = [] } = payload || {};
+  if (!keys.length || !matrix.length) {
+    container.innerHTML = '<div class="empty-state">Not enough data</div>';
+    return;
+  }
+
+  const shortNames = {
+    sleepScore: 'Sleep',
+    avgOvernightHrv: 'HRV',
+    restingHeartRate: 'RHR',
+    stressPercentage: 'Stress',
+    bodyBatteryAtWakeTime: 'Battery',
+    totalSteps: 'Steps',
+    deepSleepSeconds: 'Deep',
+    remSleepSeconds: 'REM',
+    moderateIntensityMinutes: 'Mod min',
+    vigorousIntensityMinutes: 'Vig min',
+  };
+
+  function colorFor(v) {
+    if (v == null || isNaN(v)) return '#1a1d27';
+    if (v >= 0) {
+      const a = Math.min(1, v);
+      return `rgba(79, 156, 249, ${0.15 + a * 0.7})`;
+    }
+    const a = Math.min(1, -v);
+    return `rgba(248, 113, 113, ${0.15 + a * 0.7})`;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'correlation-grid';
+  grid.style.gridTemplateColumns = `100px repeat(${keys.length}, minmax(60px, 1fr))`;
+
+  // Header row
+  grid.appendChild(document.createElement('div'));
+  keys.forEach(k => {
+    const h = document.createElement('div');
+    h.className = 'corr-col-label';
+    h.textContent = shortNames[k] || k;
+    grid.appendChild(h);
+  });
+
+  keys.forEach((rowKey, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'corr-row-label';
+    lbl.textContent = shortNames[rowKey] || rowKey;
+    grid.appendChild(lbl);
+    matrix[i].forEach((v, j) => {
+      const cell = document.createElement('div');
+      cell.className = 'corr-cell';
+      cell.style.background = colorFor(v);
+      cell.textContent = (v ?? 0).toFixed(2);
+      cell.title = `${shortNames[rowKey] || rowKey} ↔ ${shortNames[keys[j]] || keys[j]}: ${v == null ? '—' : v.toFixed(2)}`;
+      grid.appendChild(cell);
+    });
+  });
+
+  container.appendChild(grid);
+}
+
+function renderIntradayHeatmap(data) {
+  const container = document.getElementById('intraday-heatmap');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const { dates = [], hours = [], matrix = [], metric } = data || {};
+  if (!dates.length) {
+    container.innerHTML = '<div class="empty-state">No intraday data available</div>';
+    return;
+  }
+
+  // Determine value range for the metric
+  let min = Infinity, max = -Infinity;
+  matrix.forEach(row => row.forEach(v => {
+    if (v != null) { if (v < min) min = v; if (v > max) max = v; }
+  }));
+  if (!isFinite(min) || !isFinite(max) || min === max) { min = 0; max = 100; }
+
+  // Color: stress (red high), body_battery (green high), heart_rate (orange high)
+  const palette = {
+    stress:        ['#1a1d27', '#fbbf24', '#f87171'],
+    body_battery:  ['#1a1d27', '#4f9cf9', '#34d399'],
+    heart_rate:    ['#1a1d27', '#7c6af7', '#f87171'],
+  };
+  const stops = palette[metric] || palette.stress;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function hexToRgb(h) {
+    const x = h.replace('#', '');
+    return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)];
+  }
+  const c0 = hexToRgb(stops[0]), c1 = hexToRgb(stops[1]), c2 = hexToRgb(stops[2]);
+  function colorFor(v) {
+    if (v == null) return '#0f1117';
+    const t = (v - min) / (max - min);
+    const c = t < 0.5
+      ? c0.map((x, i) => lerp(x, c1[i], t * 2))
+      : c1.map((x, i) => lerp(x, c2[i], (t - 0.5) * 2));
+    return `rgb(${c.map(Math.round).join(',')})`;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'heatmap-grid';
+  grid.style.gridTemplateColumns = `60px repeat(24, 1fr)`;
+
+  // Header
+  grid.appendChild(document.createElement('div'));
+  hours.forEach(h => {
+    const el = document.createElement('div');
+    el.className = 'heatmap-hour-label';
+    el.textContent = h % 3 === 0 ? `${h}h` : '';
+    grid.appendChild(el);
+  });
+
+  dates.forEach((d, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'heatmap-date-label';
+    lbl.textContent = d.slice(5);
+    grid.appendChild(lbl);
+    matrix[i].forEach((v, h) => {
+      const cell = document.createElement('div');
+      cell.className = 'heatmap-cell';
+      cell.style.background = colorFor(v);
+      cell.title = `${d} ${h.toString().padStart(2, '0')}:00 — ${v == null ? '—' : v}`;
+      grid.appendChild(cell);
+    });
+  });
+
+  container.appendChild(grid);
+
+  const legend = document.getElementById('intraday-heatmap-legend');
+  if (legend) {
+    legend.innerHTML = `
+      <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
+      <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
+      <span><strong>${max.toFixed(0)}</strong></span>
+    `;
+  }
+}
+
+// Toggle handlers for new charts
+document.querySelectorAll('.heatmap-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.heatmap-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeHeatmapMetric = btn.dataset.metric;
+    loadIntradayHeatmap(activeHeatmapMetric);
+  });
+});
+
+document.querySelectorAll('.behavior-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.behavior-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeBehaviorMetric = btn.dataset.metric;
+    if (vizData) renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric);
+  });
+});
 
 // Chart metric toggles
 document.querySelectorAll('.chart-toggle').forEach(btn => {

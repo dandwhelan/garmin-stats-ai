@@ -126,6 +126,104 @@
       </section>
     </div>
 
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Intraday Heatmap</h2>
+        <div class="chart-controls">
+          <button class="heatmap-toggle active" data-metric="stress">Stress</button>
+          <button class="heatmap-toggle" data-metric="body_battery">Body Battery</button>
+          <button class="heatmap-toggle" data-metric="heart_rate">Heart Rate</button>
+        </div>
+      </div>
+      <div class="heatmap-container" id="intraday-heatmap"></div>
+      <div class="heatmap-legend" id="intraday-heatmap-legend"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Training Load — Acute vs Chronic (ACWR)</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="acwr-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Training Readiness — Factor Breakdown</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="readiness-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Sleep Timeline — Bedtime / Waketime</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="sleep-timeline-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Body Composition</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="body-comp-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Impact (last 90 days)</h2>
+        <div class="chart-controls">
+          <button class="behavior-toggle active" data-metric="sleep">Sleep Score</button>
+          <button class="behavior-toggle" data-metric="hrv">HRV</button>
+          <button class="behavior-toggle" data-metric="rhr">Resting HR</button>
+        </div>
+      </div>
+      <div class="chart-container chart-container-tall">
+        <canvas id="behavior-impact-chart"></canvas>
+      </div>
+      <div class="behavior-note" id="behavior-note"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Anomaly Calendar (z-score vs 30d baseline)</h2>
+        </div>
+        <div class="anomaly-container" id="anomaly-calendar"></div>
+        <div class="anomaly-legend">
+          <span><span class="legend-swatch" style="background:#f87171"></span> low / outside band</span>
+          <span><span class="legend-swatch" style="background:#3a3f5a"></span> within ±1σ</span>
+          <span><span class="legend-swatch" style="background:#34d399"></span> high / above band</span>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>HR Zone Distribution</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="hr-zones-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Metric Correlation Matrix</h2>
+      </div>
+      <div class="correlation-container" id="correlation-matrix"></div>
+    </section>
+
     <section class="scan-section">
       <h2>AI Health Scan</h2>
       <div class="scan-date-row">

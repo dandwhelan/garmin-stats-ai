@@ -306,6 +306,137 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .chart-toggle.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
 
 .chart-container { position: relative; height: 260px; }
+.chart-container-tall { height: 360px; }
+
+/* ---- Heatmap (intraday) ---- */
+.heatmap-container { overflow-x: auto; padding: 4px 0; }
+.heatmap-grid {
+  display: grid;
+  gap: 2px;
+  min-width: 600px;
+}
+.heatmap-cell {
+  aspect-ratio: 1 / 1;
+  min-width: 16px;
+  border-radius: 2px;
+  cursor: default;
+  transition: transform 0.1s;
+}
+.heatmap-cell:hover { transform: scale(1.4); z-index: 2; outline: 1px solid var(--text); }
+.heatmap-hour-label, .heatmap-date-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: center;
+  align-self: center;
+}
+.heatmap-date-label { text-align: right; padding-right: 6px; }
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.heatmap-gradient {
+  display: inline-block;
+  width: 200px;
+  height: 12px;
+  border-radius: 6px;
+}
+
+/* ---- Anomaly calendar ---- */
+.anomaly-container { overflow-x: auto; }
+.anomaly-grid {
+  display: grid;
+  gap: 2px;
+  min-width: 600px;
+}
+.anomaly-cell {
+  aspect-ratio: 1 / 1;
+  min-width: 14px;
+  border-radius: 2px;
+  background: #1a1d27;
+}
+.anomaly-cell:hover { outline: 1px solid var(--text); }
+.anomaly-row-label, .anomaly-col-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  align-self: center;
+}
+.anomaly-row-label { text-align: right; padding-right: 8px; }
+.anomaly-col-label { text-align: center; }
+.anomaly-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+/* ---- Correlation matrix ---- */
+.correlation-container { overflow-x: auto; }
+.correlation-grid {
+  display: grid;
+  gap: 2px;
+  min-width: 600px;
+}
+.corr-cell {
+  font-size: 0.72rem;
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 3px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.corr-row-label, .corr-col-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  align-self: center;
+  padding: 4px;
+}
+.corr-row-label { text-align: right; }
+.corr-col-label { text-align: center; }
+
+/* ---- Misc ---- */
+.empty-state {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px;
+  font-style: italic;
+  font-size: 0.9rem;
+}
+.behavior-note {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 12px;
+  font-style: italic;
+}
+.heatmap-toggle, .behavior-toggle {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.heatmap-toggle:hover, .behavior-toggle:hover { color: var(--text); border-color: var(--accent2); }
+.heatmap-toggle.active, .behavior-toggle.active {
+  background: var(--accent2);
+  border-color: var(--accent2);
+  color: #fff;
+}
 
 .charts-row {
   display: grid;
