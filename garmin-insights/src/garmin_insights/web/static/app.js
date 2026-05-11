@@ -68,17 +68,23 @@ function formatValue(metric, value) {
   return v.toFixed(cfg.decimals ?? 1) + (cfg.unit || '');
 }
 
+function getLocalToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function getLatestAndPrev(summaries, key) {
   const sorted = [...summaries].sort((a, b) => b.date.localeCompare(a.date));
-  // skip today (potentially incomplete) for cumulative metrics
+  // For cumulative metrics, filter out today's incomplete data using the local calendar date
+  // (avoids timezone bugs where today's partial data appears under yesterday's date)
   const cumulativeMetrics = ['totalSteps', 'stressPercentage'];
-  const skip = cumulativeMetrics.includes(key) ? 1 : 0;
-  const latest = sorted[skip];
-  const prev = sorted[skip + 1];
+  const pool = cumulativeMetrics.includes(key)
+    ? sorted.filter(s => s.date < getLocalToday())
+    : sorted;
   return {
-    value: latest?.[key] ?? null,
-    prevValue: prev?.[key] ?? null,
-    date: latest?.date,
+    value: pool[0]?.[key] ?? null,
+    prevValue: pool[1]?.[key] ?? null,
+    date: pool[0]?.date,
   };
 }
 
@@ -1578,6 +1584,26 @@ function renderDoseResponse(payload) {
   destroyAux('dose');
   const ctx = document.getElementById('dose-response-chart');
   if (!ctx) return;
+
+  // Detect binary behaviors: all x-values identical (no quantity variation)
+  const xs = points.map(p => p.value).filter(v => v != null);
+  const uniqueXs = new Set(xs);
+  if (uniqueXs.size <= 1) {
+    ctx.style.display = 'none';
+    let note = ctx.parentElement.querySelector('.dose-binary-note');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'dose-binary-note empty-state';
+      ctx.parentElement.appendChild(note);
+    }
+    note.textContent = `"${activeDoseBehavior}" is logged as a yes/no behavior without a numeric quantity, so dose-response analysis isn't meaningful — all ${points.length} occurrences have the same x-value. Log it with a quantity (e.g. "Alcohol: 2") to use this chart.`;
+    return;
+  }
+
+  // Clear any previous binary note
+  ctx.style.display = '';
+  ctx.parentElement.querySelector('.dose-binary-note')?.remove();
+
   auxCharts.dose = new Chart(ctx, {
     type: 'scatter',
     data: {

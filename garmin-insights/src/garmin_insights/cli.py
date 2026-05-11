@@ -188,13 +188,15 @@ def cmd_web(args: argparse.Namespace) -> None:
 
     console = Console(theme=_THEME)
     settings = get_settings()
+    host = args.host or settings.web_host
+    port = args.port or settings.web_port
     console.print(Panel(
         f"[bold]🌐 Garmin Health Insights — Web Interface[/bold]\n\n"
         f"[dim]Dashboard + AI Chat\n"
-        f"Open: [link]http://{settings.web_host}:{settings.web_port}[/link][/dim]",
+        f"Open: [link]http://{host}:{port}[/link][/dim]",
         border_style="cyan",
     ))
-    run_server()
+    run_server(host=host, port=port)
 
 
 def cmd_schedule(args: argparse.Namespace) -> None:
@@ -271,7 +273,9 @@ def main() -> None:
     scan_p.add_argument("--weekly", action="store_true", help="Full weekly summary")
 
     # web
-    sub.add_parser("web", help="Start the web interface (dashboard + AI chat)")
+    web_p = sub.add_parser("web", help="Start the web interface (dashboard + AI chat)")
+    web_p.add_argument("--port", type=int, default=None, help="Port to listen on (overrides WEB_PORT env var, default 8080)")
+    web_p.add_argument("--host", type=str, default=None, help="Host to bind to (overrides WEB_HOST env var, default 0.0.0.0)")
 
     # schedule
     sub.add_parser("schedule", help="Start 4x daily scan scheduler")

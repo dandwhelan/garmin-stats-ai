@@ -1382,6 +1382,8 @@ if __name__ == "__main__":
 
     # %%
     if MANUAL_START_DATE:
+        logging.warning(f"MANUAL_START_DATE is set to '{MANUAL_START_DATE}' — overrides automatic date detection. Set in .env or override-default-vars.env. Remove to use auto mode.")
+        logging.warning(f"MANUAL_END_DATE is '{MANUAL_END_DATE}' (defaults to today if not explicitly set).")
         fetch_write_bulk(MANUAL_START_DATE, MANUAL_END_DATE)
         logging.info(f"Bulk update success : Fetched all available health metrics for date range {MANUAL_START_DATE} to {MANUAL_END_DATE}")
         exit(0)
@@ -1411,11 +1413,17 @@ if __name__ == "__main__":
         
         while True:
             last_watch_sync_time_UTC = datetime.fromtimestamp(int(garmin_obj.get_device_last_used().get('lastUsedDeviceUploadTime')/1000)).astimezone(pytz.timezone("UTC"))
-            if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC:
-                logging.info(f"Update found : Current watch sync time is {last_watch_sync_time_UTC} UTC")
-                fetch_write_bulk((last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d'), (last_watch_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')) # Using local dates for deciding which dates to fetch in current iteration (see issue #25)
+            # Use today's local date as the end date rather than lastUsedDeviceUploadTime.
+            # The watch API upload timestamp can be stale (e.g. still showing yesterday) even when
+            # today's data is already available on Garmin servers, causing the fetch to miss
+            # recent days. Fetching up to today is safe — empty dates simply return no records.
+            today_local_str = datetime.today().strftime('%Y-%m-%d')
+            start_local_str = (last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')
+            if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC or start_local_str < today_local_str:
+                logging.info(f"Update found : fetching {start_local_str} → {today_local_str} (watch last upload: {last_watch_sync_time_UTC} UTC)")
+                fetch_write_bulk(start_local_str, today_local_str)
                 last_influxdb_sync_time_UTC = last_watch_sync_time_UTC
             else:
-                logging.info(f"No new data found : Current watch and influxdb sync time is {last_watch_sync_time_UTC} UTC")
+                logging.info(f"No new data found : DB sync={last_influxdb_sync_time_UTC} UTC, watch upload={last_watch_sync_time_UTC} UTC")
             logging.info(f"waiting for {UPDATE_INTERVAL_SECONDS} seconds before next automatic update calls")
             time.sleep(UPDATE_INTERVAL_SECONDS)
