@@ -312,7 +312,7 @@ async def scan(body: ScanRequest):
 # Entry point
 # ------------------------------------------------------------------
 
-def run_server():
+def run_server(host: str | None = None, port: int | None = None):
     import uvicorn
     settings = get_settings()
     logging.basicConfig(
@@ -322,8 +322,8 @@ def run_server():
     )
     uvicorn.run(
         "garmin_insights.web.app:app",
-        host=settings.web_host,
-        port=settings.web_port,
+        host=host or settings.web_host,
+        port=port or settings.web_port,
         reload=False,
     )
 

@@ -291,6 +291,74 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 
 .chart-controls { display: flex; gap: 6px; flex-wrap: wrap; }
 
+/* ---- Info icons & tooltips ---- */
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: help;
+  position: relative;
+  vertical-align: middle;
+  margin-left: 5px;
+  line-height: 1;
+  border: 1px solid currentColor;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+
+.info-icon:hover,
+.info-icon:focus { color: var(--accent); outline: none; }
+
+.info-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  z-index: 600;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.55;
+  padding: 10px 13px;
+  width: 270px;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  transition: opacity 0.15s;
+  text-align: left;
+  white-space: normal;
+}
+
+/* Arrow */
+.info-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border);
+}
+
+.info-icon:hover .info-tooltip,
+.info-icon:focus .info-tooltip { visibility: visible; opacity: 1; }
+
+/* Ensure tooltip doesn't get clipped inside metric cards */
+.metric-card { overflow: visible; }
+.metric-label { overflow: visible; }
+
 .chart-toggle {
   background: var(--surface2);
   border: 1px solid var(--border);
