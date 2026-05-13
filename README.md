@@ -5,7 +5,7 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 ## Project Structure
 
 - **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
-- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat) and CLI, powered by Claude (`claude-opus-4-7`).
+- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat) and CLI, powered by Claude (`claude-sonnet-4-6` by default; override with `CLAUDE_MODEL=claude-opus-4-7`).
 
 ## Prerequisites
 
@@ -46,8 +46,17 @@ GARMINCONNECT_PASSWORD=yourpassword
 # Shared database path (use an absolute path)
 SQLITE_DB_PATH=/home/yourname/garmin-stats-ai/garmin.db
 
+# Token cache directory (optional — default: ~/.garminconnect)
+TOKEN_DIR=~/.garminconnect
+
 # Claude AI (for garmin-insights)
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional overrides
+CLAUDE_MODEL=claude-opus-4-7   # default: claude-sonnet-4-6
+SCAN_TIMES=06:00,12:00,18:00,22:00
+# Multi-user mode (see "Multi-user setup" section below)
+# USERS=alice:/data/alice.db,bob:/data/bob.db
 ```
 
 ## Usage
@@ -81,6 +90,36 @@ garmin-insights scan          # one-off general health scan
 garmin-insights scan --weekly # full weekly summary
 garmin-insights status        # check DB + API connectivity
 ```
+
+## Multi-user setup
+
+Multiple Garmin accounts can share a single server instance. Each user gets their own SQLite database and Garmin token directory.
+
+**1. Create per-user env files** (see `users/alice.env.example` and `users/bob.env.example` for templates):
+
+```bash
+# users/alice.env
+GARMINCONNECT_EMAIL=alice@example.com
+GARMINCONNECT_PASSWORD=alices_password
+SQLITE_DB_PATH=/home/pi/garmin-data/alice.db
+TOKEN_DIR=/home/pi/.garminconnect-alice
+```
+
+**2. Fetch data per user** (run separately for each account):
+
+```bash
+# Load alice's env then fetch
+set -a && source users/alice.env && set +a
+python -m garmin_grafana.garmin_fetch
+```
+
+**3. Tell the insights server about all users** via the `USERS` env var:
+
+```bash
+USERS=alice:/home/pi/garmin-data/alice.db,bob:/home/pi/garmin-data/bob.db
+```
+
+The web interface routes each logged-in user to their own database. When `USERS` is unset the app runs in single-user mode using `SQLITE_DB_PATH`.
 
 ## Example questions for the chat
 
@@ -123,7 +162,7 @@ Raw Garmin data           →  Daily summary cache    →  Statistical analysis 
 - **Multi-signal illness detector** — combines RHR + HRV + respiration z-scores against personal baseline (Quer 2021)
 - **Social jet lag detector** — compares weekday vs. weekend sleep duration variance
 
-**3. Claude AI agent** — Uses `claude-opus-4-7` with adaptive thinking. The agent has 17 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
+**3. Claude AI agent** — Uses `claude-sonnet-4-6` by default (or `claude-opus-4-7` if `CLAUDE_MODEL` is set) with extended thinking. The agent has 17 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
 
 ### What the agent can answer
 
@@ -194,9 +233,9 @@ The agent has **34 evidence-backed insight rules** in `garmin-insights/src/garmi
 
 ## AI Architecture (technical)
 
-The agent uses **Claude `claude-opus-4-7`** with:
+The agent uses **Claude `claude-sonnet-4-6`** by default (set `CLAUDE_MODEL=claude-opus-4-7` for Opus) with:
 
-- **Adaptive thinking** — Claude reasons about complex health patterns before responding
+- **Extended thinking** — Claude reasons about complex health patterns before responding (adaptive mode for Opus, 8k-token budget for Sonnet)
 - **Prompt caching** — the large medical knowledge system prompt (~2.6k tokens) is cached, reducing API costs by ~80% on repeat queries
 - **17 analysis tools** — query daily metrics, sleep, activity, body composition, training readiness, lifestyle behaviours; detect trends, anomalies, correlations; the multi-signal illness scanner; social-jet-lag detector; baselines; user profile / session memory
 - **34 medical rules** — full knowledge base injected into the system prompt
