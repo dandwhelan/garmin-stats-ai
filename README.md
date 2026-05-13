@@ -43,7 +43,7 @@ garmin-stats-ai/
 GARMINCONNECT_EMAIL=your@email.com
 GARMINCONNECT_PASSWORD=yourpassword
 
-# Shared database path (use an absolute path)
+# Database path — single-user mode only (ignored when USERS is set)
 SQLITE_DB_PATH=/home/yourname/garmin-stats-ai/garmin.db
 
 # Token cache directory (optional — default: ~/.garminconnect)
@@ -55,7 +55,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Optional overrides
 CLAUDE_MODEL=claude-opus-4-7   # default: claude-sonnet-4-6
 SCAN_TIMES=06:00,12:00,18:00,22:00
-# Multi-user mode (see "Multi-user setup" section below)
+
+# Multi-user mode — replaces SQLITE_DB_PATH (see "Multi-user setup" section below)
 # USERS=alice:/data/alice.db,bob:/data/bob.db
 ```
 
