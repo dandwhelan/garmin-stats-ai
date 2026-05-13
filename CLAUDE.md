@@ -42,6 +42,7 @@ garmin-insights status        # check DB + API connectivity
 |------|---------|
 | `garmin-insights/src/garmin_insights/agent.py` | Core Claude agent — tool-calling loop, prompt caching, streaming |
 | `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (Anthropic JSON schema) + handler methods |
+| `garmin-insights/src/garmin_insights/tools/analysis_tools.py` | Statistical engine — Welch's t-test, linear regression, z-score anomaly detection, Pearson correlation, illness detector, social-jet-lag detector |
 | `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard, scan endpoints |
 | `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js` |
 | `garmin-insights/src/garmin_insights/db/sqlite_repo.py` | SQLite query layer (pandas DataFrames) |
@@ -56,13 +57,18 @@ garmin-insights status        # check DB + API connectivity
 GARMINCONNECT_EMAIL=your@email.com
 GARMINCONNECT_PASSWORD=your_password
 SQLITE_DB_PATH=/path/to/garmin.db
+TOKEN_DIR=~/.garminconnect      # optional; use separate dirs per user in multi-user mode
 
 # Insights agent (same db)
 ANTHROPIC_API_KEY=sk-ant-...
 SQLITE_DB_PATH=/path/to/garmin.db
-CLAUDE_MODEL=claude-opus-4-7   # optional override
+CLAUDE_MODEL=claude-opus-4-7   # optional override (default: claude-sonnet-4-6)
 WEB_HOST=0.0.0.0               # optional
 WEB_PORT=8080                  # optional
+SCAN_TIMES=06:00,12:00,18:00,22:00  # optional scheduled scan times
+
+# Multi-user mode (when set, SQLITE_DB_PATH is ignored)
+USERS=alice:/data/alice.db,bob:/data/bob.db
 ```
 
 ## Architecture
@@ -115,3 +121,4 @@ All data lives in a single `garmin.db`. Key tables:
 - Today's data is always marked `is_complete=False` — the agent is instructed not to compare cumulative metrics (steps, calories) for today against baselines
 - The cache is refreshed on agent startup and every 5 minutes via the dashboard endpoint
 - The medical knowledge base (`knowledge/medical.py`) contains 34 evidence-backed insight rules injected into the system prompt (covers sleep, lifestyle, recovery, training load, illness detection, body composition)
+- **Multi-user mode**: set `USERS=alice:/data/alice.db,bob:/data/bob.db` to route each user to their own database. Per-user env templates are in `users/alice.env.example` and `users/bob.env.example`. Each user also needs a separate `TOKEN_DIR` for Garmin auth tokens.
