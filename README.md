@@ -254,6 +254,8 @@ All data stays local. Nothing is sent to external servers except:
 - **Login issues**: Delete `~/.garminconnect` to clear stale tokens, then re-run the fetcher
 - **No data in dashboard**: Run the fetcher first, then restart the web server so it rebuilds the cache
 - **Database locked**: Only one process should write to `garmin.db` at a time — don't run the fetcher while the web server is actively caching
+- **Permission denied creating venv (Linux/Pi)**: The directory is owned by root. Fix it with `sudo chown -R $USER:$USER /path/to/dir`, then re-run `python3 -m venv .venv` without `sudo`. Never use `sudo` with `venv`, `pip`, or `source` — always fix the underlying ownership instead.
+- **`sudo source` not found**: `source` is a shell built-in, not a command — it can never be run with `sudo`. Activate the venv as your normal user: `source .venv/bin/activate`.
 
 ## For developers
 
