@@ -77,12 +77,36 @@ nav {
 .tab-btn:hover { color: var(--text); background: var(--surface2); }
 .tab-btn.active { color: var(--accent); background: rgba(79,156,249,0.12); }
 
+.header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.user-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.user-select {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--muted);
-  margin-left: auto;
   flex-shrink: 0;
   transition: background 0.3s;
 }
