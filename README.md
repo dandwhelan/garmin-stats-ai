@@ -55,6 +55,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Optional overrides
 CLAUDE_MODEL=claude-opus-4-7   # default: claude-sonnet-4-6
 SCAN_TIMES=06:00,12:00,18:00,22:00
+
+# Optional fetcher date range — set both to force a historical backfill
+# MANUAL_START_DATE=2025-01-01
+# MANUAL_END_DATE=2025-06-01
+
 # Multi-user mode (see "Multi-user setup" section below)
 # USERS=alice:/data/alice.db,bob:/data/bob.db
 ```
@@ -68,6 +73,29 @@ python -m garmin_grafana.garmin_fetch
 ```
 
 This creates `garmin.db` and populates it with your health history (up to 1 year back on first run). Re-run daily to keep data fresh.
+
+#### Fetching a specific date range (backfill)
+
+By default the fetcher picks up where it left off. To force a specific window — useful for an initial historical backfill or to re-fetch a stretch where data is missing — set these env vars in your `.env`:
+
+```bash
+MANUAL_START_DATE=2025-01-01   # YYYY-MM-DD, required to trigger manual mode
+MANUAL_END_DATE=2025-06-01     # YYYY-MM-DD, optional (defaults to today)
+```
+
+Then run the fetcher normally:
+
+```bash
+python -m garmin_grafana.garmin_fetch
+```
+
+When `MANUAL_START_DATE` is set, the fetcher runs in **bulk mode** and writes every day in the range to the database, overriding the automatic resume logic. Remove (or comment out) `MANUAL_START_DATE` before running again to return to normal incremental fetching.
+
+You can also override on the command line for a one-off backfill:
+
+```bash
+MANUAL_START_DATE=2024-12-01 MANUAL_END_DATE=2025-01-31 python -m garmin_grafana.garmin_fetch
+```
 
 ### Step 2 — Start the web interface
 
@@ -95,6 +123,9 @@ garmin-insights status        # check DB + API connectivity
 
 Multiple Garmin accounts can share a single server instance. Each user gets their own SQLite database and Garmin token directory.
 
+> **Important — how `USERS` works**
+> `USERS` is only read by the **insights/web server**. The **fetcher (`garmin_grafana.garmin_fetch`) does not understand `USERS`** — it always reads `SQLITE_DB_PATH`, `TOKEN_DIR`, and `GARMINCONNECT_EMAIL`/`PASSWORD` from the active environment. You must therefore **run the fetcher once per user**, with that user's env file sourced first. Only the insights server reads `USERS` and routes each logged-in user to their own DB.
+
 **1. Create per-user env files** (see `users/alice.env.example` and `users/bob.env.example` for templates):
 
 ```bash
@@ -105,21 +136,37 @@ SQLITE_DB_PATH=/home/pi/garmin-data/alice.db
 TOKEN_DIR=/home/pi/.garminconnect-alice
 ```
 
-**2. Fetch data per user** (run separately for each account):
+```bash
+# users/bob.env
+GARMINCONNECT_EMAIL=bob@example.com
+GARMINCONNECT_PASSWORD=bobs_password
+SQLITE_DB_PATH=/home/pi/garmin-data/bob.db
+TOKEN_DIR=/home/pi/.garminconnect-bob
+```
+
+**2. Fetch data per user** — run the fetcher separately for each account, sourcing that user's env file first:
 
 ```bash
-# Load alice's env then fetch
+# Fetch for alice
 set -a && source users/alice.env && set +a
+python -m garmin_grafana.garmin_fetch
+
+# Then for bob (Ctrl+C the previous run first if it's still going)
+set -a && source users/bob.env && set +a
 python -m garmin_grafana.garmin_fetch
 ```
 
-**3. Tell the insights server about all users** via the `USERS` env var:
+For scheduled fetching, run two separate cron jobs / systemd timers — one per user env file. See `deploy/` for example systemd unit files.
+
+**3. Tell the insights server about all users** via the `USERS` env var in the root `.env`:
 
 ```bash
+# .env (used by the web server, not the fetcher)
+ANTHROPIC_API_KEY=sk-ant-...
 USERS=alice:/home/pi/garmin-data/alice.db,bob:/home/pi/garmin-data/bob.db
 ```
 
-The web interface routes each logged-in user to their own database. When `USERS` is unset the app runs in single-user mode using `SQLITE_DB_PATH`.
+When `USERS` is set the server's own `SQLITE_DB_PATH` is **ignored** — it routes each logged-in user to their own DB instead. When `USERS` is unset the app runs in single-user mode using `SQLITE_DB_PATH`.
 
 ## Example questions for the chat
 

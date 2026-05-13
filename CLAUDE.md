@@ -59,6 +59,10 @@ GARMINCONNECT_PASSWORD=your_password
 SQLITE_DB_PATH=/path/to/garmin.db
 TOKEN_DIR=~/.garminconnect      # optional; use separate dirs per user in multi-user mode
 
+# Optional fetcher date range — set MANUAL_START_DATE to force a bulk backfill
+MANUAL_START_DATE=2025-01-01    # YYYY-MM-DD; presence triggers bulk mode
+MANUAL_END_DATE=2025-06-01      # YYYY-MM-DD; defaults to today
+
 # Insights agent (same db)
 ANTHROPIC_API_KEY=sk-ant-...
 SQLITE_DB_PATH=/path/to/garmin.db
@@ -67,7 +71,7 @@ WEB_HOST=0.0.0.0               # optional
 WEB_PORT=8080                  # optional
 SCAN_TIMES=06:00,12:00,18:00,22:00  # optional scheduled scan times
 
-# Multi-user mode (when set, SQLITE_DB_PATH is ignored)
+# Multi-user mode (insights server only; the fetcher ignores USERS)
 USERS=alice:/data/alice.db,bob:/data/bob.db
 ```
 
@@ -121,4 +125,5 @@ All data lives in a single `garmin.db`. Key tables:
 - Today's data is always marked `is_complete=False` — the agent is instructed not to compare cumulative metrics (steps, calories) for today against baselines
 - The cache is refreshed on agent startup and every 5 minutes via the dashboard endpoint
 - The medical knowledge base (`knowledge/medical.py`) contains 34 evidence-backed insight rules injected into the system prompt (covers sleep, lifestyle, recovery, training load, illness detection, body composition)
-- **Multi-user mode**: set `USERS=alice:/data/alice.db,bob:/data/bob.db` to route each user to their own database. Per-user env templates are in `users/alice.env.example` and `users/bob.env.example`. Each user also needs a separate `TOKEN_DIR` for Garmin auth tokens.
+- **Multi-user mode**: set `USERS=alice:/data/alice.db,bob:/data/bob.db` to route each user to their own database in the **insights server**. Per-user env templates are in `users/alice.env.example` and `users/bob.env.example`. Each user also needs a separate `TOKEN_DIR` for Garmin auth tokens. The **fetcher does not read `USERS`** — it must be run once per user with that user's env file sourced (`set -a && source users/alice.env && set +a && python -m garmin_grafana.garmin_fetch`).
+- **Manual date range for fetcher**: set `MANUAL_START_DATE` (and optionally `MANUAL_END_DATE`) in YYYY-MM-DD format to force a bulk historical backfill. Presence of `MANUAL_START_DATE` is what triggers bulk mode in `garmin_fetch.py`; remove it to return to normal incremental fetching.
