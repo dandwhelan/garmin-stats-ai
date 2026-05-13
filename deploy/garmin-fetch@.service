@@ -1,0 +1,20 @@
+[Unit]
+Description=Garmin data fetcher — %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/garmin-stats-ai/garmin-grafana
+# Reads credentials + DB path from /home/pi/garmin-stats-ai/users/%i.env
+EnvironmentFile=/home/pi/garmin-stats-ai/users/%i.env
+ExecStart=/home/pi/garmin-stats-ai/.venv/bin/python -m garmin_grafana.garmin_fetch
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
