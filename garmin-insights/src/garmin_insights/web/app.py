@@ -1,4 +1,9 @@
-"""FastAPI web server — dashboard, per-session chat, and AI scans."""
+"""FastAPI web server — dashboard, per-session chat, and AI scans.
+
+Multi-user aware: each request specifies a `user` parameter selecting which
+user's database to query. Agent and visualization service instances are
+pooled per-user inside UserContext.
+"""
 
 from __future__ import annotations
 
@@ -15,41 +20,35 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from garmin_insights.agent import HealthAgent
 from garmin_insights.config import get_settings
 from garmin_insights.web.sessions import SessionManager
-from garmin_insights.web.visualizations import VisualizationService
-from garmin_insights.web.lifestyle_viz import LifestyleService
+from garmin_insights.web.user_context import UserBundle, UserContext
 
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
-# Module-level singletons set up by the lifespan handler
-_agent: HealthAgent | None = None
+_users: UserContext | None = None
 _sessions: SessionManager | None = None
-_viz: VisualizationService | None = None
-_lifestyle: LifestyleService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _agent, _sessions, _viz, _lifestyle
+    global _users, _sessions
     settings = get_settings()
-    logger.info("Initialising health agent...")
-    _agent = HealthAgent(settings)
+    _users = UserContext(settings)
     _sessions = SessionManager(ttl_seconds=3600, max_sessions=200)
-    _viz = VisualizationService(settings.sqlite_db_path)
-    _lifestyle = LifestyleService(settings.sqlite_db_path)
-    try:
-        _agent.ensure_cache_fresh(days=90)
-        logger.info("Agent ready.")
-    except Exception as e:
-        logger.warning("Cache refresh on startup failed: %s", e)
+    logger.info("Configured users: %s", _users.user_ids)
+    # Eagerly warm up the first user so the dashboard isn't cold on first load
+    if _users.user_ids:
+        try:
+            _users.get(_users.user_ids[0])
+        except Exception as e:
+            logger.warning("Failed to warm up first user: %s", e)
     yield
-    if _agent:
-        logger.info("Closing agent...")
-        _agent.close()
+    if _users:
+        logger.info("Closing user agents...")
+        _users.close()
 
 
 app = FastAPI(
@@ -67,6 +66,7 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+    user: str = "default"
 
 
 class ResetRequest(BaseModel):
@@ -77,6 +77,32 @@ class ScanRequest(BaseModel):
     focus: str = "general"
     start_date: str | None = None
     end_date: str | None = None
+    user: str = "default"
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+
+def _require_user(user: str) -> UserBundle:
+    if _users is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    if not _users.has_user(user):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown user '{user}'. Configured users: {_users.user_ids}",
+        )
+    try:
+        return _users.get(user)
+    except Exception as e:
+        logger.exception("Failed to load user bundle")
+        raise HTTPException(status_code=500, detail=f"Failed to load user: {e}")
+
+
+def _resolve_range(start: str | None, end: str | None, default_days: int = 30) -> tuple[str, str]:
+    end = end or datetime.utcnow().strftime("%Y-%m-%d")
+    start = start or (datetime.utcnow() - timedelta(days=default_days)).strftime("%Y-%m-%d")
+    return start, end
 
 
 # ------------------------------------------------------------------
@@ -88,16 +114,28 @@ async def index():
     return HTMLResponse(content=(_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
+@app.get("/api/users")
+async def list_users():
+    """Return the list of configured users for the picker UI."""
+    if _users is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    return {"users": [{"id": uid} for uid in _users.user_ids]}
+
+
 @app.get("/api/health")
-async def health_check():
-    if _agent is None:
-        raise HTTPException(status_code=503, detail="Agent not initialised")
+async def health_check(user: str = Query(default="default")):
+    if _users is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    if not _users.has_user(user):
+        raise HTTPException(status_code=404, detail=f"Unknown user '{user}'")
     try:
-        repo_health = _agent._repo.health_check()
+        bundle = _users.get(user)
+        repo_health = bundle.agent._repo.health_check()
         return {
             "status": "ok",
+            "user": user,
             "database": repo_health,
-            "model": _agent._settings.claude_model,
+            "model": bundle.agent._settings.claude_model,
             "sessions": _sessions.stats() if _sessions else {},
             "timestamp": datetime.utcnow().isoformat(),
         }
@@ -107,23 +145,21 @@ async def health_check():
 
 @app.get("/api/dashboard")
 async def dashboard(
+    user: str = Query(default="default"),
     start: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
     end: str | None = Query(default=None, description="End date YYYY-MM-DD"),
 ):
-    """Return daily summaries plus baselines for the requested date range (default: last 30 days)."""
-    if _agent is None:
-        raise HTTPException(status_code=503, detail="Agent not initialised")
-
-    end = end or datetime.utcnow().strftime("%Y-%m-%d")
-    start = start or (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+    bundle = _require_user(user)
+    start, end = _resolve_range(start, end, default_days=30)
 
     try:
         loop = asyncio.get_event_loop()
         summaries = await loop.run_in_executor(
-            None, _agent._memory.get_daily_summaries_range, start, end
+            None, bundle.agent._memory.get_daily_summaries_range, start, end
         )
-        baselines = await loop.run_in_executor(None, _agent._memory.get_baselines)
+        baselines = await loop.run_in_executor(None, bundle.agent._memory.get_baselines)
         return {
+            "user": user,
             "summaries": summaries,
             "baselines": baselines,
             "date_range": {"start": start, "end": end},
@@ -133,33 +169,28 @@ async def dashboard(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _resolve_range(start: str | None, end: str | None, default_days: int = 30) -> tuple[str, str]:
-    end = end or datetime.utcnow().strftime("%Y-%m-%d")
-    start = start or (datetime.utcnow() - timedelta(days=default_days)).strftime("%Y-%m-%d")
-    return start, end
-
-
 @app.get("/api/visualizations")
 async def visualizations(
+    user: str = Query(default="default"),
     start: str | None = Query(default=None),
     end: str | None = Query(default=None),
 ):
-    """Bundled response for all auxiliary dashboard charts."""
-    if _viz is None:
-        raise HTTPException(status_code=503, detail="Service not initialised")
+    bundle = _require_user(user)
     start, end = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
+    viz = bundle.viz
     try:
         training, body_comp, hr_zones, behavior, correlations, sleep_tl, anomalies = await asyncio.gather(
-            loop.run_in_executor(None, _viz.training, start, end),
-            loop.run_in_executor(None, _viz.body_composition, start, end),
-            loop.run_in_executor(None, _viz.hr_zones, start, end),
-            loop.run_in_executor(None, _viz.behavior_impact, 90, 3),
-            loop.run_in_executor(None, _viz.correlations, start, end),
-            loop.run_in_executor(None, _viz.sleep_timeline, start, end),
-            loop.run_in_executor(None, _viz.anomaly_calendar, start, end),
+            loop.run_in_executor(None, viz.training, start, end),
+            loop.run_in_executor(None, viz.body_composition, start, end),
+            loop.run_in_executor(None, viz.hr_zones, start, end),
+            loop.run_in_executor(None, viz.behavior_impact, 90, 3),
+            loop.run_in_executor(None, viz.correlations, start, end),
+            loop.run_in_executor(None, viz.sleep_timeline, start, end),
+            loop.run_in_executor(None, viz.anomaly_calendar, start, end),
         )
         return {
+            "user": user,
             "date_range": {"start": start, "end": end},
             "training": training,
             "body_composition": body_comp,
@@ -176,15 +207,14 @@ async def visualizations(
 
 @app.get("/api/lifestyle")
 async def lifestyle(
+    user: str = Query(default="default"),
     start: str | None = Query(default=None),
     end: str | None = Query(default=None),
 ):
-    """Bundle the 19 lifestyle/health visualizations."""
-    if _lifestyle is None:
-        raise HTTPException(status_code=503, detail="Service not initialised")
+    bundle = _require_user(user)
     start, end = _resolve_range(start, end, default_days=90)
     loop = asyncio.get_event_loop()
-    svc = _lifestyle
+    svc = bundle.lifestyle
 
     async def _run(fn, *args):
         try:
@@ -221,19 +251,19 @@ async def lifestyle(
         "cooccurrence", "step_distribution", "fitness_age_delta", "who_target",
         "cycle_hrv", "stress_hour_fingerprint", "stress_triggers",
     ]
-    return {"date_range": {"start": start, "end": end}, **dict(zip(keys, results))}
+    return {"user": user, "date_range": {"start": start, "end": end}, **dict(zip(keys, results))}
 
 
 @app.get("/api/intraday/heatmap")
 async def intraday_heatmap(
+    user: str = Query(default="default"),
     metric: str = Query(default="stress", description="stress | body_battery | heart_rate"),
     days: int = Query(default=14, ge=1, le=90),
 ):
-    if _viz is None:
-        raise HTTPException(status_code=503, detail="Service not initialised")
+    bundle = _require_user(user)
     loop = asyncio.get_event_loop()
     try:
-        result = await loop.run_in_executor(None, _viz.intraday_heatmap, metric, days)
+        result = await loop.run_in_executor(None, bundle.viz.intraday_heatmap, metric, days)
         return result
     except Exception as e:
         logger.exception("Intraday heatmap query failed")
@@ -243,17 +273,17 @@ async def intraday_heatmap(
 @app.post("/api/chat")
 async def chat(body: ChatRequest):
     """Stream a chat response via Server-Sent Events with per-session history."""
-    if _agent is None or _sessions is None:
-        raise HTTPException(status_code=503, detail="Agent not initialised")
+    bundle = _require_user(body.user)
+    if _sessions is None:
+        raise HTTPException(status_code=503, detail="Sessions not initialised")
 
-    session_id, history = _sessions.get_or_create(body.session_id)
+    session_id, history, _ = _sessions.get_or_create(body.session_id, user_id=body.user)
 
     async def sse_generator() -> AsyncGenerator[str, None]:
-        # Send the session id first so the client can store it
-        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id, 'user': body.user})}\n\n"
 
         loop = asyncio.get_event_loop()
-        gen = _agent.chat_stream(body.message, history=history)
+        gen = bundle.agent.chat_stream(body.message, history=history)
         sentinel = object()
 
         try:
@@ -282,16 +312,14 @@ async def chat(body: ChatRequest):
 @app.post("/api/chat/reset")
 async def chat_reset(body: ResetRequest):
     if _sessions is None:
-        raise HTTPException(status_code=503, detail="Agent not initialised")
+        raise HTTPException(status_code=503, detail="Sessions not initialised")
     _sessions.reset(body.session_id)
     return {"reset": True, "session_id": body.session_id}
 
 
 @app.post("/api/scan")
 async def scan(body: ScanRequest):
-    """Run a proactive health scan and return the report."""
-    if _agent is None:
-        raise HTTPException(status_code=503, detail="Agent not initialised")
+    bundle = _require_user(body.user)
 
     valid_focus = {"general", "morning", "midday", "evening", "weekly"}
     if body.focus not in valid_focus:
@@ -300,9 +328,14 @@ async def scan(body: ScanRequest):
     try:
         loop = asyncio.get_event_loop()
         report = await loop.run_in_executor(
-            None, _agent.generate_scan_report, body.focus, "", body.start_date, body.end_date
+            None, bundle.agent.generate_scan_report, body.focus, "", body.start_date, body.end_date
         )
-        return {"focus": body.focus, "report": report, "timestamp": datetime.utcnow().isoformat()}
+        return {
+            "user": body.user,
+            "focus": body.focus,
+            "report": report,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
     except Exception as e:
         logger.error("Scan failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

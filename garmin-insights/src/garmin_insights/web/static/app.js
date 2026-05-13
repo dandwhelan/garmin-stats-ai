@@ -2,6 +2,64 @@
    Garmin Health Insights — Frontend app
    ========================================================= */
 
+// ---- Active user ----
+const USER_KEY = 'garmin-active-user';
+let activeUser = localStorage.getItem(USER_KEY) || 'default';
+
+function addUserParam(params) {
+  params.set('user', activeUser);
+  return params;
+}
+
+function withUser(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}user=${encodeURIComponent(activeUser)}`;
+}
+
+async function initUserPicker() {
+  const sel = document.getElementById('user-select');
+  if (!sel) return;
+  try {
+    const res = await fetch('/api/users');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { users } = await res.json();
+    sel.innerHTML = '';
+    users.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.id;
+      sel.appendChild(opt);
+    });
+    const ids = users.map(u => u.id);
+    if (!ids.includes(activeUser)) {
+      activeUser = ids[0] || 'default';
+      localStorage.setItem(USER_KEY, activeUser);
+    }
+    sel.value = activeUser;
+    // Hide the picker entirely when there's only one user (single-user mode)
+    if (users.length <= 1) {
+      const label = document.querySelector('.user-label');
+      sel.style.display = 'none';
+      if (label) label.style.display = 'none';
+    }
+  } catch (e) {
+    console.error('Failed to load users:', e);
+  }
+
+  sel.addEventListener('change', () => {
+    activeUser = sel.value;
+    localStorage.setItem(USER_KEY, activeUser);
+    // New user = new chat session, no cross-contamination
+    sessionId = null;
+    localStorage.removeItem(SESSION_KEY);
+    if (typeof chatMessages !== 'undefined' && chatMessages) {
+      chatMessages.innerHTML = '';
+    }
+    checkHealth();
+    loadDashboard();
+  });
+}
+
 // ---- Tab navigation ----
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -17,7 +75,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 const statusDot = document.getElementById('status-dot');
 async function checkHealth() {
   try {
-    const res = await fetch('/api/health');
+    const res = await fetch(withUser('/api/health'));
     if (res.ok) {
       statusDot.className = 'status-dot ok';
       statusDot.title = 'Connected';
@@ -30,7 +88,10 @@ async function checkHealth() {
     statusDot.title = 'Unreachable';
   }
 }
-checkHealth();
+// Initialise user picker first; once done it will trigger checkHealth + loadDashboard
+initUserPicker().then(() => {
+  checkHealth();
+});
 setInterval(checkHealth, 30_000);
 
 // ---- Dashboard ----
@@ -365,8 +426,8 @@ function buildDashboardUrl() {
   const params = new URLSearchParams();
   if (selectedStart) params.set('start', selectedStart);
   if (selectedEnd) params.set('end', selectedEnd);
-  const qs = params.toString();
-  return qs ? `/api/dashboard?${qs}` : '/api/dashboard';
+  addUserParam(params);
+  return `/api/dashboard?${params.toString()}`;
 }
 
 function updateChartTitles(dateRange) {
@@ -410,6 +471,7 @@ async function loadVisualizations(start, end) {
     const params = new URLSearchParams();
     if (start) params.set('start', start);
     if (end) params.set('end', end);
+    addUserParam(params);
     const res = await fetch(`/api/visualizations?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     vizData = await res.json();
@@ -428,7 +490,7 @@ async function loadVisualizations(start, end) {
 
 async function loadIntradayHeatmap(metric) {
   try {
-    const res = await fetch(`/api/intraday/heatmap?metric=${metric}&days=14`);
+    const res = await fetch(withUser(`/api/intraday/heatmap?metric=${metric}&days=14`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderIntradayHeatmap(data);
@@ -1076,7 +1138,7 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
     const dateNote = startVal && endVal ? ` <em style="color:var(--muted);font-size:0.85em">(${startVal} → ${endVal})</em>` : '';
     output.innerHTML = `<em>Running scan, please wait...${dateNote}</em>`;
 
-    const body = { focus };
+    const body = { focus, user: activeUser };
     if (startVal) body.start_date = startVal;
     if (endVal) body.end_date = endVal;
 
@@ -1194,7 +1256,7 @@ async function sendMessage() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, session_id: sessionId }),
+      body: JSON.stringify({ message: text, session_id: sessionId, user: activeUser }),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1277,6 +1339,7 @@ async function loadLifestyle(start, end) {
     const params = new URLSearchParams();
     if (start) params.set('start', start);
     if (end) params.set('end', end);
+    addUserParam(params);
     const res = await fetch(`/api/lifestyle?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     lifestyleData = await res.json();
