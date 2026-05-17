@@ -17,7 +17,9 @@ from pydantic import BaseModel
 
 from garmin_insights.agent import HealthAgent
 from garmin_insights.config import get_settings
+from garmin_insights.web.lifestyle_viz import LifestyleService
 from garmin_insights.web.sessions import SessionManager
+from garmin_insights.web.visualizations import VisualizationService
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +28,19 @@ _STATIC_DIR = Path(__file__).parent / "static"
 # Module-level singletons set up by the lifespan handler
 _agent: HealthAgent | None = None
 _sessions: SessionManager | None = None
+_viz: VisualizationService | None = None
+_lifestyle: LifestyleService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _agent, _sessions
+    global _agent, _sessions, _viz, _lifestyle
     settings = get_settings()
     logger.info("Initialising health agent...")
     _agent = HealthAgent(settings)
     _sessions = SessionManager(ttl_seconds=3600, max_sessions=200)
+    _viz = VisualizationService(settings.sqlite_db_path)
+    _lifestyle = LifestyleService(settings.sqlite_db_path)
     try:
         _agent.ensure_cache_fresh(days=90)
         logger.info("Agent ready.")
@@ -207,6 +213,109 @@ async def scan(body: ScanRequest):
         }
     except Exception as e:
         logger.error("Scan failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/visualizations")
+async def visualizations(
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    if _viz is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    start, end = _resolve_range(start, end, default_days=30)
+    loop = asyncio.get_event_loop()
+    try:
+        sleep_timeline, behavior_impact, correlations, anomaly_calendar = await asyncio.gather(
+            loop.run_in_executor(None, _viz.sleep_timeline, start, end),
+            loop.run_in_executor(None, _viz.behavior_impact, 90, 3),
+            loop.run_in_executor(None, _viz.correlations, start, end),
+            loop.run_in_executor(None, _viz.anomaly_calendar, start, end),
+        )
+        return {
+            "date_range": {"start": start, "end": end},
+            "sleep_timeline": sleep_timeline,
+            "behavior_impact": behavior_impact,
+            "correlations": correlations,
+            "anomaly_calendar": anomaly_calendar,
+        }
+    except Exception as e:
+        logger.exception("Visualizations failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/lifestyle")
+async def lifestyle(
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    if _lifestyle is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    start, end = _resolve_range(start, end, default_days=90)
+    loop = asyncio.get_event_loop()
+
+    def _run(fn, *args):
+        return loop.run_in_executor(None, fn, *args)
+
+    svc = _lifestyle
+    try:
+        (
+            dose, caffeine, sri, jetlag, recovery_cost,
+            resilience, bb_decay, illness, inflammation, debt,
+            streaks, half_life, cooccurrence, fingerprint, triggers,
+        ) = await asyncio.gather(
+            _run(svc.behavior_dose_response, start, end),
+            _run(svc.caffeine_cutoff, start, end),
+            _run(svc.sleep_regularity, start, end),
+            _run(svc.social_jet_lag, start, end),
+            _run(svc.behavior_recovery_cost, start, end),
+            _run(svc.stress_resilience, start, end),
+            _run(svc.body_battery_decay, start, end),
+            _run(svc.illness_radar, start, end),
+            _run(svc.inflammation_index, start, end),
+            _run(svc.recovery_debt, start, end, 75),
+            _run(svc.behavior_streak_calendar, start, end),
+            _run(svc.habit_half_life, end, 90),
+            _run(svc.behavior_cooccurrence, start, end),
+            _run(svc.stress_hour_fingerprint, start, end),
+            _run(svc.stress_trigger_leaderboard, start, end),
+        )
+        return {
+            "date_range": {"start": start, "end": end},
+            "behavior_dose_response": dose,
+            "caffeine_cutoff": caffeine,
+            "sleep_regularity": sri,
+            "social_jet_lag": jetlag,
+            "behavior_recovery_cost": recovery_cost,
+            "stress_resilience": resilience,
+            "body_battery_decay": bb_decay,
+            "illness_radar": illness,
+            "inflammation_index": inflammation,
+            "recovery_debt": debt,
+            "behavior_streak_calendar": streaks,
+            "habit_half_life": half_life,
+            "behavior_cooccurrence": cooccurrence,
+            "stress_hour_fingerprint": fingerprint,
+            "stress_trigger_leaderboard": triggers,
+        }
+    except Exception as e:
+        logger.exception("Lifestyle endpoint failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/intraday/heatmap")
+async def intraday_heatmap(
+    metric: str = Query(default="stress"),
+    days: int = Query(default=14, ge=1, le=60),
+):
+    if _viz is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(None, _viz.intraday_heatmap, metric, days)
+        return data
+    except Exception as e:
+        logger.exception("Intraday heatmap failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
