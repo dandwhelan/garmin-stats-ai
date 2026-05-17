@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
@@ -19,7 +20,11 @@
         <button class="tab-btn" data-tab="chat">Chat</button>
         <button class="tab-btn" data-tab="entities">Entities</button>
       </nav>
-      <span id="status-dot" class="status-dot" title="Checking..."></span>
+      <div class="header-right">
+        <label for="user-select" class="user-label">User</label>
+        <select id="user-select" class="user-select" title="Active user"></select>
+        <span id="status-dot" class="status-dot" title="Checking..."></span>
+      </div>
     </div>
   </header>
 
@@ -28,8 +33,8 @@
     <div class="date-range-toolbar">
       <div class="date-presets">
         <button class="preset-btn" data-days="7">7d</button>
-        <button class="preset-btn active" data-days="14">14d</button>
-        <button class="preset-btn" data-days="30">30d</button>
+        <button class="preset-btn" data-days="14">14d</button>
+        <button class="preset-btn active" data-days="30">30d</button>
         <button class="preset-btn" data-days="90">90d</button>
       </div>
       <div class="date-custom">
@@ -88,7 +93,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2 id="trend-chart-title">14-Day Trend</h2>
+        <h2 id="trend-chart-title">30-Day Trend</h2>
         <div class="chart-controls">
           <button class="chart-toggle active" data-metric="sleepScore">Sleep</button>
           <button class="chart-toggle" data-metric="restingHeartRate">RHR</button>
@@ -125,7 +130,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Activity Intensity (minutes/day) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Daily minutes spent at moderate or vigorous intensity, as classified by Garmin's heart-rate zones.<br><br>WHO target: ≥150 moderate-min/week, or ≥75 vigorous-min/week (vigorous counts double).</span></span></h2>
+          <h2>Activity Intensity (minutes/day)</h2>
         </div>
         <div class="chart-container">
           <canvas id="activity-chart"></canvas>
@@ -134,7 +139,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Stress vs Body Battery <span class="info-icon" tabindex="0">i<span class="info-tooltip">% of the day spent in high stress (red, left axis) plotted against your daily peak Body Battery (green, right axis). Persistent inversion — high stress with low peak battery — signals chronic recovery debt.</span></span></h2>
+          <h2>Stress vs Body Battery</h2>
         </div>
         <div class="chart-container">
           <canvas id="stress-chart"></canvas>
@@ -158,6 +163,26 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
+          <h2>Training Load — Acute vs Chronic (ACWR) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Acute:Chronic Workload Ratio compares your 7-day training load (acute) against your 28-day average (chronic). The ratio indicates injury risk and readiness.<br><br>0.8–1.3 = safe zone · &gt;1.5 = elevated injury risk · &lt;0.8 = undertraining</span></span></h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="acwr-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Training Readiness — Factor Breakdown</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="readiness-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
           <h2>Sleep Timeline — Bedtime / Waketime</h2>
         </div>
         <div class="chart-container">
@@ -167,13 +192,10 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Anomaly Calendar <span class="info-icon" tabindex="0">i<span class="info-tooltip">Each cell shows how far that day's metric was from your 30-day average, in standard deviations (z-score). Green = above your norm, Red = below your norm, Darker = further from normal.</span></span></h2>
+          <h2>Body Composition</h2>
         </div>
-        <div class="anomaly-container" id="anomaly-calendar"></div>
-        <div class="anomaly-legend">
-          <span><span class="legend-swatch" style="background:#f87171"></span> low / outside band</span>
-          <span><span class="legend-swatch" style="background:#3a3f5a"></span> within ±1σ</span>
-          <span><span class="legend-swatch" style="background:#34d399"></span> high / above band</span>
+        <div class="chart-container">
+          <canvas id="body-comp-chart"></canvas>
         </div>
       </section>
     </div>
@@ -192,6 +214,29 @@
       </div>
       <div class="behavior-note" id="behavior-note"></div>
     </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Anomaly Calendar (z-score vs 30d baseline) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Each cell shows how far that day's metric was from your 30-day average, measured in standard deviations (z-score). Green = above your norm · Red = below your norm · Darker = further from normal. Useful for spotting clusters of good or bad days.</span></span></h2>
+        </div>
+        <div class="anomaly-container" id="anomaly-calendar"></div>
+        <div class="anomaly-legend">
+          <span><span class="legend-swatch" style="background:#f87171"></span> low / outside band</span>
+          <span><span class="legend-swatch" style="background:#3a3f5a"></span> within ±1σ</span>
+          <span><span class="legend-swatch" style="background:#34d399"></span> high / above band</span>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>HR Zone Distribution</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="hr-zones-chart"></canvas>
+        </div>
+      </section>
+    </div>
 
     <section class="chart-section">
       <div class="chart-header">
@@ -216,7 +261,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Recovery Debt <span class="info-icon" tabindex="0">i<span class="info-tooltip">Tracks cumulative energy deficit when your morning Body Battery falls below your personal baseline. Persistent debt means your body isn't recovering fully between days.</span></span></h2>
+          <h2>Recovery Debt <span class="info-icon" tabindex="0">i<span class="info-tooltip">Tracks cumulative energy deficit when your morning Body Battery falls below your personal baseline. Persistent debt means your body isn't recovering fully between days — common during illness, overtraining, or high stress periods.</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="recovery-debt-chart"></canvas>
@@ -225,7 +270,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Inflammation Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">A composite z-score combining elevated RHR, elevated respiration rate, and reduced sleep efficiency. Higher values suggest systemic stress, illness, or heavy recovery demands.</span></span></h2>
+          <h2>Inflammation Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">A composite z-score combining elevated RHR, elevated respiration rate, and reduced sleep efficiency. Higher values suggest systemic stress, illness, or heavy recovery demands on your body.</span></span></h2>
           <span class="chart-sub">RHR + respiration − sleep efficiency, z-scored</span>
         </div>
         <div class="chart-container">
@@ -237,7 +282,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Sleep Regularity Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">Measures how consistent your sleep timing is day-to-day (0–100). High scores are linked to better metabolic and cardiovascular health — even independent of sleep duration (Windred 2024).<br><br>≥87 regular · &lt;60 irregular</span></span></h2>
+          <h2>Sleep Regularity Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">Measures how consistent your sleep timing is day-to-day (0–100). Calculated as the probability that you're asleep at any given minute today vs the same minute yesterday, averaged over 7 days (Windred 2024). High scores are linked to better metabolic and cardiovascular health — even independent of sleep duration.<br><br>≥87 regular · &lt;60 irregular</span></span></h2>
           <span class="chart-sub">7-day rolling consistency of sleep midpoint (Windred 2024)</span>
         </div>
         <div class="chart-container">
@@ -248,7 +293,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Social Jet Lag <span class="info-icon" tabindex="0">i<span class="info-tooltip">Difference between your weekday and weekend sleep midpoints. A gap &gt;1 hour is linked to metabolic dysfunction, mood issues, and cardiovascular risk.</span></span></h2>
+          <h2>Social Jet Lag <span class="info-icon" tabindex="0">i<span class="info-tooltip">Your internal body clock (circadian rhythm) is anchored by consistent sleep timing. "Social jet lag" is the difference in your sleep midpoint (halfway between bedtime and wake time) on weekdays vs weekends. If you sleep at different times on weekends, your body experiences something like weekly jet lag — without going anywhere. A gap &gt;1 hour is linked to metabolic dysfunction, mood issues, and cardiovascular risk.</span></span></h2>
           <span class="chart-sub">Weekday vs weekend sleep midpoint</span>
         </div>
         <div id="social-jetlag" class="dual-clock"></div>
@@ -257,7 +302,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Stress Resilience Score <span class="info-icon" tabindex="0">i<span class="info-tooltip">How effectively your body recovers from daily stress. Higher scores mean your autonomic nervous system is bouncing back efficiently from stressors.</span></span></h2>
+        <h2>Stress Resilience Score <span class="info-icon" tabindex="0">i<span class="info-tooltip">How effectively your body recovers from daily stress, measured as your overnight body battery recovery rate relative to your 30-day stress baseline. Higher scores mean your autonomic nervous system is bouncing back efficiently. Chronic low scores suggest you're accumulating stress faster than you're recovering.</span></span></h2>
         <span class="chart-sub">Daily, normalised against your 30-day stress baseline</span>
       </div>
       <div class="chart-container">
@@ -267,8 +312,8 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Body Battery Decay Slope <span class="info-icon" tabindex="0">i<span class="info-tooltip">How fast your body battery depletes during waking hours, expressed as points per hour. Steeper decay = faster autonomic drain.</span></span></h2>
-        <span class="chart-sub">Points lost per hour — steeper = faster autonomic drain</span>
+        <h2>Body Battery Decay Slope <span class="info-icon" tabindex="0">i<span class="info-tooltip">How fast your body battery depletes during waking hours, expressed as points per hour. A steep drop (large negative number) means your autonomic nervous system is draining quickly — usually from high stress, intense activity, or poor recovery. Flatter decay = more efficient energy management.</span></span></h2>
+        <span class="chart-sub">Points lost per hour over the day — steeper = faster autonomic drain</span>
       </div>
       <div class="chart-container">
         <canvas id="bb-decay-chart"></canvas>
@@ -277,8 +322,8 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Behavior Recovery Cost <span class="info-icon" tabindex="0">i<span class="info-tooltip">Median number of days for your HRV to return within 0.5σ of baseline after each logged behavior. Longer bars = harder impact on recovery.</span></span></h2>
-        <span class="chart-sub">Median days for HRV to return within 0.5σ of baseline</span>
+        <h2>Behavior Recovery Cost <span class="info-icon" tabindex="0">i<span class="info-tooltip">For each logged behavior, this shows the median number of days for your HRV to return within 0.5 standard deviations of your personal baseline. Longer bars = harder impact on your recovery. Helps you understand which behaviors cost the most recovery time.</span></span></h2>
+        <span class="chart-sub">Median days for HRV to return within 0.5σ of baseline after each behavior</span>
       </div>
       <div class="chart-container">
         <canvas id="recovery-cost-chart"></canvas>
@@ -287,7 +332,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Behavior Dose-Response <span class="info-icon" tabindex="0">i<span class="info-tooltip">Shows how different quantities of a behavior correlate with sleep score, HRV, deep sleep, and RHR the following night. Only meaningful for behaviors logged with a numeric quantity.</span></span></h2>
+        <h2>Behavior Dose-Response <span class="info-icon" tabindex="0">i<span class="info-tooltip">Shows how different quantities of a behavior correlate with sleep score, HRV, deep sleep, and RHR the following night. Only meaningful for behaviors logged with a numeric quantity (e.g. "Alcohol: 2 drinks" or "Caffeine: 3 cups"). Binary yes/no behaviors (e.g. Traveling, Exercise) have no quantity variation — all their dots pile up at x=0.</span></span></h2>
         <span class="chart-sub">For behaviors logged with a numeric value (e.g. drinks, caffeine cups)</span>
         <div class="chart-controls" id="dose-controls"></div>
       </div>
@@ -339,6 +384,28 @@
       </section>
     </div>
 
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Step-Count Survival Curve <span class="info-icon" tabindex="0">i<span class="info-tooltip">Shows the distribution of your daily step counts. Read it as: "X% of my days I walked fewer than Y steps." Research shows 7,500 steps/day is associated with significant all-cause mortality reduction, and 10,000 steps shows further benefit — but gains plateau after that (Paluch 2022).</span></span></h2>
+          <span class="chart-sub">Reference lines: 7,500 (mortality benefit) / 10,000 (Paluch 2022)</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="step-cdf-chart"></canvas>
+        </div>
+        <div id="step-cdf-stats" class="big-stat"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>WHO Activity Target <span class="info-icon" tabindex="0">i<span class="info-tooltip">WHO recommends ≥150 minutes per week of moderate-intensity activity, or ≥75 minutes of vigorous intensity (vigorous counts double). This chart stacks moderate + vigorous×2 minutes per week. The dashed line marks the 150-minute threshold. Consistent weeks above it are linked to reduced risk of heart disease, diabetes, and depression.</span></span></h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="who-target-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
     <section class="chart-section">
       <div class="chart-header">
         <h2>Stress Hour-of-Day Fingerprint</h2>
@@ -347,6 +414,22 @@
       <div class="chart-container">
         <canvas id="stress-fingerprint-chart"></canvas>
       </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>VO2 Max / Fitness Age <span class="info-icon" tabindex="0">i<span class="info-tooltip">Garmin estimates your biological fitness age from VO2 max (your body's maximum oxygen uptake capacity). A fitness age below your real age means above-average aerobic capacity for your demographic. "Achievable fitness age" is Garmin's modelled target ceiling — if your current fitness age is already lower than it, you've surpassed the benchmark. This is a good thing.</span></span></h2>
+      </div>
+      <div class="chart-container">
+        <canvas id="fitness-age-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Cycle Phase HRV</h2>
+      </div>
+      <div id="cycle-hrv" class="empty-state"></div>
     </section>
 
     <section class="scan-section">

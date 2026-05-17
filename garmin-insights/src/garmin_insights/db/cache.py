@@ -18,28 +18,43 @@ from garmin_insights.db.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
 
-# Metrics we extract from each measurement for the daily snapshot
-_DAILY_STATS_FIELDS = [
-    "restingHeartRate", "minHeartRate", "maxHeartRate",
-    "stressPercentage", "highStressPercentage",
-    "bodyBatteryHighestValue", "bodyBatteryLowestValue",
-    "bodyBatteryChargedValue", "bodyBatteryDrainedValue",
-    "bodyBatteryAtWakeTime",
-    "totalSteps", "totalDistanceMeters",
-    "activeKilocalories",
-    "sleepingSeconds",
-    "moderateIntensityMinutes", "vigorousIntensityMinutes",
-    "averageSpo2",
-]
+# Maps logical (camelCase) summary key → actual SQLite column name (snake_case)
+_DAILY_STATS_COLUMN_MAP = {
+    "restingHeartRate":        "resting_heart_rate",
+    "minHeartRate":            "min_heart_rate",
+    "maxHeartRate":            "max_heart_rate",
+    "stressPercentage":        "stress_percentage",
+    "highStressPercentage":    "high_stress_percentage",
+    "bodyBatteryHighestValue": "body_battery_highest_value",
+    "bodyBatteryLowestValue":  "body_battery_lowest_value",
+    "bodyBatteryChargedValue": "body_battery_charged_value",
+    "bodyBatteryDrainedValue": "body_battery_drained_value",
+    "bodyBatteryAtWakeTime":   "body_battery_at_wake_time",
+    "totalSteps":              "total_steps",
+    "totalDistanceMeters":     "total_distance_meters",
+    "activeKilocalories":      "active_kilocalories",
+    "sleepingSeconds":         "sleeping_seconds",
+    "moderateIntensityMinutes":"moderate_intensity_minutes",
+    "vigorousIntensityMinutes":"vigorous_intensity_minutes",
+    "averageSpo2":             "average_spo2",
+}
 
-_SLEEP_FIELDS = [
-    "sleepScore", "sleepTimeSeconds",
-    "deepSleepSeconds", "lightSleepSeconds", "remSleepSeconds", "awakeSleepSeconds",
-    "avgSleepStress", "avgOvernightHrv",
-    "bodyBatteryChange", "restingHeartRate",
-    "averageSpO2Value", "awakeCount", "restlessMomentsCount",
-    "averageRespirationValue",
-]
+_SLEEP_COLUMN_MAP = {
+    "sleepScore":              "sleep_score",
+    "sleepTimeSeconds":        "sleep_time_seconds",
+    "deepSleepSeconds":        "deep_sleep_seconds",
+    "lightSleepSeconds":       "light_sleep_seconds",
+    "remSleepSeconds":         "rem_sleep_seconds",
+    "awakeSleepSeconds":       "awake_sleep_seconds",
+    "avgSleepStress":          "avg_sleep_stress",
+    "avgOvernightHrv":         "avg_overnight_hrv",
+    "bodyBatteryChange":       "body_battery_change",
+    "restingHeartRate":        "resting_heart_rate",
+    "averageSpO2Value":        "average_spo2_value",
+    "awakeCount":              "awake_count",
+    "restlessMomentsCount":    "restless_moments_count",
+    "averageRespirationValue": "average_respiration_value",
+}
 
 # Key metrics we track baselines for
 _BASELINE_METRICS = [
@@ -74,33 +89,41 @@ class CacheBuilder:
         next_day_str = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
 
         # -- DailyStats --
-        df_daily = self._repo.query_daily_stats(date, next_day_str, _DAILY_STATS_FIELDS)
+        db_cols = list(_DAILY_STATS_COLUMN_MAP.values())
+        df_daily = self._repo.query_daily_stats(date, next_day_str, db_cols)
         if not df_daily.empty:
             row = df_daily.iloc[0]
-            for f in _DAILY_STATS_FIELDS:
-                val = row.get(f)
+            for logical, db_col in _DAILY_STATS_COLUMN_MAP.items():
+                val = row.get(db_col)
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                    summary[f] = float(val) if isinstance(val, (int, float, np.number)) else val
+                    summary[logical] = float(val) if isinstance(val, (int, float, np.number)) else val
 
         # -- SleepSummary --
-        df_sleep = self._repo.query_sleep_summary(date, next_day_str, _SLEEP_FIELDS)
+        sleep_db_cols = list(_SLEEP_COLUMN_MAP.values())
+        df_sleep = self._repo.query_sleep_summary(date, next_day_str, sleep_db_cols)
         if not df_sleep.empty:
             row = df_sleep.iloc[0]
-            for f in _SLEEP_FIELDS:
-                val = row.get(f)
+            for logical, db_col in _SLEEP_COLUMN_MAP.items():
+                val = row.get(db_col)
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                    # Prefer original name 'f' if not taken. Collision -> 'sleep_f'
-                    key = f if f not in summary else f"sleep_{f}"
+                    key = logical if logical not in summary else f"sleep_{logical}"
                     summary[key] = float(val) if isinstance(val, (int, float, np.number)) else val
 
         # -- TrainingReadiness --
         df_tr = self._repo.query_training_readiness(date, date)
         if not df_tr.empty:
             row = df_tr.iloc[0]
-            for f in ["score", "level", "sleepScore", "recoveryTime", "hrvFactorPercent"]:
-                val = row.get(f)
+            _tr_map = {
+                "score": "score",
+                "level": "level",
+                "sleepScore": "sleep_score",
+                "recoveryTime": "recovery_time",
+                "hrvFactorPercent": "hrv_factor_percent",
+            }
+            for logical, db_col in _tr_map.items():
+                val = row.get(db_col)
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                    summary[f"training_{f}"] = float(val) if isinstance(val, (int, float, np.number)) else val
+                    summary[f"training_{logical}"] = float(val) if isinstance(val, (int, float, np.number)) else val
 
         # -- LifestyleJournal --
         df_lj = self._repo.query_lifestyle_journal(date, date)

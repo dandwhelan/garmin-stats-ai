@@ -68,7 +68,98 @@ class VisualizationService:
         return {"metric": metric, "dates": dates, "hours": list(range(24)), "matrix": matrix}
 
     # ------------------------------------------------------------------
-    # 2. Behavior-impact comparison
+    # 2. Training load — ACWR series + readiness factor breakdown
+    # ------------------------------------------------------------------
+    def training(self, start: str, end: str) -> dict:
+        ts_sql = """
+            SELECT substr(time, 1, 10) AS date,
+                   acwr_percent,
+                   daily_training_load_acute AS acute_load,
+                   daily_training_load_chronic AS chronic_load,
+                   training_status,
+                   weekly_training_load
+            FROM training_status
+            WHERE time >= ? AND time <= ?
+            ORDER BY time
+        """
+        tr_sql = """
+            SELECT substr(time, 1, 10) AS date,
+                   score,
+                   sleep_score_factor_percent       AS f_sleep,
+                   recovery_time_factor_percent    AS f_recovery,
+                   acwr_factor_percent             AS f_acwr,
+                   stress_history_factor_percent   AS f_stress,
+                   hrv_factor_percent              AS f_hrv
+            FROM training_readiness
+            WHERE time >= ? AND time <= ?
+            ORDER BY time
+        """
+        params = (f"{start}T00:00:00", f"{end}T23:59:59")
+        with self._conn() as conn:
+            ts = pd.read_sql_query(ts_sql, conn, params=params)
+            tr = pd.read_sql_query(tr_sql, conn, params=params)
+
+        # Keep latest row per date
+        if not ts.empty:
+            ts = ts.groupby("date").last().reset_index()
+        if not tr.empty:
+            tr = tr.groupby("date").last().reset_index()
+
+        return {
+            "training_status": ts.to_dict(orient="records"),
+            "training_readiness": tr.to_dict(orient="records"),
+        }
+
+    # ------------------------------------------------------------------
+    # 3. Body composition — weight + body fat % + muscle mass trend
+    # ------------------------------------------------------------------
+    def body_composition(self, start: str, end: str) -> list[dict]:
+        sql = """
+            SELECT substr(time, 1, 10) AS date,
+                   weight, bmi, body_fat, muscle_mass, body_water, visceral_fat
+            FROM body_composition
+            WHERE time >= ? AND time <= ?
+            ORDER BY time
+        """
+        with self._conn() as conn:
+            df = pd.read_sql_query(sql, conn, params=(f"{start}T00:00:00", f"{end}T23:59:59"))
+        if df.empty:
+            return []
+        df = df.groupby("date", as_index=False).mean(numeric_only=True)
+        for col in ("weight", "bmi", "body_fat", "muscle_mass", "body_water", "visceral_fat"):
+            if col in df.columns:
+                df[col] = df[col].round(2)
+        return df.to_dict(orient="records")
+
+    # ------------------------------------------------------------------
+    # 4. HR-zone distribution by activity type
+    # ------------------------------------------------------------------
+    def hr_zones(self, start: str, end: str) -> dict:
+        sql = """
+            SELECT COALESCE(activity_type, 'unknown') AS activity_type,
+                   SUM(COALESCE(hr_time_in_zone_1, 0)) AS z1,
+                   SUM(COALESCE(hr_time_in_zone_2, 0)) AS z2,
+                   SUM(COALESCE(hr_time_in_zone_3, 0)) AS z3,
+                   SUM(COALESCE(hr_time_in_zone_4, 0)) AS z4,
+                   SUM(COALESCE(hr_time_in_zone_5, 0)) AS z5,
+                   COUNT(*) AS activity_count
+            FROM activity_summary
+            WHERE time >= ? AND time <= ?
+            GROUP BY activity_type
+            HAVING (z1 + z2 + z3 + z4 + z5) > 0
+            ORDER BY (z1 + z2 + z3 + z4 + z5) DESC
+            LIMIT 8
+        """
+        with self._conn() as conn:
+            df = pd.read_sql_query(sql, conn, params=(f"{start}T00:00:00", f"{end}T23:59:59"))
+        # Convert seconds → minutes for display
+        for c in ("z1", "z2", "z3", "z4", "z5"):
+            if c in df.columns:
+                df[c] = (df[c].fillna(0) / 60.0).round(1)
+        return {"by_type": df.to_dict(orient="records")}
+
+    # ------------------------------------------------------------------
+    # 5. Behavior-impact comparison
     # ------------------------------------------------------------------
     def behavior_impact(self, days: int = 90, min_occurrences: int = 3) -> list[dict]:
         end = datetime.utcnow().date()
@@ -127,7 +218,7 @@ class VisualizationService:
         return results
 
     # ------------------------------------------------------------------
-    # 3. Correlation matrix between core daily metrics
+    # 6. Correlation matrix between core daily metrics
     # ------------------------------------------------------------------
     def correlations(self, start: str, end: str) -> dict:
         keys = [
@@ -154,11 +245,12 @@ class VisualizationService:
             records.append({k: m.get(k) for k in keys})
         df = pd.DataFrame(records)
         corr = df.corr(numeric_only=True).reindex(index=keys, columns=keys)
+        # Replace NaN with 0 for serialization (insufficient data → no correlation)
         corr = corr.fillna(0).round(2)
         return {"keys": keys, "matrix": corr.values.tolist()}
 
     # ------------------------------------------------------------------
-    # 4. Sleep timeline — bedtime/waketime drift
+    # 7. Sleep timeline — bedtime/waketime drift
     # ------------------------------------------------------------------
     def sleep_timeline(self, start: str, end: str) -> list[dict]:
         sql = """
@@ -182,8 +274,11 @@ class VisualizationService:
                 continue
             bed_h = bed_dt.hour + bed_dt.minute / 60
             wake_h = wake_dt.hour + wake_dt.minute / 60
+            # Normalise: if bed_h is in the morning (after midnight), shift +24
+            # so the bedtime line plots continuously around midnight.
             if bed_h < 12:
                 bed_h += 24
+            # Day-of-week: 0=Mon..6=Sun
             try:
                 dow = datetime.fromisoformat(r["date"]).weekday()
             except Exception:
@@ -198,14 +293,14 @@ class VisualizationService:
         return out
 
     # ------------------------------------------------------------------
-    # 5. Anomaly calendar — z-scores per metric per day
+    # 8. Anomaly calendar — z-scores per metric per day
     # ------------------------------------------------------------------
     def anomaly_calendar(self, start: str, end: str) -> dict:
         keys = [
             "sleepScore", "avgOvernightHrv", "restingHeartRate",
             "stressPercentage", "bodyBatteryAtWakeTime",
         ]
-        # Pull a 30-day buffer before `start` so rolling stats are populated.
+        # Pull a 30-day buffer before `start` so rolling stats are populated
         d_start = datetime.fromisoformat(start).date()
         buffered_start = (d_start - timedelta(days=30)).isoformat()
 
@@ -235,6 +330,7 @@ class VisualizationService:
             z = (s - roll_mean) / roll_std
             z_per_key.append(z.tolist())
 
+        # Trim to the requested window (keep z-scores aligned to dates)
         mask = (df["date"] >= start).tolist()
         dates = [d for d, m in zip(df["date"].tolist(), mask) if m]
         matrix = []

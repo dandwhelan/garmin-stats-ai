@@ -9,7 +9,6 @@ try:
 except ImportError:
     from sqlite_manager import GarminDB
 import xml.etree.ElementTree as ET
-from garth.exc import GarthHTTPError
 from garminconnect import (
     Garmin,
     GarminConnectAuthenticationError,
@@ -30,6 +29,7 @@ ______________________________________________________________________
 """
 print(banner_text)
 
+dotenv.load_dotenv()
 env_override = dotenv.load_dotenv("override-default-vars.env", override=True)
 if env_override:
     logging.warning("System ENV variables are overridden with override-default-vars.env")
@@ -105,7 +105,7 @@ def garmin_login():
         garmin.login(TOKEN_DIR)
         logging.info("login to Garmin Connect successful using stored session tokens.")
 
-    except (FileNotFoundError, GarthHTTPError, GarminConnectAuthenticationError):
+    except (FileNotFoundError, GarminConnectConnectionError, GarminConnectAuthenticationError):
         logging.warning("Session is expired or login information not present/incorrect. You'll need to log in again...login with your Garmin Connect credentials to generate them.")
         try:
             user_email = GARMINCONNECT_EMAIL or input("Enter Garminconnect Login e-mail: ")
@@ -118,7 +118,7 @@ def garmin_login():
                 mfa_code = input("MFA one-time code (via email or SMS): ")
                 garmin.resume_login(result2, mfa_code)
 
-            garmin.garth.dump(TOKEN_DIR)
+            garmin.client.dump(TOKEN_DIR)
             logging.info(f"Oauth tokens stored in '{TOKEN_DIR}' directory for future use")
 
             garmin.login(TOKEN_DIR)
@@ -127,7 +127,7 @@ def garmin_login():
 
         except (
             FileNotFoundError,
-            GarthHTTPError,
+            GarminConnectConnectionError,
             GarminConnectAuthenticationError,
             requests.exceptions.HTTPError,
         ) as err:
@@ -142,7 +142,7 @@ def write_points_to_db(points):
         if len(points) != 0:
             if TAG_MEASUREMENTS_WITH_USER_EMAIL:
                 for item in points:
-                    item['tags'].update({'User_ID': garmin_obj.garth.profile.get('userName','Unknown')})
+                    item['tags'].update({'User_ID': getattr(garmin_obj, 'display_name', None) or 'Unknown'})
             
             garmin_db.insert_points(points)
             logging.info("Success : updated SQLite database with new points")
@@ -1387,6 +1387,8 @@ if __name__ == "__main__":
 
     # %%
     if MANUAL_START_DATE:
+        logging.warning(f"MANUAL_START_DATE is set to '{MANUAL_START_DATE}' — overrides automatic date detection. Set in .env or override-default-vars.env. Remove to use auto mode.")
+        logging.warning(f"MANUAL_END_DATE is '{MANUAL_END_DATE}' (defaults to today if not explicitly set).")
         fetch_write_bulk(MANUAL_START_DATE, MANUAL_END_DATE)
         logging.info(f"Bulk update success : Fetched all available health metrics for date range {MANUAL_START_DATE} to {MANUAL_END_DATE}")
         exit(0)
@@ -1421,11 +1423,17 @@ if __name__ == "__main__":
         
         while True:
             last_watch_sync_time_UTC = datetime.fromtimestamp(int(garmin_obj.get_device_last_used().get('lastUsedDeviceUploadTime')/1000)).astimezone(pytz.timezone("UTC"))
-            if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC:
-                logging.info(f"Update found : Current watch sync time is {last_watch_sync_time_UTC} UTC")
-                fetch_write_bulk((last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d'), (last_watch_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')) # Using local dates for deciding which dates to fetch in current iteration (see issue #25)
+            # Use today's local date as the end date rather than lastUsedDeviceUploadTime.
+            # The watch API upload timestamp can be stale (e.g. still showing yesterday) even when
+            # today's data is already available on Garmin servers, causing the fetch to miss
+            # recent days. Fetching up to today is safe — empty dates simply return no records.
+            today_local_str = datetime.today().strftime('%Y-%m-%d')
+            start_local_str = (last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')
+            if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC or start_local_str < today_local_str:
+                logging.info(f"Update found : fetching {start_local_str} → {today_local_str} (watch last upload: {last_watch_sync_time_UTC} UTC)")
+                fetch_write_bulk(start_local_str, today_local_str)
                 last_influxdb_sync_time_UTC = last_watch_sync_time_UTC
             else:
-                logging.info(f"No new data found : Current watch and influxdb sync time is {last_watch_sync_time_UTC} UTC")
+                logging.info(f"No new data found : DB sync={last_influxdb_sync_time_UTC} UTC, watch upload={last_watch_sync_time_UTC} UTC")
             logging.info(f"waiting for {UPDATE_INTERVAL_SECONDS} seconds before next automatic update calls")
             time.sleep(UPDATE_INTERVAL_SECONDS)

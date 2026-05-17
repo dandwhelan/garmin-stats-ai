@@ -1,11 +1,12 @@
 """Lifestyle-focused visualizations.
 
-Research-backed views built from `lifestyle_journal` plus the existing metrics
-tables. Each method returns JSON-serialisable structures.
+Research-backed views built from `lifestyle_journal` plus the existing
+metrics tables. Each method returns JSON-serialisable structures.
 
 References cited inline: Pietilä 2018 (alcohol/HRV), Drake 2013 (caffeine cutoff),
 Windred 2024 (sleep regularity & mortality), Quer 2021 (illness signature),
-Kellmann 2018 (overtraining).
+Kellmann 2018 (overtraining), Paluch 2022 (steps & mortality),
+Mandsager 2018 (CRF & mortality).
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Metrics where lower is better
+_LOWER_IS_BETTER = {"restingHeartRate", "stressPercentage", "highStressPercentage",
+                     "averageRespirationValue"}
 
 
 class LifestyleService:
@@ -60,9 +65,11 @@ class LifestyleService:
             )
 
     # ------------------------------------------------------------------
-    # 1. Behavior dose-response (behaviors logged with numeric value)
+    # 1. Alcohol dose-response (and any logged behavior with numeric value)
     # ------------------------------------------------------------------
     def behavior_dose_response(self, start: str, end: str) -> dict:
+        """For behaviors logged with a numeric `value`, plot value vs next-night
+        sleep / HRV / RHR. Returns scatter datasets per behavior."""
         lj = self._load_journal(start, end)
         ds = self._load_summaries(start, end)
         if lj.empty or ds.empty:
@@ -73,11 +80,14 @@ class LifestyleService:
 
         ds = ds.set_index("date")
         out = []
+        # Only behaviors with at least 5 numeric occurrences
         for behavior, group in lj.groupby("behavior"):
             if len(group) < 5:
                 continue
             points: list[dict] = []
             for _, r in group.iterrows():
+                # The night affected = sleep recorded on the SAME date the behavior was logged
+                # (Garmin records sleep with the date of waking).
                 row = ds.loc[r["date"]] if r["date"] in ds.index else None
                 if row is None:
                     continue
@@ -91,11 +101,12 @@ class LifestyleService:
                 })
             if points:
                 out.append({"behavior": behavior, "n": len(points), "points": points})
+        # Sort by sample count desc
         out.sort(key=lambda b: b["n"], reverse=True)
         return {"behaviors": out}
 
     # ------------------------------------------------------------------
-    # 2. Caffeine cutoff — Late vs early vs none
+    # 2. Caffeine cutoff — Late Caffeine vs regular vs none
     # ------------------------------------------------------------------
     def caffeine_cutoff(self, start: str, end: str) -> dict:
         lj = self._load_journal(start, end)
@@ -137,8 +148,8 @@ class LifestyleService:
     # ------------------------------------------------------------------
     def sleep_regularity(self, start: str, end: str) -> dict:
         """Proxy SRI: 100 - (std of sleep midpoint in hours over a 7-day window) * 25.
-
-        Perfectly regular sleeper scores 100; every hour of variance ~ -25 pts.
+        A perfectly regular sleeper scores 100, every hour of variance ~ -25 pts.
+        Plot 7-day rolling SRI day-by-day.
         """
         with self._conn() as conn:
             df = pd.read_sql_query(
@@ -155,6 +166,7 @@ class LifestyleService:
                 wake = datetime.fromisoformat(str(r["time"]).replace("Z", "").split(".")[0])
                 bed = wake - timedelta(seconds=int(r["sleep_time_seconds"] or 0))
                 mid = bed + (wake - bed) / 2
+                # Express midpoint as hours since previous noon (continuous over midnight)
                 ref = mid.replace(hour=12, minute=0, second=0, microsecond=0)
                 if mid < ref:
                     ref -= timedelta(days=1)
@@ -190,6 +202,7 @@ class LifestyleService:
                 wake = datetime.fromisoformat(str(r["time"]).replace("Z", "").split(".")[0])
                 bed = wake - timedelta(seconds=int(r["sleep_time_seconds"] or 0))
                 mid = bed + (wake - bed) / 2
+                # Hour-of-day on a 0-24 scale where 02:00 next day = 26
                 h = mid.hour + mid.minute / 60
                 if h < 12:
                     h += 24
@@ -220,14 +233,20 @@ class LifestyleService:
         lj = lj[lj["status"] == 1]
 
         ds["hrv"] = pd.to_numeric(ds.get("avgOvernightHrv"), errors="coerce")
+        ds["rhr"] = pd.to_numeric(ds.get("restingHeartRate"), errors="coerce")
         baseline_hrv = ds["hrv"].rolling(30, min_periods=7).mean()
+        baseline_rhr = ds["rhr"].rolling(30, min_periods=7).mean()
         std_hrv = ds["hrv"].rolling(30, min_periods=7).std()
-        ds = ds.assign(b_hrv=baseline_hrv, s_hrv=std_hrv).set_index("date")
+        std_rhr = ds["rhr"].rolling(30, min_periods=7).std()
+        ds = ds.assign(b_hrv=baseline_hrv, b_rhr=baseline_rhr,
+                        s_hrv=std_hrv, s_rhr=std_rhr).set_index("date")
 
         results = []
         for behavior, group in lj.groupby("behavior"):
             recoveries: list[int] = []
             for _, r in group.iterrows():
+                # Walk forward from the day after the behavior to find first day
+                # where HRV is back within 0.5σ of baseline.
                 try:
                     start_idx = list(ds.index).index(r["date"])
                 except ValueError:
@@ -252,7 +271,7 @@ class LifestyleService:
         return results
 
     # ------------------------------------------------------------------
-    # 6. Stress resilience — inverted stress z-score on a 0–100 scale
+    # 6. Stress-resilience score — daily inverted stress z-score
     # ------------------------------------------------------------------
     def stress_resilience(self, start: str, end: str) -> list[dict]:
         ds = self._load_summaries(start, end)
@@ -261,6 +280,7 @@ class LifestyleService:
         s = pd.to_numeric(ds.get("stressPercentage"), errors="coerce")
         roll = s.rolling(30, min_periods=7)
         z = (s - roll.mean()) / roll.std()
+        # Resilience = 50 - 15*z, so high stress (positive z) -> low resilience
         score = (50 - 15 * z).clip(lower=0, upper=100)
         return [
             {"date": d, "resilience": (None if pd.isna(v) else round(float(v), 1))}
@@ -285,12 +305,13 @@ class LifestyleService:
         df["ts"] = pd.to_datetime(df["time"])
         out = []
         for date, group in df.groupby("date"):
+            # Slope between first and last sample of the day, normalized to per hour
             g = group.dropna(subset=["body_battery_level"]).sort_values("ts")
             if len(g) < 4:
                 continue
-            x = (g["ts"] - g["ts"].iloc[0]).dt.total_seconds().values / 3600
+            x = (g["ts"] - g["ts"].iloc[0]).dt.total_seconds().values / 3600  # hours
             y = g["body_battery_level"].astype(float).values
-            if x[-1] - x[0] < 4:
+            if x[-1] - x[0] < 4:  # need at least 4h of data
                 continue
             slope, _intercept = np.polyfit(x, y, 1)
             out.append({
@@ -308,6 +329,7 @@ class LifestyleService:
         ds = self._load_summaries(start, end)
         if ds.empty:
             return {"series": [], "alerts": []}
+        # Pull respiration from sleep_summary directly
         with self._conn() as conn:
             sleep = pd.read_sql_query(
                 "SELECT date, average_respiration_value AS resp FROM sleep_summary "
@@ -332,13 +354,15 @@ class LifestyleService:
         series = []
         alerts = []
         for _, r in ds.iterrows():
-            series.append({
+            entry = {
                 "date": r["date"],
                 "z_rhr": _round(r["z_rhr"]),
                 "z_hrv_inv": _round(r["z_hrv"]),
                 "z_resp": _round(r["z_resp"]),
                 "composite": _round(r["composite"]),
-            })
+            }
+            series.append(entry)
+            # Alert: all 3 axes at z >= 1
             if (pd.notna(r["z_rhr"]) and pd.notna(r["z_hrv"]) and pd.notna(r["z_resp"])
                     and r["z_rhr"] >= 1 and r["z_hrv"] >= 1 and r["z_resp"] >= 1):
                 alerts.append({
@@ -368,15 +392,16 @@ class LifestyleService:
         total = ds[["deep_sleep_seconds", "light_sleep_seconds", "rem_sleep_seconds", "awake_sleep_seconds"]].sum(axis=1)
         sleep_eff = (total - ds["awake_sleep_seconds"].fillna(0)) / total.replace(0, np.nan)
 
+        # Z-score each component, then sum
         def z(col: pd.Series) -> pd.Series:
             roll = col.rolling(30, min_periods=7)
             return (col - roll.mean()) / roll.std()
 
         z_total = z(ds["rhr"]) + z(ds["resp"]) + (-z(sleep_eff))
-        return [
-            {"date": d, "index": _round(v)}
-            for d, v in zip(ds["date"], z_total)
-        ]
+        out = []
+        for d, val in zip(ds["date"], z_total):
+            out.append({"date": d, "index": _round(val)})
+        return out
 
     # ------------------------------------------------------------------
     # 10. Recovery debt accumulator
@@ -411,6 +436,7 @@ class LifestyleService:
             d += timedelta(days=1)
 
         out = []
+        # Top 12 by frequency
         counts = lj["behavior"].value_counts().head(12)
         for behavior in counts.index:
             sub = lj[lj["behavior"] == behavior]
@@ -454,7 +480,7 @@ class LifestyleService:
         return out
 
     # ------------------------------------------------------------------
-    # 13. Behavior co-occurrence matrix
+    # 13. Lifestyle co-occurrence matrix
     # ------------------------------------------------------------------
     def behavior_cooccurrence(self, start: str, end: str) -> dict:
         lj = self._load_journal(start, end)
@@ -465,6 +491,7 @@ class LifestyleService:
         for _, r in lj.iterrows():
             per_day[r["date"]].add(r["behavior"])
 
+        # Top 10 most common behaviors
         top = [b for b, _ in Counter(lj["behavior"]).most_common(10)]
         matrix = [[0] * len(top) for _ in top]
         for behaviors in per_day.values():
@@ -477,7 +504,75 @@ class LifestyleService:
         return {"behaviors": top, "matrix": matrix}
 
     # ------------------------------------------------------------------
-    # 14. Stress hour-of-day fingerprint
+    # 14. Step-count survival curve (CDF over period)
+    # ------------------------------------------------------------------
+    def step_distribution(self, start: str, end: str) -> dict:
+        ds = self._load_summaries(start, end)
+        if ds.empty:
+            return {"sorted_steps": [], "median": None, "pct_over_7500": None, "pct_over_10000": None}
+        steps = pd.to_numeric(ds.get("totalSteps"), errors="coerce").dropna().sort_values(ascending=False)
+        n = len(steps)
+        if n == 0:
+            return {"sorted_steps": [], "median": None, "pct_over_7500": None, "pct_over_10000": None}
+        return {
+            "sorted_steps": [int(s) for s in steps.tolist()],
+            "median": int(steps.median()),
+            "pct_over_7500": round(100 * (steps >= 7500).sum() / n, 1),
+            "pct_over_10000": round(100 * (steps >= 10000).sum() / n, 1),
+        }
+
+    # ------------------------------------------------------------------
+    # 15. VO2 max age delta
+    # ------------------------------------------------------------------
+    def fitness_age_delta(self, start: str, end: str) -> list[dict]:
+        with self._conn() as conn:
+            df = pd.read_sql_query(
+                "SELECT substr(time, 1, 10) AS date, * FROM fitness_age "
+                "WHERE time >= ? AND time <= ? ORDER BY time",
+                conn, params=(f"{start}T00:00:00", f"{end}T23:59:59"),
+            )
+        if df.empty:
+            return []
+        # Look for "fitness_age" or "fitnessAge" columns; otherwise return raw
+        candidates = [c for c in df.columns if "fitness" in c.lower() or "age" in c.lower()]
+        df = df.groupby("date", as_index=False).last()
+        return df[["date"] + candidates].to_dict(orient="records") if candidates else df.to_dict(orient="records")
+
+    # ------------------------------------------------------------------
+    # 16. Vigorous minutes per week vs WHO target
+    # ------------------------------------------------------------------
+    def who_intensity_target(self, start: str, end: str) -> dict:
+        ds = self._load_summaries(start, end)
+        if ds.empty:
+            return {"weeks": []}
+        ds = ds.assign(
+            mod=pd.to_numeric(ds.get("moderateIntensityMinutes"), errors="coerce").fillna(0),
+            vig=pd.to_numeric(ds.get("vigorousIntensityMinutes"), errors="coerce").fillna(0),
+            ts=pd.to_datetime(ds["date"]),
+        )
+        ds["week"] = ds["ts"].dt.to_period("W").apply(lambda p: p.start_time.date().isoformat())
+        weekly = ds.groupby("week").agg(mod=("mod", "sum"), vig=("vig", "sum")).reset_index()
+        weekly["mod_equiv"] = weekly["mod"] + 2 * weekly["vig"]  # WHO equivalency
+        weekly["target_pct"] = (100 * weekly["mod_equiv"] / 150).round(0)
+        return {
+            "weeks": [
+                {"week": r["week"], "moderate": int(r["mod"]), "vigorous": int(r["vig"]),
+                 "mod_equiv": int(r["mod_equiv"]), "target_pct": int(r["target_pct"])}
+                for _, r in weekly.iterrows()
+            ]
+        }
+
+    # ------------------------------------------------------------------
+    # 17. HRV through cycle phase — placeholder (no cycle data table)
+    # ------------------------------------------------------------------
+    def cycle_hrv(self, start: str, end: str) -> dict:
+        return {
+            "available": False,
+            "note": "No menstrual cycle tracking table found in DB; enable cycle tracking in Garmin Connect.",
+        }
+
+    # ------------------------------------------------------------------
+    # 18. Stress hour-of-day fingerprint
     # ------------------------------------------------------------------
     def stress_hour_fingerprint(self, start: str, end: str) -> dict:
         sql = """
@@ -503,7 +598,7 @@ class LifestyleService:
         }
 
     # ------------------------------------------------------------------
-    # 15. Stress trigger leaderboard
+    # 19. Stress-trigger leaderboard
     # ------------------------------------------------------------------
     def stress_trigger_leaderboard(self, start: str, end: str) -> dict:
         ds = self._load_summaries(start, end)

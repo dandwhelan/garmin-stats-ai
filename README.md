@@ -173,6 +173,36 @@ garmin-insights scan --weekly # full weekly summary
 garmin-insights status        # check DB + API connectivity
 ```
 
+## Multi-user setup
+
+Multiple Garmin accounts can share a single server instance. Each user gets their own SQLite database and Garmin token directory.
+
+**1. Create per-user env files** (see `users/alice.env.example` and `users/bob.env.example` for templates):
+
+```bash
+# users/alice.env
+GARMINCONNECT_EMAIL=alice@example.com
+GARMINCONNECT_PASSWORD=alices_password
+SQLITE_DB_PATH=/home/pi/garmin-data/alice.db
+TOKEN_DIR=/home/pi/.garminconnect-alice
+```
+
+**2. Fetch data per user** (run separately for each account):
+
+```bash
+# Load alice's env then fetch
+set -a && source users/alice.env && set +a
+python -m garmin_grafana.garmin_fetch
+```
+
+**3. Tell the insights server about all users** via the `USERS` env var:
+
+```bash
+USERS=alice:/home/pi/garmin-data/alice.db,bob:/home/pi/garmin-data/bob.db
+```
+
+The web interface routes each logged-in user to their own database. When `USERS` is unset the app runs in single-user mode using `SQLITE_DB_PATH`.
+
 ## Example questions for the chat
 
 - "How has my sleep been this week compared to my baseline?"
@@ -214,7 +244,7 @@ Raw Garmin data           →  Daily summary cache    →  Statistical analysis 
 - **Multi-signal illness detector** — combines RHR + HRV + respiration z-scores against personal baseline (Quer 2021)
 - **Social jet lag detector** — compares weekday vs. weekend sleep duration variance
 
-**3. Claude AI agent** — Uses `claude-opus-4-7` with adaptive thinking. The agent has 17 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
+**3. Claude AI agent** — Uses `claude-sonnet-4-6` by default (or `claude-opus-4-7` if `CLAUDE_MODEL` is set) with extended thinking. The agent has 17 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
 
 ### What the agent can answer
 
