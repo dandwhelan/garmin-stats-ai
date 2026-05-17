@@ -142,6 +142,213 @@
       </section>
     </div>
 
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Intraday Heatmap</h2>
+        <div class="chart-controls">
+          <button class="heatmap-toggle active" data-metric="stress">Stress</button>
+          <button class="heatmap-toggle" data-metric="body_battery">Body Battery</button>
+          <button class="heatmap-toggle" data-metric="heart_rate">Heart Rate</button>
+        </div>
+      </div>
+      <div class="heatmap-container" id="intraday-heatmap"></div>
+      <div class="heatmap-legend" id="intraday-heatmap-legend"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Sleep Timeline — Bedtime / Waketime</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="sleep-timeline-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Anomaly Calendar <span class="info-icon" tabindex="0">i<span class="info-tooltip">Each cell shows how far that day's metric was from your 30-day average, in standard deviations (z-score). Green = above your norm, Red = below your norm, Darker = further from normal.</span></span></h2>
+        </div>
+        <div class="anomaly-container" id="anomaly-calendar"></div>
+        <div class="anomaly-legend">
+          <span><span class="legend-swatch" style="background:#f87171"></span> low / outside band</span>
+          <span><span class="legend-swatch" style="background:#3a3f5a"></span> within ±1σ</span>
+          <span><span class="legend-swatch" style="background:#34d399"></span> high / above band</span>
+        </div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Impact (last 90 days)</h2>
+        <div class="chart-controls">
+          <button class="behavior-toggle active" data-metric="sleep">Sleep Score</button>
+          <button class="behavior-toggle" data-metric="hrv">HRV</button>
+          <button class="behavior-toggle" data-metric="rhr">Resting HR</button>
+        </div>
+      </div>
+      <div class="chart-container chart-container-tall">
+        <canvas id="behavior-impact-chart"></canvas>
+      </div>
+      <div class="behavior-note" id="behavior-note"></div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Metric Correlation Matrix</h2>
+      </div>
+      <div class="correlation-container" id="correlation-matrix"></div>
+    </section>
+
+    <h2 class="section-divider">Lifestyle &amp; Health Insights</h2>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Pre-symptom Illness Radar <span class="info-icon" tabindex="0">i<span class="info-tooltip">Early illness detection (Quer et al. 2021) using z-scores vs your 30-day baseline: elevated RHR, suppressed HRV, and elevated respiration rate. A composite z-score above 2 may be a pre-symptomatic illness signal — before you feel sick.</span></span></h2>
+        <span class="chart-sub">RHR + HRV-inverted + respiration z-scores (Quer 2021)</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="illness-radar-chart"></canvas>
+      </div>
+      <div id="illness-alerts" class="alert-list"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Recovery Debt <span class="info-icon" tabindex="0">i<span class="info-tooltip">Tracks cumulative energy deficit when your morning Body Battery falls below your personal baseline. Persistent debt means your body isn't recovering fully between days.</span></span></h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="recovery-debt-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Inflammation Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">A composite z-score combining elevated RHR, elevated respiration rate, and reduced sleep efficiency. Higher values suggest systemic stress, illness, or heavy recovery demands.</span></span></h2>
+          <span class="chart-sub">RHR + respiration − sleep efficiency, z-scored</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="inflammation-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Sleep Regularity Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">Measures how consistent your sleep timing is day-to-day (0–100). High scores are linked to better metabolic and cardiovascular health — even independent of sleep duration (Windred 2024).<br><br>≥87 regular · &lt;60 irregular</span></span></h2>
+          <span class="chart-sub">7-day rolling consistency of sleep midpoint (Windred 2024)</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="sri-chart"></canvas>
+        </div>
+        <div id="sri-current" class="big-stat"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Social Jet Lag <span class="info-icon" tabindex="0">i<span class="info-tooltip">Difference between your weekday and weekend sleep midpoints. A gap &gt;1 hour is linked to metabolic dysfunction, mood issues, and cardiovascular risk.</span></span></h2>
+          <span class="chart-sub">Weekday vs weekend sleep midpoint</span>
+        </div>
+        <div id="social-jetlag" class="dual-clock"></div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Stress Resilience Score <span class="info-icon" tabindex="0">i<span class="info-tooltip">How effectively your body recovers from daily stress. Higher scores mean your autonomic nervous system is bouncing back efficiently from stressors.</span></span></h2>
+        <span class="chart-sub">Daily, normalised against your 30-day stress baseline</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="resilience-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Body Battery Decay Slope <span class="info-icon" tabindex="0">i<span class="info-tooltip">How fast your body battery depletes during waking hours, expressed as points per hour. Steeper decay = faster autonomic drain.</span></span></h2>
+        <span class="chart-sub">Points lost per hour — steeper = faster autonomic drain</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="bb-decay-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Recovery Cost <span class="info-icon" tabindex="0">i<span class="info-tooltip">Median number of days for your HRV to return within 0.5σ of baseline after each logged behavior. Longer bars = harder impact on recovery.</span></span></h2>
+        <span class="chart-sub">Median days for HRV to return within 0.5σ of baseline</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="recovery-cost-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Dose-Response <span class="info-icon" tabindex="0">i<span class="info-tooltip">Shows how different quantities of a behavior correlate with sleep score, HRV, deep sleep, and RHR the following night. Only meaningful for behaviors logged with a numeric quantity.</span></span></h2>
+        <span class="chart-sub">For behaviors logged with a numeric value (e.g. drinks, caffeine cups)</span>
+        <div class="chart-controls" id="dose-controls"></div>
+      </div>
+      <div class="chart-container">
+        <canvas id="dose-response-chart"></canvas>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Caffeine Timing Comparison</h2>
+        </div>
+        <div id="caffeine-cutoff" class="caffeine-grid"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Habit Half-Life</h2>
+          <span class="chart-sub">Days since last logged · 30d frequency</span>
+        </div>
+        <div id="habit-half-life" class="habit-list"></div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Behavior Streak Calendar</h2>
+        <span class="chart-sub">Top 12 logged behaviors</span>
+      </div>
+      <div id="streak-calendar" class="streak-container"></div>
+    </section>
+
+    <div class="charts-row">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Behavior Co-occurrence</h2>
+          <span class="chart-sub">How often these behaviors are logged on the same day</span>
+        </div>
+        <div id="cooccurrence-matrix" class="correlation-container"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Stress Trigger Leaderboard</h2>
+          <span class="chart-sub">Behaviors over-represented on top-quintile stress days</span>
+        </div>
+        <div id="stress-triggers" class="trigger-list"></div>
+      </section>
+    </div>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Stress Hour-of-Day Fingerprint</h2>
+        <span class="chart-sub">Average stress level per hour, weekday vs weekend</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="stress-fingerprint-chart"></canvas>
+      </div>
+    </section>
+
     <section class="scan-section">
       <h2>AI Health Scan</h2>
       <div class="scan-date-row">

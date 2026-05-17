@@ -469,8 +469,74 @@ async function loadDashboard() {
     renderRecoveryChart(summaries, baselines);
     renderActivityChart(summaries);
     renderStressChart(summaries);
+    // Fan out the secondary loads; they fail silently if their data is sparse.
+    loadVisualizations(date_range.start, date_range.end);
+    loadIntradayHeatmap(activeHeatmapMetric);
+    loadLifestyle(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
+  }
+}
+
+// ---- Secondary data loaders ----
+let vizData = null;
+let lifestyleData = null;
+let activeBehaviorMetric = 'sleep';
+let activeHeatmapMetric = 'stress';
+let activeDoseBehavior = null;
+
+async function loadVisualizations(start, end) {
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    const res = await fetch(`/api/visualizations?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    vizData = await res.json();
+    renderSleepTimeline(vizData.sleep_timeline);
+    renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric);
+    renderAnomalyCalendar(vizData.anomaly_calendar);
+    renderCorrelationMatrix(vizData.correlations);
+  } catch (e) {
+    console.error('Visualizations load failed:', e);
+  }
+}
+
+async function loadIntradayHeatmap(metric) {
+  try {
+    const res = await fetch(`/api/intraday/heatmap?metric=${metric}&days=14`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    renderIntradayHeatmap(await res.json());
+  } catch (e) {
+    console.error('Intraday heatmap load failed:', e);
+  }
+}
+
+async function loadLifestyle(start, end) {
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    const res = await fetch(`/api/lifestyle?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    lifestyleData = await res.json();
+    renderIllnessRadar(lifestyleData.illness_radar);
+    renderRecoveryDebt(lifestyleData.recovery_debt);
+    renderInflammation(lifestyleData.inflammation_index);
+    renderSRI(lifestyleData.sleep_regularity);
+    renderSocialJetLag(lifestyleData.social_jet_lag);
+    renderResilience(lifestyleData.stress_resilience);
+    renderBBDecay(lifestyleData.body_battery_decay);
+    renderRecoveryCost(lifestyleData.behavior_recovery_cost);
+    renderDoseControls(lifestyleData.behavior_dose_response);
+    renderCaffeineCutoff(lifestyleData.caffeine_cutoff);
+    renderHabitHalfLife(lifestyleData.habit_half_life);
+    renderStreakCalendar(lifestyleData.behavior_streak_calendar);
+    renderCooccurrence(lifestyleData.behavior_cooccurrence);
+    renderStressTriggers(lifestyleData.stress_trigger_leaderboard);
+    renderStressFingerprint(lifestyleData.stress_hour_fingerprint);
+  } catch (e) {
+    console.error('Lifestyle load failed:', e);
   }
 }
 
@@ -1002,4 +1068,753 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/* =========================================================
+   Phase 3: secondary-chart renderers (viz + lifestyle)
+   ========================================================= */
+
+// ---- Toggle handlers ----
+document.querySelectorAll('.heatmap-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.heatmap-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeHeatmapMetric = btn.dataset.metric;
+    loadIntradayHeatmap(activeHeatmapMetric);
+  });
+});
+
+document.querySelectorAll('.behavior-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.behavior-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeBehaviorMetric = btn.dataset.metric;
+    if (vizData) renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric);
+  });
+});
+
+// ---- Visualization renderers ----
+function renderSleepTimeline(timeline) {
+  const data = timeline || [];
+  const labels = data.map(r => r.date.slice(5));
+  destroyAux('sleepTimeline');
+  const ctx = document.getElementById('sleep-timeline-chart');
+  if (!ctx) return;
+  auxCharts.sleepTimeline = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Bedtime',  data: data.map(r => r.bedtime),  borderColor: '#7c6af7', backgroundColor: 'transparent', tension: 0.25, pointRadius: 3, spanGaps: true },
+        { label: 'Waketime', data: data.map(r => r.waketime), borderColor: '#fbbf24', backgroundColor: 'transparent', tension: 0.25, pointRadius: 3, spanGaps: true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: commonScales().x,
+        y: {
+          ...commonScales('hour of day').y,
+          ticks: {
+            color: '#8892a4',
+            callback: v => {
+              const h = ((v % 24) + 24) % 24;
+              return `${Math.floor(h).toString().padStart(2, '0')}:${Math.round((h % 1) * 60).toString().padStart(2, '0')}`;
+            },
+          },
+        },
+      },
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
+          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed.y;
+              if (v == null) return `${ctx.dataset.label}: —`;
+              const h = ((v % 24) + 24) % 24;
+              const hh = Math.floor(h).toString().padStart(2, '0');
+              const mm = Math.round((h % 1) * 60).toString().padStart(2, '0');
+              return `${ctx.dataset.label}: ${hh}:${mm}`;
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+function renderBehaviorImpact(rows, metric) {
+  const data = (rows || []).filter(r => r[`${metric}_with`] != null && r[`${metric}_without`] != null);
+  const labels = data.map(r => r.behavior);
+  const ctx = document.getElementById('behavior-impact-chart');
+  if (!ctx) return;
+  destroyAux('behavior');
+  const note = document.getElementById('behavior-note');
+  if (note) {
+    note.textContent = data.length
+      ? `Showing ${data.length} behavior${data.length === 1 ? '' : 's'} with ≥3 occurrences. Bars show the average ${metric.toUpperCase()} on days WITH vs WITHOUT the behavior.`
+      : 'Not enough lifestyle journal entries to compare. Log behaviours in Garmin Connect to populate this chart.';
+  }
+  auxCharts.behavior = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: `Without (${metric})`, data: data.map(r => r[`${metric}_without`]), backgroundColor: '#3a3f5a' },
+        { label: `With (${metric})`,    data: data.map(r => r[`${metric}_with`]),    backgroundColor: '#4f9cf9' },
+      ],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+      },
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
+          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          callbacks: {
+            afterBody: items => {
+              const i = items[0]?.dataIndex;
+              if (i == null) return '';
+              const r = data[i];
+              const delta = r[`${metric}_delta`];
+              const sign = delta >= 0 ? '+' : '';
+              return [`Δ ${sign}${delta} (${r.n_with} with / ${r.n_without} without)`];
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+function renderAnomalyCalendar(payload) {
+  const container = document.getElementById('anomaly-calendar');
+  if (!container) return;
+  container.innerHTML = '';
+  const { dates = [], keys = [], matrix = [] } = payload || {};
+  if (!dates.length) {
+    container.innerHTML = '<div class="empty-state">No data in range</div>';
+    return;
+  }
+  const labelMap = {
+    sleepScore: 'Sleep', avgOvernightHrv: 'HRV', restingHeartRate: 'RHR',
+    stressPercentage: 'Stress', bodyBatteryAtWakeTime: 'Battery',
+  };
+  const inverted = new Set(['restingHeartRate', 'stressPercentage']);
+  function colorFor(z, key) {
+    if (z == null) return '#1a1d27';
+    const adj = inverted.has(key) ? -z : z;
+    const c = Math.max(-3, Math.min(3, adj));
+    if (c >= 0) {
+      const a = Math.min(1, c / 2);
+      return `rgba(52, 211, 153, ${0.15 + a * 0.7})`;
+    }
+    const a = Math.min(1, -c / 2);
+    return `rgba(248, 113, 113, ${0.15 + a * 0.7})`;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'anomaly-grid';
+  grid.style.gridTemplateColumns = `120px repeat(${dates.length}, 1fr)`;
+  grid.appendChild(document.createElement('div'));
+  dates.forEach(d => {
+    const h = document.createElement('div');
+    h.className = 'anomaly-col-label';
+    h.textContent = d.slice(5);
+    grid.appendChild(h);
+  });
+  keys.forEach((key, i) => {
+    const label = document.createElement('div');
+    label.className = 'anomaly-row-label';
+    label.textContent = labelMap[key] || key;
+    grid.appendChild(label);
+    matrix[i].forEach((z, j) => {
+      const cell = document.createElement('div');
+      cell.className = 'anomaly-cell';
+      cell.style.background = colorFor(z, key);
+      cell.title = `${labelMap[key] || key} · ${dates[j]}\nz = ${z == null ? '—' : z.toFixed(2)}`;
+      grid.appendChild(cell);
+    });
+  });
+  container.appendChild(grid);
+}
+
+function renderCorrelationMatrix(payload) {
+  const container = document.getElementById('correlation-matrix');
+  if (!container) return;
+  container.innerHTML = '';
+  const { keys = [], matrix = [] } = payload || {};
+  if (!keys.length || !matrix.length) {
+    container.innerHTML = '<div class="empty-state">Not enough data</div>';
+    return;
+  }
+  const shortNames = {
+    sleepScore: 'Sleep', avgOvernightHrv: 'HRV', restingHeartRate: 'RHR',
+    stressPercentage: 'Stress', bodyBatteryAtWakeTime: 'Battery', totalSteps: 'Steps',
+    deepSleepSeconds: 'Deep', remSleepSeconds: 'REM',
+    moderateIntensityMinutes: 'Mod min', vigorousIntensityMinutes: 'Vig min',
+  };
+  function colorFor(v) {
+    if (v == null || isNaN(v)) return '#1a1d27';
+    if (v >= 0) {
+      const a = Math.min(1, v);
+      return `rgba(79, 156, 249, ${0.15 + a * 0.7})`;
+    }
+    const a = Math.min(1, -v);
+    return `rgba(248, 113, 113, ${0.15 + a * 0.7})`;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'correlation-grid';
+  grid.style.gridTemplateColumns = `100px repeat(${keys.length}, minmax(60px, 1fr))`;
+  grid.appendChild(document.createElement('div'));
+  keys.forEach(k => {
+    const h = document.createElement('div');
+    h.className = 'corr-col-label';
+    h.textContent = shortNames[k] || k;
+    grid.appendChild(h);
+  });
+  keys.forEach((rowKey, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'corr-row-label';
+    lbl.textContent = shortNames[rowKey] || rowKey;
+    grid.appendChild(lbl);
+    matrix[i].forEach((v, j) => {
+      const cell = document.createElement('div');
+      cell.className = 'corr-cell';
+      cell.style.background = colorFor(v);
+      cell.textContent = (v ?? 0).toFixed(2);
+      cell.title = `${shortNames[rowKey] || rowKey} ↔ ${shortNames[keys[j]] || keys[j]}: ${v == null ? '—' : v.toFixed(2)}`;
+      grid.appendChild(cell);
+    });
+  });
+  container.appendChild(grid);
+}
+
+function renderIntradayHeatmap(data) {
+  const container = document.getElementById('intraday-heatmap');
+  if (!container) return;
+  container.innerHTML = '';
+  const { dates = [], hours = [], matrix = [], metric } = data || {};
+  if (!dates.length) {
+    container.innerHTML = '<div class="empty-state">No intraday data available</div>';
+    return;
+  }
+  let min = Infinity, max = -Infinity;
+  matrix.forEach(row => row.forEach(v => {
+    if (v != null) { if (v < min) min = v; if (v > max) max = v; }
+  }));
+  if (!isFinite(min) || !isFinite(max) || min === max) { min = 0; max = 100; }
+  const palette = {
+    stress:       ['#1a1d27', '#fbbf24', '#f87171'],
+    body_battery: ['#1a1d27', '#4f9cf9', '#34d399'],
+    heart_rate:   ['#1a1d27', '#7c6af7', '#f87171'],
+  };
+  const stops = palette[metric] || palette.stress;
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function hexToRgb(h) {
+    const x = h.replace('#', '');
+    return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)];
+  }
+  const c0 = hexToRgb(stops[0]), c1 = hexToRgb(stops[1]), c2 = hexToRgb(stops[2]);
+  function colorFor(v) {
+    if (v == null) return '#0f1117';
+    const t = (v - min) / (max - min);
+    const c = t < 0.5
+      ? c0.map((x, i) => lerp(x, c1[i], t * 2))
+      : c1.map((x, i) => lerp(x, c2[i], (t - 0.5) * 2));
+    return `rgb(${c.map(Math.round).join(',')})`;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'heatmap-grid';
+  grid.style.gridTemplateColumns = `60px repeat(24, 1fr)`;
+  grid.appendChild(document.createElement('div'));
+  hours.forEach(h => {
+    const el = document.createElement('div');
+    el.className = 'heatmap-hour-label';
+    el.textContent = h % 3 === 0 ? `${h}h` : '';
+    grid.appendChild(el);
+  });
+  dates.forEach((d, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'heatmap-date-label';
+    lbl.textContent = d.slice(5);
+    grid.appendChild(lbl);
+    matrix[i].forEach((v, h) => {
+      const cell = document.createElement('div');
+      cell.className = 'heatmap-cell';
+      cell.style.background = colorFor(v);
+      cell.title = `${d} ${h.toString().padStart(2, '0')}:00 — ${v == null ? '—' : v}`;
+      grid.appendChild(cell);
+    });
+  });
+  container.appendChild(grid);
+  const legend = document.getElementById('intraday-heatmap-legend');
+  if (legend) {
+    legend.innerHTML = `
+      <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
+      <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
+      <span><strong>${max.toFixed(0)}</strong></span>
+    `;
+  }
+}
+
+// ---- Lifestyle renderers ----
+
+function renderIllnessRadar(data) {
+  const series = data?.series || [];
+  const labels = series.map(r => r.date.slice(5));
+  destroyAux('illnessRadar');
+  const ctx = document.getElementById('illness-radar-chart');
+  if (!ctx) return;
+  auxCharts.illnessRadar = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'RHR z',         data: series.map(r => r.z_rhr),     borderColor: '#f87171', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'HRV z (inv)',   data: series.map(r => r.z_hrv_inv), borderColor: '#fbbf24', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Respiration z', data: series.map(r => r.z_resp),    borderColor: '#7c6af7', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Composite',     data: series.map(r => r.composite), borderColor: '#e2e8f0', backgroundColor: 'rgba(226,232,240,0.08)', tension: 0.3, spanGaps: true, fill: true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('z-score').y, suggestedMin: -2, suggestedMax: 3 } },
+      plugins: commonPlugins(),
+    },
+  });
+  const alertEl = document.getElementById('illness-alerts');
+  const alerts = data?.alerts || [];
+  if (alertEl) {
+    alertEl.innerHTML = alerts.length
+      ? alerts.map(a => `<div class="alert"><strong>${a.date}</strong> · ${a.note} (composite z=${a.composite})</div>`).join('')
+      : '<div class="alert ok">No illness signature in the current window.</div>';
+  }
+}
+
+function renderRecoveryDebt(rows) {
+  const data = rows || [];
+  destroyAux('recoveryDebt');
+  const ctx = document.getElementById('recovery-debt-chart');
+  if (!ctx) return;
+  auxCharts.recoveryDebt = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [
+        { label: 'Cumulative debt', data: data.map(r => r.cumulative_debt), borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.2)', tension: 0.3, spanGaps: true, fill: true, yAxisID: 'y' },
+        { label: 'Wake battery',    data: data.map(r => r.wake_battery),    borderColor: '#34d399', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y:  { ...commonScales('debt').y, position: 'left' },
+        y1: { ...commonScales('battery').y, position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderInflammation(rows) {
+  const data = rows || [];
+  destroyAux('inflammation');
+  const ctx = document.getElementById('inflammation-chart');
+  if (!ctx) return;
+  auxCharts.inflammation = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'Inflammation z-sum',
+        data: data.map(r => r.index),
+        borderColor: '#fb923c',
+        backgroundColor: 'rgba(251,146,60,0.15)',
+        tension: 0.3, spanGaps: true, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: commonScales('z-sum').y },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+}
+
+function renderSRI(payload) {
+  const series = payload?.series || [];
+  destroyAux('sri');
+  const ctx = document.getElementById('sri-chart');
+  if (!ctx) return;
+  auxCharts.sri = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: series.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'SRI', data: series.map(r => r.sri),
+        borderColor: '#7c6af7', backgroundColor: 'rgba(124,106,247,0.15)',
+        tension: 0.3, spanGaps: true, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('SRI').y, min: 0, max: 100 } },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+  const cur = document.getElementById('sri-current');
+  if (cur) {
+    const v = payload?.current;
+    cur.textContent = v == null ? 'No data' : `Current SRI: ${v.toFixed(1)} / 100`;
+  }
+}
+
+function renderSocialJetLag(d) {
+  const el = document.getElementById('social-jetlag');
+  if (!el) return;
+  if (!d || d.weekday_midpoint_h == null || d.weekend_midpoint_h == null) {
+    el.innerHTML = '<div class="empty-state">Not enough sleep records</div>';
+    return;
+  }
+  const fmt = h => {
+    const x = ((h % 24) + 24) % 24;
+    const hh = Math.floor(x).toString().padStart(2, '0');
+    const mm = Math.round((x % 1) * 60).toString().padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+  el.innerHTML = `
+    <div class="clock">
+      <div class="clock-label">Weekday midpoint</div>
+      <div class="clock-time">${fmt(d.weekday_midpoint_h)}</div>
+      <div class="clock-sub">n=${d.weekday_n}</div>
+    </div>
+    <div class="clock">
+      <div class="clock-label">Weekend midpoint</div>
+      <div class="clock-time">${fmt(d.weekend_midpoint_h)}</div>
+      <div class="clock-sub">n=${d.weekend_n}</div>
+    </div>
+    <div class="clock delta ${d.delta_h > 1 ? 'warn' : 'ok'}">
+      <div class="clock-label">Δ Social jet lag</div>
+      <div class="clock-time">${d.delta_h.toFixed(2)}h</div>
+      <div class="clock-sub">${d.delta_h > 1 ? '⚠ &gt; 1h is metabolically significant' : 'Within healthy range'}</div>
+    </div>
+  `;
+}
+
+function renderResilience(rows) {
+  const data = rows || [];
+  destroyAux('resilience');
+  const ctx = document.getElementById('resilience-chart');
+  if (!ctx) return;
+  auxCharts.resilience = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'Resilience', data: data.map(r => r.resilience),
+        borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.15)',
+        tension: 0.3, spanGaps: true, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('score').y, min: 0, max: 100 } },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+}
+
+function renderBBDecay(rows) {
+  const data = rows || [];
+  destroyAux('bbDecay');
+  const ctx = document.getElementById('bb-decay-chart');
+  if (!ctx) return;
+  auxCharts.bbDecay = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(r => r.date.slice(5)),
+      datasets: [{
+        label: 'Decay (pts/h)', data: data.map(r => r.decay_per_hour),
+        backgroundColor: data.map(r => (r.decay_per_hour ?? 0) < -3 ? '#f87171' : '#7c6af7'),
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: commonScales('points/hour').y },
+      plugins: commonPlugins({ legend: { display: false } }),
+    },
+  });
+}
+
+function renderRecoveryCost(rows) {
+  const data = rows || [];
+  destroyAux('recoveryCost');
+  const ctx = document.getElementById('recovery-cost-chart');
+  if (!ctx) return;
+  auxCharts.recoveryCost = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(r => r.behavior),
+      datasets: [{
+        label: 'Median days to baseline',
+        data: data.map(r => r.median_recovery_days),
+        backgroundColor: '#fbbf24',
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales('days').x, ticks: { color: '#8892a4' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+      },
+      plugins: commonPlugins({
+        tooltip: {
+          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
+          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          callbacks: {
+            afterBody: items => {
+              const r = data[items[0]?.dataIndex ?? 0];
+              return r ? [`${r.n_events} events · max ${r.max_recovery_days}d`] : '';
+            },
+          },
+        },
+      }),
+    },
+  });
+}
+
+function renderDoseControls(payload) {
+  const behaviors = payload?.behaviors || [];
+  const ctrl = document.getElementById('dose-controls');
+  if (!ctrl) return;
+  if (!behaviors.length) {
+    ctrl.innerHTML = '';
+    destroyAux('dose');
+    return;
+  }
+  if (!activeDoseBehavior || !behaviors.find(b => b.behavior === activeDoseBehavior)) {
+    activeDoseBehavior = behaviors[0].behavior;
+  }
+  ctrl.innerHTML = behaviors.map(b =>
+    `<button class="dose-toggle ${b.behavior === activeDoseBehavior ? 'active' : ''}" data-behavior="${escapeHtml(b.behavior)}">${escapeHtml(b.behavior)} (${b.n})</button>`
+  ).join('');
+  ctrl.querySelectorAll('.dose-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeDoseBehavior = btn.dataset.behavior;
+      renderDoseControls(payload);
+    });
+  });
+  renderDoseResponse(payload);
+}
+
+function renderDoseResponse(payload) {
+  const behaviors = payload?.behaviors || [];
+  const target = behaviors.find(b => b.behavior === activeDoseBehavior);
+  if (!target) return;
+  const points = target.points || [];
+  destroyAux('dose');
+  const ctx = document.getElementById('dose-response-chart');
+  if (!ctx) return;
+  const xs = points.map(p => p.value).filter(v => v != null);
+  const uniqueXs = new Set(xs);
+  if (uniqueXs.size <= 1) {
+    ctx.style.display = 'none';
+    let note = ctx.parentElement.querySelector('.dose-binary-note');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'dose-binary-note empty-state';
+      ctx.parentElement.appendChild(note);
+    }
+    note.textContent = `"${activeDoseBehavior}" is logged as a yes/no behavior, so dose-response analysis isn't meaningful — all ${points.length} occurrences share the same value. Log it with a numeric quantity to use this chart.`;
+    return;
+  }
+  ctx.style.display = '';
+  ctx.parentElement.querySelector('.dose-binary-note')?.remove();
+  auxCharts.dose = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [
+        { label: 'Sleep score',       data: points.map(p => ({x: p.value, y: p.sleepScore})),     backgroundColor: '#4f9cf9' },
+        { label: 'HRV (ms)',          data: points.map(p => ({x: p.value, y: p.hrv})),            backgroundColor: '#34d399' },
+        { label: 'Deep sleep (h)*10', data: points.map(p => ({x: p.value, y: p.deepSleepHours == null ? null : p.deepSleepHours * 10})), backgroundColor: '#7c6af7' },
+        { label: 'RHR',               data: points.map(p => ({x: p.value, y: p.rhr})),            backgroundColor: '#f87171' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales(`${target.behavior} (logged value)`).x, type: 'linear' },
+        y: commonScales().y,
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderCaffeineCutoff(payload) {
+  const el = document.getElementById('caffeine-cutoff');
+  if (!el) return;
+  const groups = payload?.groups || [];
+  if (!groups.length || groups.every(g => g.n === 0)) {
+    el.innerHTML = '<div class="empty-state">Log "Caffeine" / "Late Caffeine" in Garmin Connect to populate</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="caffeine-row caffeine-head">
+      <div></div><div>n</div><div>Sleep</div><div>Deep h</div><div>HRV</div><div>Wake-ups</div>
+    </div>
+    ${groups.map(g => `
+      <div class="caffeine-row">
+        <div class="caffeine-label">${escapeHtml(g.group)}</div>
+        <div>${g.n}</div>
+        <div>${g.sleep_score ?? '—'}</div>
+        <div>${g.deep_sleep_h ?? '—'}</div>
+        <div>${g.hrv ?? '—'}</div>
+        <div>${g.awakenings ?? '—'}</div>
+      </div>`).join('')}
+  `;
+}
+
+function renderHabitHalfLife(rows) {
+  const el = document.getElementById('habit-half-life');
+  if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="empty-state">No habits logged in last 90 days</div>';
+    return;
+  }
+  el.innerHTML = rows.map(r => {
+    const stale = r.days_since > 7 ? 'stale' : (r.days_since > 3 ? 'warn' : 'fresh');
+    return `
+      <div class="habit-row">
+        <div class="habit-name">${escapeHtml(r.behavior)}</div>
+        <div class="habit-meta">${r.frequency_30d}× /30d</div>
+        <div class="habit-days ${stale}">${r.days_since}d ago</div>
+      </div>`;
+  }).join('');
+}
+
+function renderStreakCalendar(payload) {
+  const el = document.getElementById('streak-calendar');
+  if (!el) return;
+  el.innerHTML = '';
+  const dates = payload?.dates || [];
+  const behaviors = payload?.behaviors || [];
+  if (!dates.length || !behaviors.length) {
+    el.innerHTML = '<div class="empty-state">No lifestyle journal entries</div>';
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'streak-grid';
+  grid.style.gridTemplateColumns = `140px repeat(${dates.length}, 1fr)`;
+  grid.appendChild(document.createElement('div'));
+  dates.forEach((d, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'streak-col-label';
+    lbl.textContent = (i % 7 === 0) ? d.slice(5) : '';
+    grid.appendChild(lbl);
+  });
+  behaviors.forEach(b => {
+    const lbl = document.createElement('div');
+    lbl.className = 'streak-row-label';
+    lbl.textContent = `${b.behavior} (${b.count})`;
+    grid.appendChild(lbl);
+    b.cells.forEach((v, i) => {
+      const cell = document.createElement('div');
+      cell.className = 'streak-cell';
+      cell.style.background = v == null ? '#1a1d27' : '#34d399';
+      cell.title = `${b.behavior} · ${dates[i]} · ${v == null ? '—' : v}`;
+      grid.appendChild(cell);
+    });
+  });
+  el.appendChild(grid);
+}
+
+function renderCooccurrence(payload) {
+  const el = document.getElementById('cooccurrence-matrix');
+  if (!el) return;
+  el.innerHTML = '';
+  const keys = payload?.behaviors || [];
+  const matrix = payload?.matrix || [];
+  if (!keys.length) { el.innerHTML = '<div class="empty-state">No data</div>'; return; }
+  let max = 0;
+  matrix.forEach(row => row.forEach(v => { if (v > max) max = v; }));
+  const grid = document.createElement('div');
+  grid.className = 'correlation-grid';
+  grid.style.gridTemplateColumns = `120px repeat(${keys.length}, minmax(50px, 1fr))`;
+  grid.appendChild(document.createElement('div'));
+  keys.forEach(k => {
+    const h = document.createElement('div');
+    h.className = 'corr-col-label';
+    h.textContent = k;
+    grid.appendChild(h);
+  });
+  keys.forEach((rk, i) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'corr-row-label';
+    lbl.textContent = rk;
+    grid.appendChild(lbl);
+    matrix[i].forEach((v, j) => {
+      const cell = document.createElement('div');
+      cell.className = 'corr-cell';
+      const a = max ? v / max : 0;
+      cell.style.background = `rgba(124, 106, 247, ${0.15 + a * 0.7})`;
+      cell.textContent = v;
+      cell.title = `${rk} & ${keys[j]}: ${v} days`;
+      grid.appendChild(cell);
+    });
+  });
+  el.appendChild(grid);
+}
+
+function renderStressTriggers(payload) {
+  const el = document.getElementById('stress-triggers');
+  if (!el) return;
+  const triggers = payload?.triggers || [];
+  if (!triggers.length) {
+    el.innerHTML = '<div class="empty-state">Not enough stress + lifestyle overlap</div>';
+    return;
+  }
+  const max = Math.max(...triggers.map(t => Math.abs(t.lift)), 0.001);
+  el.innerHTML = `
+    <div class="trigger-head">High-stress threshold: ${payload.top_quintile_threshold}% stress</div>
+    ${triggers.map(t => {
+      const w = Math.abs(t.lift) / max * 100;
+      const color = t.lift > 0 ? 'var(--red)' : 'var(--green)';
+      return `
+        <div class="trigger-row">
+          <div class="trigger-name">${escapeHtml(t.behavior)}</div>
+          <div class="trigger-bar"><div class="trigger-fill" style="width:${w}%;background:${color}"></div></div>
+          <div class="trigger-lift">${t.lift > 0 ? '+' : ''}${(t.lift * 100).toFixed(0)}pp</div>
+        </div>`;
+    }).join('')}
+  `;
+}
+
+function renderStressFingerprint(payload) {
+  destroyAux('stressFp');
+  const ctx = document.getElementById('stress-fingerprint-chart');
+  if (!ctx) return;
+  auxCharts.stressFp = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: (payload?.hours || []).map(h => `${h}:00`),
+      datasets: [
+        { label: 'Weekday', data: payload?.weekday || [], borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.4, spanGaps: true, fill: true },
+        { label: 'Weekend', data: payload?.weekend || [], borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)', tension: 0.4, spanGaps: true, fill: true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: commonScales().x, y: { ...commonScales('avg stress').y, min: 0, max: 100 } },
+      plugins: commonPlugins(),
+    },
+  });
 }
