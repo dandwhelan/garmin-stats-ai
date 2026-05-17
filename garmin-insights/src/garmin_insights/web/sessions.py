@@ -21,25 +21,35 @@ class SessionManager:
         self._sessions: OrderedDict[str, dict] = OrderedDict()
         self._lock = threading.Lock()
 
-    def get_or_create(self, session_id: str | None) -> tuple[str, list[dict]]:
-        """Return (session_id, history_list). Creates a new session if needed."""
+    def get_or_create(
+        self, session_id: str | None, user_id: str = "default"
+    ) -> tuple[str, list[dict], str]:
+        """Return (session_id, history_list, user_id).
+
+        If the supplied session_id exists but is bound to a different user,
+        a fresh session is allocated so user data cannot leak between
+        conversations.
+        """
         with self._lock:
             self._evict_expired_locked()
             if session_id and session_id in self._sessions:
                 entry = self._sessions[session_id]
-                entry["last_seen"] = time.time()
-                self._sessions.move_to_end(session_id)
-                return session_id, entry["history"]
+                if entry.get("user_id") == user_id:
+                    entry["last_seen"] = time.time()
+                    self._sessions.move_to_end(session_id)
+                    return session_id, entry["history"], user_id
+                # user mismatch — fall through and create a new session
 
-            new_id = session_id or str(uuid.uuid4())
+            new_id = str(uuid.uuid4())
             if len(self._sessions) >= self._max:
                 self._sessions.popitem(last=False)
             self._sessions[new_id] = {
                 "history": [],
                 "last_seen": time.time(),
                 "created": time.time(),
+                "user_id": user_id,
             }
-            return new_id, self._sessions[new_id]["history"]
+            return new_id, self._sessions[new_id]["history"], user_id
 
     def reset(self, session_id: str) -> None:
         with self._lock:

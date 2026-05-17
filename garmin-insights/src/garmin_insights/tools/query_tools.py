@@ -469,5 +469,8 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 "properties": {},
                 "required": [],
             },
+            # Cache the entire tool definitions list — it never changes at runtime
+            # and Anthropic charges for these ~2,500 tokens on every round otherwise.
+            "cache_control": {"type": "ephemeral"},
         },
     ]

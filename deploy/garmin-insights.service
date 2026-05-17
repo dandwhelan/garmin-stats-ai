@@ -1,0 +1,19 @@
+[Unit]
+Description=Garmin Insights Web Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/garmin-stats-ai
+EnvironmentFile=/home/pi/garmin-stats-ai/.env
+ExecStart=/home/pi/garmin-stats-ai/.venv/bin/garmin-insights web
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
