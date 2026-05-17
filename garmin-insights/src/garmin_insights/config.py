@@ -18,10 +18,9 @@ class Settings(BaseSettings):
     # Database (single-user fallback / default user DB)
     sqlite_db_path: str = "garmin.db"
 
-    # Multi-user mode. Format: "alice:/data/alice.db,bob:/data/bob.db"
-    # When unset, the app runs in single-user mode using sqlite_db_path
-    # under the synthetic user id "default".
-    users: str = ""
+    # User identity (shown in the web UI; derived from the Garmin login)
+    garminconnect_email: str = ""
+    display_name: str = ""
 
     # Claude / Anthropic
     anthropic_api_key: str = ""

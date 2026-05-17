@@ -71,14 +71,73 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// ---- Health check / status dot ----
+// ---- Health check / status dot + user badge + last-sync badge ----
 const statusDot = document.getElementById('status-dot');
+const userBadge = document.getElementById('user-badge');
+const syncBadge = document.getElementById('sync-badge');
+
+function renderUserBadge(user) {
+  if (!user || (!user.name && !user.email)) {
+    userBadge.innerHTML = '';
+    userBadge.title = '';
+    return;
+  }
+  const name = user.name || 'User';
+  const email = user.email || '';
+  userBadge.innerHTML = `<span class="badge-name">${escapeHtml(name)}</span>` +
+    (email ? `<span class="badge-email">${escapeHtml(email)}</span>` : '');
+  userBadge.title = email ? `Logged in as ${email}` : name;
+  // Also reflect the user in the document title so multi-tab browsing is clear
+  document.title = `${name} · Garmin Health Insights`;
+}
+
+function formatRelativeTime(date) {
+  const sec = Math.max(0, (Date.now() - date.getTime()) / 1000);
+  if (sec < 60)      return 'just now';
+  if (sec < 3600)    return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400)   return `${Math.floor(sec / 3600)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
+}
+
+// Track the last sync time so the relative label refreshes every 30s without
+// needing another fetch.
+let lastSyncDate = null;
+
+function renderSyncBadge(iso) {
+  if (!iso) {
+    lastSyncDate = null;
+    syncBadge.innerHTML = '';
+    syncBadge.title = '';
+    return;
+  }
+  lastSyncDate = new Date(iso);
+  refreshSyncBadge();
+}
+
+function refreshSyncBadge() {
+  if (!lastSyncDate) return;
+  const ageMin = (Date.now() - lastSyncDate.getTime()) / 60000;
+  // <15min = fresh, <2h = ok, else stale
+  let cls = '';
+  if (ageMin < 15)      cls = 'fresh';
+  else if (ageMin > 120) cls = 'stale';
+  syncBadge.className = `sync-badge ${cls}`.trim();
+  syncBadge.innerHTML =
+    `<span class="sync-dot"></span>Synced ${escapeHtml(formatRelativeTime(lastSyncDate))}`;
+  syncBadge.title = `Last DB write: ${lastSyncDate.toLocaleString()}`;
+}
+
 async function checkHealth() {
   try {
     const res = await fetch(withUser('/api/health'));
     if (res.ok) {
       statusDot.className = 'status-dot ok';
       statusDot.title = 'Connected';
+      try {
+        const data = await res.json();
+        renderUserBadge(data.user);
+        renderSyncBadge(data.last_sync);
+      } catch { /* ignore */ }
     } else {
       statusDot.className = 'status-dot error';
       statusDot.title = 'Service error';
@@ -93,6 +152,8 @@ initUserPicker().then(() => {
   checkHealth();
 });
 setInterval(checkHealth, 30_000);
+// Refresh the relative-time label every 30s even between server polls
+setInterval(refreshSyncBadge, 30_000);
 
 // ---- Dashboard ----
 let chartInstance = null;
@@ -461,10 +522,213 @@ async function loadDashboard() {
   }
 }
 
-// ---- Auxiliary visualizations ----
-let vizData = null;
-let activeBehaviorMetric = 'sleep';
-let activeHeatmapMetric = 'stress';
+// Chart metric toggles
+document.querySelectorAll('.chart-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.chart-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeMetric = btn.dataset.metric;
+    if (dashboardData) renderChart(dashboardData.summaries, activeMetric);
+  });
+});
+
+loadDashboard().then(populateEntityMetrics);
+setInterval(loadDashboard, 5 * 60_000); // refresh every 5 min
+
+// ---- Entities tab ----
+// Lets the user pick any numeric metric(s) from the daily summaries and
+// render a custom Chart.js chart over a chosen day range.
+let entitiesChart = null;
+
+// Pretty-printable labels for known metrics; unknown ones fall through to
+// their raw camelCase key.
+const ENTITY_LABELS = {
+  sleepScore: 'Sleep score',
+  restingHeartRate: 'Resting HR (bpm)',
+  avgOvernightHrv: 'Overnight HRV (ms)',
+  bodyBatteryAtWakeTime: 'Body battery (wake)',
+  bodyBatteryHighestValue: 'Body battery (peak)',
+  bodyBatteryLowestValue: 'Body battery (low)',
+  bodyBatteryChange: 'Body battery delta',
+  totalSteps: 'Steps',
+  stressPercentage: 'Stress %',
+  highStressPercentage: 'High-stress %',
+  averageSpo2: 'SpO2 avg (%)',
+  averageRespirationValue: 'Respiration (rpm)',
+  deepSleepSeconds: 'Deep sleep (s)',
+  remSleepSeconds: 'REM sleep (s)',
+  lightSleepSeconds: 'Light sleep (s)',
+  awakeSleepSeconds: 'Awake (s)',
+  sleepTimeSeconds: 'Total sleep (s)',
+  awakeCount: 'Awakenings',
+  restlessMomentsCount: 'Restless moments',
+  avgSleepStress: 'Sleep stress avg',
+  moderateIntensityMinutes: 'Moderate-intensity min',
+  vigorousIntensityMinutes: 'Vigorous-intensity min',
+};
+
+// Excluded from the picker: non-numeric, identifier, or metadata fields.
+const ENTITY_EXCLUDE = new Set(['date', 'is_complete', 'lifestyle']);
+
+const ENTITY_COLORS = [
+  '#4f9cf9', '#34d399', '#fbbf24', '#f87171',
+  '#7c6af7', '#22d3ee', '#f472b6', '#a78bfa',
+];
+
+function entityLabel(key) {
+  return ENTITY_LABELS[key] || key;
+}
+
+function isNumericMetric(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function collectAvailableMetrics(summaries) {
+  // Union of numeric keys across all summaries — handles fields that only
+  // appear on some days (e.g. activity metrics on workout days).
+  const keys = new Set();
+  for (const s of summaries) {
+    for (const [k, v] of Object.entries(s)) {
+      if (ENTITY_EXCLUDE.has(k)) continue;
+      if (isNumericMetric(v)) keys.add(k);
+    }
+  }
+  return [...keys].sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
+}
+
+function populateEntityMetrics() {
+  const container = document.getElementById('entities-metrics');
+  if (!container) return;
+  if (!dashboardData || !dashboardData.summaries?.length) {
+    container.innerHTML = '<em>No cached daily summaries yet — run the fetcher first.</em>';
+    return;
+  }
+  const metrics = collectAvailableMetrics(dashboardData.summaries);
+  if (!metrics.length) {
+    container.innerHTML = '<em>No numeric metrics found in the cache.</em>';
+    return;
+  }
+  // Preserve any existing selections across re-populations
+  const previouslyChecked = new Set(
+    [...container.querySelectorAll('input[type=checkbox]:checked')].map(el => el.value)
+  );
+  container.innerHTML = metrics.map(k => {
+    const checked = previouslyChecked.has(k) ? 'checked' : '';
+    return `<label><input type="checkbox" value="${escapeHtml(k)}" ${checked}> ${escapeHtml(entityLabel(k))}</label>`;
+  }).join('');
+}
+
+function selectedEntityMetrics() {
+  return [...document.querySelectorAll('#entities-metrics input[type=checkbox]:checked')]
+    .map(el => el.value);
+}
+
+function renderEntitiesChart() {
+  const metrics = selectedEntityMetrics();
+  const days = parseInt(document.getElementById('entities-days').value, 10);
+  const type = document.getElementById('entities-type').value;
+  const container = document.getElementById('entities-chart-container');
+  const emptyMsg = document.getElementById('entities-empty');
+
+  if (!metrics.length || !dashboardData?.summaries) {
+    container.classList.remove('active');
+    emptyMsg.textContent = 'Pick at least one metric, then click Build.';
+    emptyMsg.style.display = '';
+    return;
+  }
+
+  const sorted = [...dashboardData.summaries]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-days);
+  const labels = sorted.map(s => s.date.slice(5));
+
+  const datasets = metrics.map((key, i) => {
+    const color = ENTITY_COLORS[i % ENTITY_COLORS.length];
+    return {
+      label: entityLabel(key),
+      data: sorted.map(s => (s[key] != null ? s[key] : null)),
+      borderColor: color,
+      backgroundColor: type === 'bar' ? color : color + '22',
+      tension: 0.3,
+      spanGaps: true,
+      pointRadius: type === 'line' ? 3 : 0,
+      borderWidth: 2,
+    };
+  });
+
+  if (entitiesChart) entitiesChart.destroy();
+  entitiesChart = new Chart(document.getElementById('entities-chart'), {
+    type,
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: commonScales(),
+      plugins: commonPlugins(),
+    },
+  });
+  container.classList.add('active');
+  emptyMsg.style.display = 'none';
+}
+
+// Wire up Entities controls (deferred so DOM exists)
+document.getElementById('entities-build')?.addEventListener('click', renderEntitiesChart);
+document.getElementById('entities-clear')?.addEventListener('click', () => {
+  document.querySelectorAll('#entities-metrics input[type=checkbox]')
+    .forEach(el => { el.checked = false; });
+  if (entitiesChart) { entitiesChart.destroy(); entitiesChart = null; }
+  document.getElementById('entities-chart-container').classList.remove('active');
+  const emptyMsg = document.getElementById('entities-empty');
+  emptyMsg.textContent = 'No chart yet — pick at least one metric and click Build.';
+  emptyMsg.style.display = '';
+});
+
+// Re-populate the metric list whenever the tab is opened (handles the case
+// where dashboardData loaded after the initial render)
+document.querySelector('.tab-btn[data-tab="entities"]')?.addEventListener('click', populateEntityMetrics);
+
+// ---- AI Scan ----
+document.querySelectorAll('.scan-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const focus = btn.dataset.focus;
+    const output = document.getElementById('scan-output');
+    document.querySelectorAll('.scan-btn').forEach(b => b.disabled = true);
+    output.classList.remove('hidden');
+    output.innerHTML = '<em>Running scan, please wait...</em>';
+
+    try {
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ focus }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      output.innerHTML = marked.parse(data.report || '(no report)');
+    } catch (e) {
+      output.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+    } finally {
+      document.querySelectorAll('.scan-btn').forEach(b => b.disabled = false);
+    }
+  });
+});
+
+// ---- Chat ----
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const sendBtn = document.getElementById('send-btn');
+const resetBtn = document.getElementById('reset-btn');
+
+// Per-browser session id, persisted in localStorage
+const SESSION_KEY = 'garmin-chat-session';
+let sessionId = localStorage.getItem(SESSION_KEY) || null;
+
+// Auto-resize textarea
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+});
 
 async function loadVisualizations(start, end) {
   try {
