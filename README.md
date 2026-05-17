@@ -138,9 +138,31 @@ Open **http://localhost:8080** in your browser.
 
 The web interface has three views:
 
-- **Dashboard** — metric cards (sleep score, RHR, HRV, body battery, steps, stress) with 14-day trend charts and AI scan buttons
+- **Dashboard** — metric cards (sleep score, RHR, HRV, body battery, steps, stress) plus ~25 charts grouped into Recovery & Activity and Lifestyle & Health Insights sections (see below). Toolbar with 7 / 14 / 30 / 90-day presets and custom date range; ⚙ Customize panel for per-chart show/hide (persists in localStorage). Every metric card and chart header has an info-icon tooltip with thresholds and research citations.
 - **Chat** — conversational AI with full access to your health data
 - **Entities** — custom chart builder: pick any numeric metric(s) from your daily summary cache, choose 7 / 14 / 30 / 60 / 90 day range and line or bar chart type, and click Build
+
+### Dashboard chart catalogue
+
+Recovery & Activity:
+- 14-day Trend (Sleep / RHR / HRV / Battery / Steps toggle), Sleep Architecture, Recovery Signals (normalized to 7-day baseline), Activity Intensity, Stress vs Body Battery
+- Intraday Heatmap — 24h × N-day matrix for Stress / Body Battery / Heart Rate
+- Sleep Timeline (bedtime/waketime drift) and Anomaly Calendar (z-score vs 30-day baseline)
+- Behavior Impact (last 90 days, Sleep / HRV / RHR toggle) and Metric Correlation Matrix
+
+Lifestyle & Health Insights:
+- Pre-symptom Illness Radar (Quer 2021 composite z-score + alert list)
+- Recovery Debt, Inflammation Index, Stress Resilience, Body Battery Decay Slope
+- Sleep Regularity Index (Windred 2024) and Social Jet Lag dual-clock (weekday vs weekend midpoints)
+- Behavior Recovery Cost (median days for HRV to return to baseline)
+- Behavior Dose-Response (per-behavior scatter for behaviors logged with numeric values)
+- Caffeine Timing Comparison (Drake 2013 late vs early vs none)
+- Habit Half-Life, Behavior Streak Calendar, Behavior Co-occurrence, Stress Trigger Leaderboard
+- Stress Hour-of-Day Fingerprint (weekday vs weekend)
+
+### AI Health Scan
+
+Below the dashboard, three buttons run a one-shot Claude analysis: General Scan, Morning Brief, Weekly Summary. An optional date-range picker scopes the scan to a specific window — leave blank for the default (last 7/14 days depending on focus).
 
 ### CLI alternatives
 
@@ -302,6 +324,14 @@ The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUD
 - **Per-session memory** — each browser tab has its own conversation history, separate from CLI sessions
 - **True token streaming** — the web chat uses Server-Sent Events to stream tokens as Claude generates them
 - **User identity in the header** — web UI shows a name badge (from `DISPLAY_NAME` or Garmin email) and a colour-coded last-sync badge that auto-refreshes every 30 s (green < 10 min, amber < 60 min, red otherwise)
+
+### Dashboard analytics pipeline (no LLM cost)
+
+The dashboard's secondary charts are powered by two Python services that aggregate the SQLite tables in-process, alongside the AI agent:
+
+- **`web/visualizations.py` — `VisualizationService`**: intraday heatmap (stress/HR/body battery), sleep timeline, anomaly z-score calendar, metric correlation matrix, 90-day behavior-impact comparison
+- **`web/lifestyle_viz.py` — `LifestyleService`**: 15 research-backed analytics including Sleep Regularity Index (Windred 2024), social jet lag, illness radar (Quer 2021), inflammation index, recovery debt, stress resilience, body battery decay slope, behavior dose-response, caffeine cutoff comparison (Drake 2013), recovery cost, streak calendar, habit half-life, co-occurrence matrix, hour-of-day stress fingerprint, stress trigger leaderboard
+- **Three endpoints** — `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`. All accept `start`/`end` query params and fan out service calls via `asyncio.gather` for parallel loading.
 
 ## Privacy
 

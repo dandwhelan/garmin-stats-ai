@@ -62,8 +62,10 @@ garmin-insights status        # check DB + API connectivity
 |------|---------|
 | `garmin-insights/src/garmin_insights/agent.py` | Core Claude agent — tool-calling loop, prompt caching, streaming, per-model thinking config |
 | `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (Anthropic JSON schema) + handler methods |
-| `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard (auto cache-refresh), scan endpoints, user/sync identity |
-| `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js` (user badge, sync badge, Entities tab) |
+| `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard (auto cache-refresh + date params), scan endpoints (with optional date range), user/sync identity, `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap` |
+| `garmin-insights/src/garmin_insights/web/visualizations.py` | `VisualizationService` — intraday heatmap, sleep timeline, anomaly z-score calendar, correlation matrix, 90-day behavior impact |
+| `garmin-insights/src/garmin_insights/web/lifestyle_viz.py` | `LifestyleService` — 15 research-backed lifestyle analytics (SRI, social jet lag, illness radar, recovery debt, etc.) |
+| `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js` (date range toolbar, customize panel, info-icon tooltips, user/sync badges, Entities tab, ~17 secondary chart renderers) |
 | `garmin-insights/src/garmin_insights/db/sqlite_repo.py` | SQLite query layer (pandas DataFrames) |
 | `garmin-insights/src/garmin_insights/db/memory.py` | Memory store — baselines, insights, session history |
 | `garmin-insights/src/garmin_insights/db/cache.py` | Daily summary + baseline cache builder |
@@ -147,7 +149,28 @@ All data lives in a single `garmin.db`. Key tables:
 
 - **User badge** — shows `DISPLAY_NAME` (or name derived from Garmin email) and the email address in the header
 - **Sync badge** — shows time since last Garmin fetch (green < 10 min, amber < 60 min, red otherwise); auto-refreshes every 30 s via `/api/health`
+- **Date range toolbar** — 7 / 14 / 30 / 90-day presets plus custom from/to inputs; drives `/api/dashboard?start=&end=` (and the secondary loaders below)
+- **⚙ Customize panel** — auto-discovers every `.chart-section`, renders a per-chart visibility checkbox grid, persists state in localStorage under `garmin-chart-prefs-v1`
+- **Info-icon tooltips** — every metric card and most chart headers have an inline `i` icon with thresholds and a one-line research citation
+- **AI Health Scan date range** — optional `start_date` / `end_date` row above the scan buttons; passed to `generate_scan_report`
 - **Entities tab** — custom chart builder: pick any numeric metric(s) from `daily_summaries`, choose 7/14/30/60/90 day range and line or bar type, click Build
+- **Dashboard chart catalogue** (~25 sections total):
+  - Recovery & Activity: 14-day Trend, Sleep Architecture, Recovery Signals (normalized), Activity Intensity, Stress vs Body Battery, Intraday Heatmap (stress/BB/HR toggle), Sleep Timeline (bedtime/waketime drift), Anomaly Calendar (z-score), Behavior Impact (90d, Sleep/HRV/RHR toggle), Correlation Matrix
+  - Lifestyle & Health Insights: Illness Radar (Quer 2021), Recovery Debt, Inflammation Index, SRI (Windred 2024), Social Jet Lag dual-clock, Stress Resilience, Body Battery Decay, Behavior Recovery Cost, Dose-Response (per-behavior picker), Caffeine Cutoff (Drake 2013), Habit Half-Life, Streak Calendar, Co-occurrence Matrix, Stress Trigger Leaderboard, Stress Hour-of-Day Fingerprint
+
+## Dashboard Data Endpoints
+
+`loadDashboard()` in `app.js` fans out to:
+
+| Endpoint | Returns | Default window |
+|---|---|---|
+| `GET /api/dashboard?start=&end=` | Daily summaries + 7/30-day baselines for the cards and primary charts | last 14 days |
+| `GET /api/visualizations?start=&end=` | `sleep_timeline`, `behavior_impact`, `correlations`, `anomaly_calendar` | last 30 days |
+| `GET /api/lifestyle?start=&end=` | 15 lifestyle analytics: SRI, social jet lag, illness radar, recovery debt, inflammation index, resilience, BB decay, recovery cost, dose-response, caffeine cutoff, streak calendar, habit half-life, co-occurrence, fingerprint, trigger leaderboard | last 90 days |
+| `GET /api/intraday/heatmap?metric=&days=` | 24h × N-day matrix for `stress` / `body_battery` / `heart_rate` | 14 days |
+| `POST /api/scan` (body: `focus`, optional `start_date`, `end_date`) | Markdown AI report scoped to focus + optional window | focus-dependent |
+
+All endpoints share the `_resolve_range(start, end, default_days)` helper so omitting either bound falls back to "ending today, going back N days".
 
 ## Notes
 
