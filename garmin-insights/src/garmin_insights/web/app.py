@@ -119,6 +119,18 @@ async def index():
     return HTMLResponse(content=(_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
+@app.get("/api/users")
+async def list_users():
+    """Return the list of configured users for the picker UI.
+
+    The frontend hides the dropdown when this returns a single entry,
+    so single-user mode (the default) keeps the header clean.
+    """
+    if _users is None:
+        raise HTTPException(status_code=503, detail="Server not initialised")
+    return {"users": [{"id": uid} for uid in _users.user_ids]}
+
+
 def _resolve_user_identity(settings) -> dict[str, str]:
     """Derive a display name from settings: explicit display_name > email local
     part > 'User'. Returned alongside the email for the UI to show both."""
@@ -162,10 +174,10 @@ async def health_check(user: str = Query(default="default")):
         repo_health = bundle.agent._repo.health_check()
         return {
             "status": "ok",
-            "user": _resolve_user_identity(_agent._settings),
+            "user": _resolve_user_identity(bundle.agent._settings),
             "database": repo_health,
-            "last_sync": _last_sync_iso(_agent._settings.sqlite_db_path),
-            "model": _agent._settings.claude_model,
+            "last_sync": _last_sync_iso(bundle.agent._settings.sqlite_db_path),
+            "model": bundle.agent._settings.claude_model,
             "sessions": _sessions.stats() if _sessions else {},
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
@@ -174,29 +186,31 @@ async def health_check(user: str = Query(default="default")):
 
 
 @app.get("/api/dashboard")
-async def dashboard():
-    """Return the last 30 days of daily summaries plus baselines.
+async def dashboard(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
+    end: str | None = Query(default=None, description="End date YYYY-MM-DD"),
+):
+    """Return daily summaries plus baselines for the selected window.
 
-    Rebuilds the daily_summaries cache from fresh daily_stats data at most once
-    every 60 s so that new fetcher writes appear on the dashboard automatically
-    without requiring a web-server restart.
+    Rebuilds the daily_summaries cache from fresh daily_stats data at most
+    once every 60 s so that new fetcher writes appear on the dashboard
+    automatically without requiring a web-server restart.
     """
     global _last_cache_refresh
-    if _agent is None:
-        raise HTTPException(status_code=503, detail="Agent not initialised")
+    bundle = _require_user(user)
 
     now = datetime.utcnow()
     if _last_cache_refresh is None or (now - _last_cache_refresh) >= _CACHE_REFRESH_INTERVAL:
         try:
             loop = asyncio.get_event_loop()
             # Rebuild last 7 days only (fast; full history rebuilt on startup)
-            await loop.run_in_executor(None, _agent.ensure_cache_fresh, 7)
+            await loop.run_in_executor(None, bundle.agent.ensure_cache_fresh, 7)
             _last_cache_refresh = now
         except Exception as e:
             logger.warning("Dashboard cache refresh failed (non-fatal): %s", e)
 
-    end = now.strftime("%Y-%m-%d")
-    start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    start, end = _resolve_range(start, end, default_days=30)
 
     try:
         loop = asyncio.get_event_loop()
