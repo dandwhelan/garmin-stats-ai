@@ -31,6 +31,11 @@ _sessions: SessionManager | None = None
 _viz: VisualizationService | None = None
 _lifestyle: LifestyleService | None = None
 
+# Throttle the dashboard cache rebuild to at most once per 60 s so the UI
+# always reflects fresh fetcher data without hammering SQLite on every poll.
+_last_cache_refresh: datetime | None = None
+_CACHE_REFRESH_INTERVAL = timedelta(seconds=60)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -94,6 +99,38 @@ async def index():
     return HTMLResponse(content=(_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
+def _resolve_user_identity(settings) -> dict[str, str]:
+    """Derive a display name from settings: explicit display_name > email local
+    part > 'User'. Returned alongside the email for the UI to show both."""
+    email = (settings.garminconnect_email or "").strip()
+    explicit = (settings.display_name or "").strip()
+    if explicit:
+        name = explicit
+    elif email:
+        local = email.split("@", 1)[0]
+        # "helen.wadge" -> "Helen Wadge"
+        name = " ".join(p.capitalize() for p in local.replace("_", ".").split("."))
+    else:
+        name = "User"
+    return {"name": name, "email": email}
+
+
+def _last_sync_iso(db_path: str) -> str | None:
+    """Return the SQLite DB file's mtime as an ISO 8601 UTC timestamp.
+
+    The fetcher writes to the DB on every successful Garmin pull, so the file
+    mtime is a faithful "last synced" indicator for the UI. None if missing.
+    """
+    try:
+        from pathlib import Path
+        p = Path(db_path)
+        if not p.exists():
+            return None
+        return datetime.utcfromtimestamp(p.stat().st_mtime).isoformat() + "Z"
+    except Exception:
+        return None
+
+
 @app.get("/api/health")
 async def health_check():
     if _agent is None:
@@ -102,10 +139,12 @@ async def health_check():
         repo_health = _agent._repo.health_check()
         return {
             "status": "ok",
+            "user": _resolve_user_identity(_agent._settings),
             "database": repo_health,
+            "last_sync": _last_sync_iso(_agent._settings.sqlite_db_path),
             "model": _agent._settings.claude_model,
             "sessions": _sessions.stats() if _sessions else {},
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "error", "detail": str(e)})
@@ -116,9 +155,25 @@ async def dashboard(
     start: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
     end: str | None = Query(default=None, description="End date YYYY-MM-DD"),
 ):
-    """Return daily summaries plus baselines for the selected window."""
+    """Return daily summaries plus baselines for the selected window.
+
+    Rebuilds the daily_summaries cache from fresh daily_stats data at most
+    once every 60 s so that new fetcher writes appear on the dashboard
+    automatically without requiring a web-server restart.
+    """
+    global _last_cache_refresh
     if _agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialised")
+
+    now = datetime.utcnow()
+    if _last_cache_refresh is None or (now - _last_cache_refresh) >= _CACHE_REFRESH_INTERVAL:
+        try:
+            loop = asyncio.get_event_loop()
+            # Rebuild last 7 days only (fast; full history rebuilt on startup)
+            await loop.run_in_executor(None, _agent.ensure_cache_fresh, 7)
+            _last_cache_refresh = now
+        except Exception as e:
+            logger.warning("Dashboard cache refresh failed (non-fatal): %s", e)
 
     start, end = _resolve_range(start, end, default_days=14)
 

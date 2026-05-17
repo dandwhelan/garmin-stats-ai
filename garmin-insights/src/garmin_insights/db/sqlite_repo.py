@@ -13,6 +13,47 @@ from garmin_insights.config import Settings
 
 logger = logging.getLogger(__name__)
 
+# Maps the camelCase field names used in cache.py / _DAILY_STATS_FIELDS to the
+# snake_case column names stored in SQLite by garmin-grafana's sqlite_manager.py.
+# Used to build "snake_col AS camelField" aliases so callers get back the names
+# they expect without knowing the DB schema's naming convention.
+_DAILY_STATS_COLS: dict[str, str] = {
+    "restingHeartRate":        "resting_heart_rate",
+    "minHeartRate":            "min_heart_rate",
+    "maxHeartRate":            "max_heart_rate",
+    "stressPercentage":        "stress_percentage",
+    "highStressPercentage":    "high_stress_percentage",
+    "bodyBatteryHighestValue": "body_battery_highest_value",
+    "bodyBatteryLowestValue":  "body_battery_lowest_value",
+    "bodyBatteryChargedValue": "body_battery_charged_value",
+    "bodyBatteryDrainedValue": "body_battery_drained_value",
+    "bodyBatteryAtWakeTime":   "body_battery_at_wake_time",
+    "totalSteps":              "total_steps",
+    "totalDistanceMeters":     "total_distance_meters",
+    "activeKilocalories":      "active_kilocalories",
+    "sleepingSeconds":         "sleeping_seconds",
+    "moderateIntensityMinutes":"moderate_intensity_minutes",
+    "vigorousIntensityMinutes":"vigorous_intensity_minutes",
+    "averageSpo2":             "average_spo2",
+}
+
+_SLEEP_COLS: dict[str, str] = {
+    "sleepScore":              "sleep_score",
+    "sleepTimeSeconds":        "sleep_time_seconds",
+    "deepSleepSeconds":        "deep_sleep_seconds",
+    "lightSleepSeconds":       "light_sleep_seconds",
+    "remSleepSeconds":         "rem_sleep_seconds",
+    "awakeSleepSeconds":       "awake_sleep_seconds",
+    "avgSleepStress":          "avg_sleep_stress",
+    "avgOvernightHrv":         "avg_overnight_hrv",
+    "bodyBatteryChange":       "body_battery_change",
+    "restingHeartRate":        "resting_heart_rate",
+    "averageSpO2Value":        "average_spo2_value",
+    "awakeCount":              "awake_count",
+    "restlessMomentsCount":    "restless_moments_count",
+    "averageRespirationValue": "average_respiration_value",
+}
+
 
 class SqliteRepo:
     """Wrapper around SQLite for Garmin data queries, replacing InfluxRepo."""
@@ -45,9 +86,21 @@ class SqliteRepo:
 
     @staticmethod
     def _date_clause(start: str, end: str) -> str:
-        """Build a WHERE time clause from YYYY-MM-DD strings."""
+        """Build a WHERE time clause from YYYY-MM-DD strings (for intraday tables)."""
         # SQLite compares strings lexicographically, which works for ISO8601
         return f"time >= '{start}T00:00:00' AND time <= '{end}T23:59:59'"
+
+    @staticmethod
+    def _date_col_clause(start: str, end: str) -> str:
+        """Build a WHERE clause on the 'date' column (for daily_stats / sleep_summary).
+
+        These tables have a reliable TEXT PRIMARY KEY 'date' column in YYYY-MM-DD
+        format.  Using it avoids ambiguity from noon-UTC timestamps that would
+        otherwise bleed across day boundaries when filtering by the 'time' column.
+        The end is treated as *exclusive* (date < end) so callers can safely pass
+        next_day_str as end without accidentally capturing the next day's row.
+        """
+        return f"date >= '{start}' AND date < '{end}'"
 
     @staticmethod
     def _fields_clause(fields: list[str] | None, table: str) -> str:
@@ -67,16 +120,22 @@ class SqliteRepo:
         end: str,
         fields: list[str] | None = None,
     ) -> pd.DataFrame:
-        """DailyStats — RHR, stress, body battery, steps, etc."""
-        # Map fields if necessary, or assume caller knows SQLite columns
-        # The agent.py might request specific fields.
-        # Let's start with basic implementation.
-        cols = "*"
+        """DailyStats — RHR, stress, body battery, steps, etc.
+
+        ``fields`` may be given as camelCase names (as used in cache.py).
+        They are automatically mapped to the snake_case SQLite column names and
+        aliased back so the returned DataFrame always has camelCase columns.
+        """
         if fields:
-            # Simple sanitization/mapping could go here
-            cols = ", ".join(fields)
-        
-        q = f"SELECT {cols} FROM daily_stats WHERE {self._date_clause(start, end)}"
+            # snake_col AS "camelField" so the DataFrame uses the caller's names
+            cols = ", ".join(
+                f'{_DAILY_STATS_COLS.get(f, f)} AS "{f}"' for f in fields
+            )
+        else:
+            cols = "*"
+        # Filter by the 'date' column (not 'time') to avoid noon-UTC timestamps
+        # from neighbouring days bleeding into the wrong day's summary.
+        q = f"SELECT {cols} FROM daily_stats WHERE {self._date_col_clause(start, end)}"
         return self._query(q)
 
     def query_sleep_summary(
@@ -86,10 +145,13 @@ class SqliteRepo:
         fields: list[str] | None = None,
     ) -> pd.DataFrame:
         """SleepSummary — per-night sleep quality metrics."""
-        cols = "*"
         if fields:
-            cols = ", ".join(fields)
-        q = f"SELECT {cols} FROM sleep_summary WHERE {self._date_clause(start, end)}"
+            cols = ", ".join(
+                f'{_SLEEP_COLS.get(f, f)} AS "{f}"' for f in fields
+            )
+        else:
+            cols = "*"
+        q = f"SELECT {cols} FROM sleep_summary WHERE {self._date_col_clause(start, end)}"
         return self._query(q)
 
     def query_training_readiness(self, start: str, end: str) -> pd.DataFrame:

@@ -85,6 +85,13 @@ class HealthAgent:
 
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
+        # Thinking config differs per model: Opus supports adaptive; Sonnet
+        # needs an explicit budget.
+        if "opus" in settings.claude_model.lower():
+            self._thinking = {"type": "adaptive"}
+        else:
+            self._thinking = {"type": "enabled", "budget_tokens": 8000}
+
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(),
             today=datetime.utcnow().strftime("%Y-%m-%d"),
