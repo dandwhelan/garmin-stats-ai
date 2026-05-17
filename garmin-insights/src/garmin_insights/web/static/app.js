@@ -501,6 +501,12 @@ function updateChartTitles(dateRange) {
   if (sleepTitle) sleepTitle.textContent = `Sleep Architecture (${label})`;
 }
 
+// Module-scope toggle state. Without these, reads inside loadDashboard /
+// loadVisualizations throw ReferenceError on first load (the toggle handlers
+// only initialise them on click).
+let activeHeatmapMetric = 'stress';
+let activeBehaviorMetric = 'sleep';
+
 async function loadDashboard() {
   try {
     const res = await fetch(buildDashboardUrl());
