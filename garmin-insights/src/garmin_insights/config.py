@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Scheduler
     scan_times: str = "06:00,12:00,18:00,22:00"
 
+    # Multi-user mode (optional): comma-separated "user_id:db_path" pairs.
+    # When empty, the app runs single-user with sqlite_db_path as the
+    # "default" user. Example: USERS="dan:/data/dan.db,helen:/data/helen.db"
+    users: str = ""
+
     @property
     def scan_time_list(self) -> list[str]:
         return [t.strip() for t in self.scan_times.split(",") if t.strip()]

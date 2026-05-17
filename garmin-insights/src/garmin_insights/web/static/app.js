@@ -501,6 +501,12 @@ function updateChartTitles(dateRange) {
   if (sleepTitle) sleepTitle.textContent = `Sleep Architecture (${label})`;
 }
 
+// Module-scope toggle state. Without these, reads inside loadDashboard /
+// loadVisualizations throw ReferenceError on first load (the toggle handlers
+// only initialise them on click).
+let activeHeatmapMetric = 'stress';
+let activeBehaviorMetric = 'sleep';
+
 async function loadDashboard() {
   try {
     const res = await fetch(buildDashboardUrl());
@@ -714,21 +720,10 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
   });
 });
 
-// ---- Chat ----
-const chatMessages = document.getElementById('chat-messages');
-const chatInput = document.getElementById('chat-input');
-const sendBtn = document.getElementById('send-btn');
-const resetBtn = document.getElementById('reset-btn');
-
-// Per-browser session id, persisted in localStorage
-const SESSION_KEY = 'garmin-chat-session';
-let sessionId = localStorage.getItem(SESSION_KEY) || null;
-
-// Auto-resize textarea
-chatInput.addEventListener('input', () => {
-  chatInput.style.height = 'auto';
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
-});
+function safeRender(name, fn) {
+  try { fn(); }
+  catch (e) { console.error(`Renderer "${name}" failed:`, e); }
+}
 
 async function loadVisualizations(start, end) {
   try {
@@ -739,14 +734,14 @@ async function loadVisualizations(start, end) {
     const res = await fetch(`/api/visualizations?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     vizData = await res.json();
-    renderAcwrChart(vizData.training);
-    renderReadinessChart(vizData.training);
-    renderSleepTimeline(vizData.sleep_timeline);
-    renderBodyComposition(vizData.body_composition);
-    renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric);
-    renderAnomalyCalendar(vizData.anomaly_calendar);
-    renderHrZones(vizData.hr_zones);
-    renderCorrelationMatrix(vizData.correlations);
+    safeRender('acwr', () => renderAcwrChart(vizData.training));
+    safeRender('readiness', () => renderReadinessChart(vizData.training));
+    safeRender('sleepTimeline', () => renderSleepTimeline(vizData.sleep_timeline));
+    safeRender('bodyComp', () => renderBodyComposition(vizData.body_composition));
+    safeRender('behaviorImpact', () => renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric));
+    safeRender('anomalyCalendar', () => renderAnomalyCalendar(vizData.anomaly_calendar));
+    safeRender('hrZones', () => renderHrZones(vizData.hr_zones));
+    safeRender('correlationMatrix', () => renderCorrelationMatrix(vizData.correlations));
   } catch (e) {
     console.error('Visualizations load failed:', e);
   }
@@ -1607,25 +1602,25 @@ async function loadLifestyle(start, end) {
     const res = await fetch(`/api/lifestyle?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     lifestyleData = await res.json();
-    renderIllnessRadar(lifestyleData.illness_radar);
-    renderRecoveryDebt(lifestyleData.recovery_debt);
-    renderInflammation(lifestyleData.inflammation_index);
-    renderSRI(lifestyleData.sleep_regularity);
-    renderSocialJetLag(lifestyleData.social_jet_lag);
-    renderResilience(lifestyleData.stress_resilience);
-    renderBBDecay(lifestyleData.body_battery_decay);
-    renderRecoveryCost(lifestyleData.recovery_cost);
-    renderDoseControls(lifestyleData.dose_response);
-    renderCaffeineCutoff(lifestyleData.caffeine_cutoff);
-    renderHabitHalfLife(lifestyleData.habit_half_life);
-    renderStreakCalendar(lifestyleData.streak_calendar);
-    renderCooccurrence(lifestyleData.cooccurrence);
-    renderStressTriggers(lifestyleData.stress_triggers);
-    renderStepCDF(lifestyleData.step_distribution);
-    renderWhoTarget(lifestyleData.who_target);
-    renderStressFingerprint(lifestyleData.stress_hour_fingerprint);
-    renderFitnessAge(lifestyleData.fitness_age_delta);
-    renderCycleHrv(lifestyleData.cycle_hrv);
+    safeRender('illnessRadar',    () => renderIllnessRadar(lifestyleData.illness_radar));
+    safeRender('recoveryDebt',    () => renderRecoveryDebt(lifestyleData.recovery_debt));
+    safeRender('inflammation',    () => renderInflammation(lifestyleData.inflammation_index));
+    safeRender('sri',             () => renderSRI(lifestyleData.sleep_regularity));
+    safeRender('socialJetLag',    () => renderSocialJetLag(lifestyleData.social_jet_lag));
+    safeRender('resilience',      () => renderResilience(lifestyleData.stress_resilience));
+    safeRender('bbDecay',         () => renderBBDecay(lifestyleData.body_battery_decay));
+    safeRender('recoveryCost',    () => renderRecoveryCost(lifestyleData.recovery_cost));
+    safeRender('doseControls',    () => renderDoseControls(lifestyleData.dose_response));
+    safeRender('caffeineCutoff',  () => renderCaffeineCutoff(lifestyleData.caffeine_cutoff));
+    safeRender('habitHalfLife',   () => renderHabitHalfLife(lifestyleData.habit_half_life));
+    safeRender('streakCalendar',  () => renderStreakCalendar(lifestyleData.streak_calendar));
+    safeRender('cooccurrence',    () => renderCooccurrence(lifestyleData.cooccurrence));
+    safeRender('stressTriggers',  () => renderStressTriggers(lifestyleData.stress_triggers));
+    safeRender('stepCDF',         () => renderStepCDF(lifestyleData.step_distribution));
+    safeRender('whoTarget',       () => renderWhoTarget(lifestyleData.who_target));
+    safeRender('stressFp',        () => renderStressFingerprint(lifestyleData.stress_hour_fingerprint));
+    safeRender('fitnessAge',      () => renderFitnessAge(lifestyleData.fitness_age_delta));
+    safeRender('cycleHrv',        () => renderCycleHrv(lifestyleData.cycle_hrv));
   } catch (e) {
     console.error('Lifestyle load failed:', e);
   }
@@ -2297,14 +2292,14 @@ function initChartCustomization() {
     // Apply hidden pref
     if (prefs[id] === false) node.classList.add('chart-hidden');
 
-    // Make header collapsible (independent of show/hide)
+    // Make header collapsible (independent of show/hide). Stale collapsed
+    // state from earlier exploration is wiped once on this version bump so
+    // charts default to expanded; clicking a header still toggles it.
     const header = node.querySelector('.chart-header');
     if (header) {
       header.classList.add('collapsible-header');
       const collapseKey = `collapsed:${id}`;
-      if (prefs[collapseKey]) node.classList.add('chart-collapsed');
       header.addEventListener('click', e => {
-        // Don't collapse when clicking a button/toggle inside the header
         if (e.target.closest('button, input')) return;
         node.classList.toggle('chart-collapsed');
         const updated = loadPrefs();
@@ -2313,6 +2308,20 @@ function initChartCustomization() {
       });
     }
   });
+
+  // One-time cleanup: clear stray "collapsed:*" entries from earlier sessions
+  // so the entire dashboard expands by default after this update.
+  const cleanupKey = 'garmin-collapse-reset-v1';
+  if (!localStorage.getItem(cleanupKey)) {
+    const cleaned = loadPrefs();
+    let touched = false;
+    for (const k of Object.keys(cleaned)) {
+      if (k.startsWith('collapsed:')) { delete cleaned[k]; touched = true; }
+    }
+    if (touched) savePrefs(cleaned);
+    document.querySelectorAll('.chart-collapsed').forEach(n => n.classList.remove('chart-collapsed'));
+    localStorage.setItem(cleanupKey, '1');
+  }
 
   // Build the customize panel
   const list = document.getElementById('customize-list');
