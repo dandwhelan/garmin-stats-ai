@@ -5,7 +5,9 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 ## Project Structure
 
 - **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
-- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat) and CLI, powered by Claude (`claude-opus-4-7`).
+- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab) and CLI, powered by Claude. Defaults to `claude-sonnet-4-6`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-7`.
+- **`users/`** — Per-user `.env` files for multi-user mode (one Garmin account per file). Real `.env`s are git-ignored; `*.env.example` templates are checked in.
+- **`scripts/`** — Launcher scripts (`run-user.sh`, `run-dan.sh`, `run-helen.sh`) that start a fetcher + web server for one user, suitable for `cron @reboot`.
 
 ## Prerequisites
 
@@ -28,7 +30,9 @@ pip install -e garmin-insights
 
 ## Configuration
 
-Create a `.env` file in the **root of the repository** (`garmin-stats-ai/.env`) — both modules look for it in the current working directory, so running commands from the repo root means they share it automatically:
+### Single-user setup
+
+Create a `.env` file in the **root of the repository** (`garmin-stats-ai/.env`):
 
 ```
 garmin-stats-ai/
@@ -46,9 +50,68 @@ GARMINCONNECT_PASSWORD=yourpassword
 # Shared database path (use an absolute path)
 SQLITE_DB_PATH=/home/yourname/garmin-stats-ai/garmin.db
 
+# Token cache directory (optional; defaults to ~/.garminconnect)
+TOKEN_DIR=/home/yourname/.garminconnect
+
 # Claude AI (for garmin-insights)
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional overrides
+CLAUDE_MODEL=claude-sonnet-4-6   # default; set to claude-opus-4-7 for Opus
+WEB_PORT=8080
+DISPLAY_NAME=Alice
 ```
+
+### Multi-user setup (Path A — separate processes)
+
+Each user gets their own `.env` file, their own SQLite database, their own Garmin token directory, and their own web server port.
+
+```
+garmin-stats-ai/
+├── users/
+│   ├── alice.env.example   ← template (committed)
+│   ├── alice.env           ← real credentials (git-ignored)
+│   └── bob.env             ← real credentials (git-ignored)
+├── scripts/
+│   ├── run-user.sh         ← generic launcher: run-user.sh <username>
+│   ├── run-alice.sh        ← shortcut: exec run-user.sh alice
+│   └── run-bob.sh
+└── ...
+```
+
+Copy `users/alice.env.example` to `users/alice.env` and fill in real values:
+
+```bash
+GARMINCONNECT_EMAIL=alice@example.com
+GARMINCONNECT_PASSWORD=her_password
+
+SQLITE_DB_PATH=/home/pi/garmin-data/alice.db
+TOKEN_DIR=/home/pi/.garminconnect-alice
+ANTHROPIC_API_KEY=sk-ant-...
+
+WEB_PORT=8081
+DISPLAY_NAME=Alice
+```
+
+Repeat for each additional user with a **different** `SQLITE_DB_PATH`, `TOKEN_DIR`, and `WEB_PORT`.
+
+Launch both users (each gets an independent fetcher + web server):
+
+```bash
+bash scripts/run-alice.sh
+bash scripts/run-bob.sh
+# Alice: http://localhost:8081
+# Bob:   http://localhost:8082
+```
+
+To start automatically on boot, add to crontab (`crontab -e`):
+
+```
+@reboot sleep 10 && bash /home/pi/garmin-data/scripts/run-alice.sh
+@reboot sleep 10 && bash /home/pi/garmin-data/scripts/run-bob.sh
+```
+
+> **Tip:** `run-user.sh` sources the user's `.env` file, so each process only ever sees one user's credentials and database. If a process is already running for that user, kill it first or add a guard check (see Troubleshooting).
 
 ## Usage
 
@@ -58,7 +121,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 python -m garmin_grafana.garmin_fetch
 ```
 
-This creates `garmin.db` and populates it with your health history (up to 1 year back on first run). Re-run daily to keep data fresh.
+This creates `garmin.db` and populates it with your health history (up to 1 year back on first run). The fetcher loop then re-checks every 5 minutes for new watch syncs.
 
 ### Step 2 — Start the web interface
 
@@ -68,10 +131,11 @@ garmin-insights web
 
 Open **http://localhost:8080** in your browser.
 
-The web interface has two views:
+The web interface has three views:
 
 - **Dashboard** — metric cards (sleep score, RHR, HRV, body battery, steps, stress) with 14-day trend charts and AI scan buttons
 - **Chat** — conversational AI with full access to your health data
+- **Entities** — custom chart builder: pick any numeric metric(s) from your daily summary cache, choose 7 / 14 / 30 / 60 / 90 day range and line or bar chart type, and click Build
 
 ### CLI alternatives
 
@@ -194,14 +258,15 @@ The agent has **34 evidence-backed insight rules** in `garmin-insights/src/garmi
 
 ## AI Architecture (technical)
 
-The agent uses **Claude `claude-opus-4-7`** with:
+The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUDE_MODEL=claude-opus-4-7` to opt into Opus for deeper reasoning.
 
-- **Adaptive thinking** — Claude reasons about complex health patterns before responding
+- **Per-model thinking** — Opus uses `adaptive` thinking (Claude decides depth); Sonnet uses `enabled` with an 8,000-token budget. Both reason about health patterns before responding.
 - **Prompt caching** — the large medical knowledge system prompt (~2.6k tokens) is cached, reducing API costs by ~80% on repeat queries
 - **17 analysis tools** — query daily metrics, sleep, activity, body composition, training readiness, lifestyle behaviours; detect trends, anomalies, correlations; the multi-signal illness scanner; social-jet-lag detector; baselines; user profile / session memory
 - **34 medical rules** — full knowledge base injected into the system prompt
 - **Per-session memory** — each browser tab has its own conversation history, separate from CLI sessions
 - **True token streaming** — the web chat uses Server-Sent Events to stream tokens as Claude generates them
+- **User identity in the header** — web UI shows a name badge (from `DISPLAY_NAME` or Garmin email) and a colour-coded last-sync badge that auto-refreshes every 30 s (green < 10 min, amber < 60 min, red otherwise)
 
 ## Privacy
 
@@ -211,9 +276,11 @@ All data stays local. Nothing is sent to external servers except:
 
 ## Troubleshooting
 
-- **Login issues**: Delete `~/.garminconnect` to clear stale tokens, then re-run the fetcher
-- **No data in dashboard**: Run the fetcher first, then restart the web server so it rebuilds the cache
-- **Database locked**: Only one process should write to `garmin.db` at a time — don't run the fetcher while the web server is actively caching
+- **Login issues**: Delete the token directory (default `~/.garminconnect`, or `TOKEN_DIR` if set) to clear stale tokens, then re-run the fetcher
+- **No data in dashboard**: Run the fetcher first. The dashboard now auto-refreshes its cache every 60 s; if data still doesn't appear, restart the web server to trigger a full 90-day cache rebuild.
+- **Database locked**: Only one process should write to a `garmin.db` at a time. In multi-user mode each user has their own DB file, so there is no contention between users.
+- **Duplicate processes on restart**: `run-user.sh` launches a new fetcher + web server on every call. Before restarting, kill the old processes first: `pkill -f "garmin_fetch"` / `pkill -f "garmin-insights web"`. A future guard in `run-user.sh` will handle this automatically.
+- **Steps / daily metrics seem one day behind** (BST/non-UTC timezones): Older versions of the fetcher stored `daily_stats` rows under the previous UTC date. The current code uses noon-UTC of the requested date as the timestamp, so `daily_stats.date` always matches the local calendar day. If you have stale mis-dated rows, delete them and let the fetcher rewrite them: `DELETE FROM daily_stats WHERE date >= 'YYYY-MM-DD'`.
 
 ## For developers
 

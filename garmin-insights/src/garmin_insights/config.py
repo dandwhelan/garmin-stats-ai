@@ -16,9 +16,13 @@ class Settings(BaseSettings):
     # Database
     sqlite_db_path: str = "garmin.db"
 
+    # User identity (shown in the web UI; derived from the Garmin login)
+    garminconnect_email: str = ""
+    display_name: str = ""
+
     # Claude / Anthropic
     anthropic_api_key: str = ""
-    claude_model: str = "claude-opus-4-7"
+    claude_model: str = "claude-sonnet-4-6"
 
     # Web server
     web_host: str = "0.0.0.0"

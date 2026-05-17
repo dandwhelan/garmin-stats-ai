@@ -82,6 +82,13 @@ class HealthAgent:
 
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
+        # Thinking config differs per model: Opus supports adaptive; Sonnet
+        # needs an explicit budget.
+        if "opus" in settings.claude_model.lower():
+            self._thinking = {"type": "adaptive"}
+        else:
+            self._thinking = {"type": "enabled", "budget_tokens": 8000}
+
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(),
             today=datetime.utcnow().strftime("%Y-%m-%d"),
@@ -144,7 +151,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
@@ -202,7 +209,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 ) as stream:
                     # Stream text deltas as they arrive
                     for event in stream:

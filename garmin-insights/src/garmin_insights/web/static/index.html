@@ -12,9 +12,12 @@
   <header>
     <div class="header-inner">
       <span class="logo">⌚ Garmin Health Insights</span>
+      <span id="user-badge" class="user-badge" title=""></span>
+      <span id="sync-badge" class="sync-badge" title=""></span>
       <nav>
         <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
         <button class="tab-btn" data-tab="chat">Chat</button>
+        <button class="tab-btn" data-tab="entities">Entities</button>
       </nav>
       <span id="status-dot" class="status-dot" title="Checking..."></span>
     </div>
@@ -119,6 +122,55 @@
         <button class="scan-btn" data-focus="weekly">Weekly Summary</button>
       </div>
       <div id="scan-output" class="scan-output hidden"></div>
+    </section>
+  </main>
+
+  <!-- Entities Tab — build a custom chart from any metric(s) in the daily summary -->
+  <main id="tab-entities" class="tab-panel">
+    <section class="entities-section">
+      <h2>Custom Chart</h2>
+      <p class="entities-help">
+        Pick one or more metrics, choose a date range and chart type, then build.
+        Every numeric field from your daily summary cache is available.
+      </p>
+
+      <div class="entities-controls">
+        <div class="entities-control">
+          <label>Metrics</label>
+          <div id="entities-metrics" class="entities-metrics">
+            <em>Loading…</em>
+          </div>
+        </div>
+
+        <div class="entities-control">
+          <label for="entities-days">Days</label>
+          <select id="entities-days">
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </div>
+
+        <div class="entities-control">
+          <label for="entities-type">Chart type</label>
+          <select id="entities-type">
+            <option value="line" selected>Line</option>
+            <option value="bar">Bar</option>
+          </select>
+        </div>
+
+        <div class="entities-control entities-buttons">
+          <button id="entities-build" class="scan-btn">Build chart</button>
+          <button id="entities-clear" class="scan-btn secondary">Clear selection</button>
+        </div>
+      </div>
+
+      <div class="chart-container" id="entities-chart-container">
+        <canvas id="entities-chart"></canvas>
+      </div>
+      <p id="entities-empty" class="entities-empty">No chart yet — pick at least one metric and click Build.</p>
     </section>
   </main>
 

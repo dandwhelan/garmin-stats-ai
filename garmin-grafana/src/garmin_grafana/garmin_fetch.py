@@ -156,7 +156,12 @@ def get_daily_stats(date_str):
     if stats_json['wellnessStartTimeGmt'] and datetime.strptime(date_str, "%Y-%m-%d") < datetime.today():
         points_list.append({
             "measurement":  "DailyStats",
-            "time": pytz.timezone("UTC").localize(datetime.strptime(stats_json['wellnessStartTimeGmt'], "%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
+            # Use noon UTC of the *requested* date so that timestamp[:10] in the
+            # SQLite writer always equals date_str regardless of the user's timezone.
+            # Previously we used wellnessStartTimeGmt (midnight local time in UTC)
+            # which for BST users (UTC+1) falls on the *previous* UTC day, causing
+            # every daily_stats row to be stored under the wrong date.
+            "time": datetime.strptime(date_str, "%Y-%m-%d").replace(hour=12, tzinfo=pytz.UTC).isoformat(),
             "tags": {
                 "Device": GARMIN_DEVICENAME,
                 "Database_Name": "GarminDB"
@@ -1389,7 +1394,12 @@ if __name__ == "__main__":
         try:
             latest_hr_time_str = garmin_db.get_latest_heart_rate_time()
             if latest_hr_time_str:
-                last_influxdb_sync_time_UTC = pytz.utc.localize(datetime.fromisoformat(latest_hr_time_str))
+                # fromisoformat() returns an aware datetime when the string
+                # contains "+00:00" — pytz.utc.localize() raises ValueError on
+                # already-aware datetimes.  Use astimezone() instead, which works
+                # on both naive and aware inputs.
+                _dt = datetime.fromisoformat(latest_hr_time_str)
+                last_influxdb_sync_time_UTC = _dt.astimezone(pytz.utc) if _dt.tzinfo else pytz.utc.localize(_dt)
             else:
                 raise Exception("No data found")
         except Exception as err:
