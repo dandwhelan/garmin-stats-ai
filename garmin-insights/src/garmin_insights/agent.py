@@ -46,8 +46,11 @@ trends and correlations, and recall/save context from previous sessions.
   valid for today. For cumulative metrics, use yesterday as the most recent complete day.
 - Query cached daily summaries first (get_daily_metrics) — they're much faster
 - When comparing behaviors, always use compare_behavior_impact for statistical rigor
-- Check baselines via get_my_baselines before making claims about "high" or "low" values
+- Check baselines via get_my_baselines before making claims about "high" or "low" values — \
+  prefer this over fetching large raw date ranges for long-term averages
 - Check get_last_session_summary at the start of each conversation for continuity
+- Fetch the minimum date range needed: use get_my_baselines for 30-day context rather than \
+  requesting 30 days of raw data unless you need day-by-day detail
 
 {medical_knowledge}
 
@@ -98,6 +101,13 @@ class HealthAgent:
         # Tool definitions never change — build once
         self._tools_cache = get_all_tools_anthropic(self._tool_handler)
 
+        # Opus 4.7+ supports "adaptive" thinking; older models use explicit budget
+        self._thinking = (
+            {"type": "adaptive"}
+            if "opus-4-7" in settings.claude_model
+            else {"type": "enabled", "budget_tokens": 8000}
+        )
+
         # Default history for CLI use; web callers pass their own list
         self._history: list[dict] = []
         self._key_findings: list[str] = []
@@ -109,6 +119,9 @@ class HealthAgent:
             logger.info("Cache refreshed for last %d days.", days)
         except Exception as e:
             logger.warning("Cache refresh failed: %s", e)
+
+    # Anthropic caches at 1024-token boundaries; ~4096 chars is a safe proxy.
+    _CACHE_THRESHOLD_CHARS = 4096
 
     def _dispatch_tool_call(self, tool_use_block) -> str:
         """Execute a tool call and return the result string."""
@@ -128,6 +141,19 @@ class HealthAgent:
             logger.error("Tool %s failed: %s", name, e)
             return json.dumps({"error": f"Tool {name} failed: {str(e)}"})
 
+    def _build_tool_result(self, tool_id: str, result: str) -> dict:
+        """Wrap a tool result, adding cache_control for large payloads.
+
+        Large results (e.g. 30-day daily metrics) are re-sent on every subsequent
+        round. Marking them ephemeral means Anthropic serves them from cache after
+        the first round, cutting repeat-round input costs by ~80% for those tokens.
+        """
+        if len(result) >= self._CACHE_THRESHOLD_CHARS:
+            content = [{"type": "text", "text": result, "cache_control": {"type": "ephemeral"}}]
+        else:
+            content = result
+        return {"type": "tool_result", "tool_use_id": tool_id, "content": content}
+
     # ------------------------------------------------------------------
     # Non-streaming chat (CLI / scan reports)
     # ------------------------------------------------------------------
@@ -144,7 +170,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
@@ -160,11 +186,9 @@ class HealthAgent:
                 tool_results = []
                 for block in response.content:
                     if block.type == "tool_use":
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": self._dispatch_tool_call(block),
-                        })
+                        tool_results.append(
+                            self._build_tool_result(block.id, self._dispatch_tool_call(block))
+                        )
                 history.append({"role": "user", "content": tool_results})
                 logger.info("Round %d: dispatched %d tool calls", round_num + 1, len(tool_results))
                 continue
@@ -202,7 +226,7 @@ class HealthAgent:
                     system=self._system,
                     tools=self._tools_cache,
                     messages=history,
-                    thinking={"type": "adaptive"},
+                    thinking=self._thinking,
                 ) as stream:
                     # Stream text deltas as they arrive
                     for event in stream:
@@ -227,11 +251,9 @@ class HealthAgent:
                 for block in final.content:
                     if block.type == "tool_use":
                         tool_names.append(block.name)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": self._dispatch_tool_call(block),
-                        })
+                        tool_results.append(
+                            self._build_tool_result(block.id, self._dispatch_tool_call(block))
+                        )
 
                 yield {"type": "tool", "names": tool_names}
                 history.append({"role": "user", "content": tool_results})
@@ -246,29 +268,39 @@ class HealthAgent:
     # ------------------------------------------------------------------
     # Scan reports & session save
     # ------------------------------------------------------------------
-    def generate_scan_report(self, focus: str = "general", context: str = "") -> str:
+    def generate_scan_report(
+        self,
+        focus: str = "general",
+        context: str = "",
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> str:
         """Generate a proactive insight report without user prompting."""
         scan_prompts = {
             "morning": (
                 "Generate a morning health briefing. Check last night's sleep quality, "
                 "overnight HRV, body battery at wake, and training readiness. "
                 "Compare to baselines and flag anything noteworthy. "
-                "If any lifestyle behaviors were logged yesterday, analyze their impact."
+                "If any lifestyle behaviors were logged yesterday, analyze their impact. "
+                "Fetch at most 3 days of raw data — use get_my_baselines for context."
             ),
             "midday": (
                 "Generate a midday check-in. Look at today's stress trend so far, "
                 "current body battery drain rate vs normal, and step count pace. "
-                "Flag any emerging patterns."
+                "Flag any emerging patterns. "
+                "Fetch at most 7 days of raw data — use get_my_baselines for context."
             ),
             "evening": (
                 "Generate an evening activity review. Summarize today's exercise "
                 "(if any), daily stress accumulation, and project tonight's sleep quality "
-                "based on today's patterns. Compare today's metrics to baselines."
+                "based on today's patterns. Compare today's metrics to baselines. "
+                "Fetch at most 3 days of raw data — use get_my_baselines for context."
             ),
             "general": (
                 "Run a comprehensive health scan. Check all baselines for anomalies, "
                 "analyze recent trends (7-day) for all key metrics, and identify "
-                "the top 3 most noteworthy findings. Prioritize actionable insights."
+                "the top 3 most noteworthy findings. Prioritize actionable insights. "
+                "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
             ),
             "weekly": (
                 "Generate a weekly health summary. Analyze the last 7 days: "
@@ -276,11 +308,20 @@ class HealthAgent:
                 "2) Impact of each logged lifestyle behavior on key metrics. "
                 "3) Training load and recovery balance. "
                 "4) Top 3 actionable recommendations for next week. "
-                "Compare this week to the 30-day baseline."
+                "Compare this week to the 30-day baseline. "
+                "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
             ),
         }
 
         base_prompt = scan_prompts.get(focus, scan_prompts["general"])
+
+        if start_date and end_date:
+            date_context = (
+                f"IMPORTANT: The user has selected a custom date range: {start_date} to {end_date}. "
+                f"Restrict your analysis to this date range when fetching data and drawing conclusions. "
+                f"Use these exact dates as the start and end for any tool calls that require a date range.\n\n"
+            )
+            base_prompt = date_context + base_prompt
 
         if context:
             prompt = (
