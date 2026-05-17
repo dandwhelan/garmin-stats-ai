@@ -2286,14 +2286,14 @@ function initChartCustomization() {
     // Apply hidden pref
     if (prefs[id] === false) node.classList.add('chart-hidden');
 
-    // Make header collapsible (independent of show/hide)
+    // Make header collapsible (independent of show/hide). Stale collapsed
+    // state from earlier exploration is wiped once on this version bump so
+    // charts default to expanded; clicking a header still toggles it.
     const header = node.querySelector('.chart-header');
     if (header) {
       header.classList.add('collapsible-header');
       const collapseKey = `collapsed:${id}`;
-      if (prefs[collapseKey]) node.classList.add('chart-collapsed');
       header.addEventListener('click', e => {
-        // Don't collapse when clicking a button/toggle inside the header
         if (e.target.closest('button, input')) return;
         node.classList.toggle('chart-collapsed');
         const updated = loadPrefs();
@@ -2302,6 +2302,20 @@ function initChartCustomization() {
       });
     }
   });
+
+  // One-time cleanup: clear stray "collapsed:*" entries from earlier sessions
+  // so the entire dashboard expands by default after this update.
+  const cleanupKey = 'garmin-collapse-reset-v1';
+  if (!localStorage.getItem(cleanupKey)) {
+    const cleaned = loadPrefs();
+    let touched = false;
+    for (const k of Object.keys(cleaned)) {
+      if (k.startsWith('collapsed:')) { delete cleaned[k]; touched = true; }
+    }
+    if (touched) savePrefs(cleaned);
+    document.querySelectorAll('.chart-collapsed').forEach(n => n.classList.remove('chart-collapsed'));
+    localStorage.setItem(cleanupKey, '1');
+  }
 
   // Build the customize panel
   const list = document.getElementById('customize-list');
