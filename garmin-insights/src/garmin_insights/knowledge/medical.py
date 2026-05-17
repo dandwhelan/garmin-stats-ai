@@ -216,9 +216,10 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Mooventhan & Nivethitha, 2014, North American Journal of Medical Sciences",
         research_summary=(
-            "Cold water immersion activates the parasympathetic nervous system, "
-            "increases vagal tone, and has been shown to enhance post-exercise recovery "
-            "and improve HRV markers."
+            "Cold water immersion (full immersion for 5+ minutes) activates the parasympathetic "
+            "nervous system, increases vagal tone, and has been shown to enhance post-exercise "
+            "recovery and improve HRV markers. Note: the evidence base is for full immersion; "
+            "brief cold showers show much weaker effects."
         ),
     ),
 
@@ -254,11 +255,12 @@ INSIGHT_RULES: list[InsightRule] = [
             "Allergy symptom days show RHR of {mean_with:.0f} bpm "
             "vs {mean_without:.0f} bpm without ({difference:+.1f} bpm)."
         ),
-        research_citation="Galli et al., 2008, Nature",
+        research_citation="Shaaban et al., 2008, European Respiratory Journal; Togias, 2000, Journal of Allergy and Clinical Immunology",
         research_summary=(
-            "Allergic inflammation triggers systemic immune responses that can elevate "
-            "resting heart rate, increase stress markers, and impair sleep quality "
-            "through histamine-mediated arousal pathways."
+            "Allergic inflammation triggers a systemic immune response (IgE-mediated histamine "
+            "release and cytokine signalling) that elevates resting heart rate, increases "
+            "autonomic stress markers, and impairs sleep quality through histamine-mediated "
+            "arousal pathways and nasal congestion."
         ),
     ),
 
@@ -276,9 +278,11 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Miglis, 2018, Current Pain & Headache Reports",
         research_summary=(
-            "Autonomic nervous system dysfunction often precedes migraines by 24-48 hours. "
-            "A drop in HRV and increase in resting stress can serve as early warning signals "
-            "for migraine onset."
+            "Autonomic nervous system dysfunction often precedes migraines by 24-48 hours — "
+            "a drop in HRV and increase in resting stress in the day *before* migraine onset "
+            "can serve as an early warning signal. Note: comparing HRV on migraine days vs "
+            "migraine-free days shows a concurrent correlation; the more actionable signal is "
+            "HRV the day before a logged migraine."
         ),
     ),
 
@@ -371,9 +375,10 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="de Cabo & Mattson, 2019, New England Journal of Medicine",
         research_summary=(
-            "Intermittent fasting improves metabolic flexibility, enhances "
-            "autophagy, and may improve overnight HRV through reduced metabolic "
-            "demand during sleep."
+            "Intermittent fasting improves metabolic flexibility, enhances autophagy, "
+            "and is associated with improved autonomic recovery markers including HRV. "
+            "The primary mechanism is metabolic (reduced insulin resistance, lower overnight "
+            "glucose load) rather than simply reduced caloric intake."
         ),
     ),
 
@@ -389,11 +394,12 @@ INSIGHT_RULES: list[InsightRule] = [
             "Your deep sleep percentage is {value:.0f}% — "
             "{assessment} the recommended 13-23% range."
         ),
-        research_citation="Walker, 2017, Why We Sleep (UC Berkeley)",
+        research_citation="Ohayon et al., 2004, Sleep (normative meta-analysis); AASM Clinical Practice Guidelines",
         research_summary=(
             "Deep (NREM stage 3) sleep is critical for memory consolidation, "
             "immune function, and growth hormone release. Adults should aim for "
-            "13-23% of total sleep as deep sleep. Deficit impairs next-day cognition."
+            "13-23% of total sleep as deep sleep (normative range from large population studies). "
+            "Deficit impairs next-day cognition and immune response."
         ),
     ),
 
@@ -519,9 +525,10 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation="Leary et al., 2020, JAMA Neurology",
         research_summary=(
             "REM sleep is essential for emotional processing, memory consolidation, and "
-            "cognitive performance. A 5%+ drop in REM percentage over 2 weeks is associated "
-            "with increased mortality risk and impaired mood. Common causes include alcohol, "
-            "late meals, SSRIs, and inconsistent sleep timing."
+            "cognitive performance. Chronic REM deficiency (sustained below 20% of total sleep) "
+            "is associated with increased long-term mortality risk and significantly impairs mood "
+            "and memory within days. Short-term dips are less serious but worth noting. "
+            "Common causes include alcohol, late meals, SSRIs, and inconsistent sleep timing."
         ),
     ),
 
@@ -686,6 +693,183 @@ INSIGHT_RULES: list[InsightRule] = [
             "parasympathetic (vagal) tone, lowering HRV. The relationship is dose-dependent "
             "and reversible — every 1% reduction in visceral fat produces measurable HRV "
             "improvements within 6-8 weeks."
+        ),
+    ),
+
+    # ===== MENSTRUAL CYCLE =====
+    InsightRule(
+        name="period_day_rhr_hrv",
+        category="lifestyle",
+        trigger_behavior="Period Day",
+        trigger_metric="restingHeartRate",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "Period/luteal phase days show RHR of {mean_with:.0f} bpm vs {mean_without:.0f} bpm "
+            "and HRV of {hrv_with:.0f} ms vs {hrv_without:.0f} ms on other days."
+        ),
+        research_citation="Nakagawa et al., 2020, Journal of Clinical Medicine; Brar et al., 2015, Journal of Women's Health",
+        research_summary=(
+            "During the luteal phase (post-ovulation through menstruation), progesterone "
+            "elevates resting heart rate by 2-5 bpm and can suppress overnight HRV. "
+            "This is a normal physiological response — NOT a sign of illness or overtraining. "
+            "CRITICAL: When Period Day is logged, do not flag elevated RHR or depressed HRV "
+            "as illness indicators unless other clear symptoms are also present. Body battery "
+            "and energy levels also typically decrease in the late luteal phase."
+        ),
+    ),
+
+    # ===== DOMS =====
+    InsightRule(
+        name="doms_rhr_elevation",
+        category="recovery",
+        trigger_behavior="Delayed Onset Muscle Soreness",
+        trigger_metric="restingHeartRate",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "DOMS days show RHR of {mean_with:.0f} bpm vs {mean_without:.0f} bpm baseline."
+        ),
+        research_citation="Cheung et al., 2003, Sports Medicine; Twist & Eston, 2005, Journal of Sports Sciences",
+        research_summary=(
+            "Delayed Onset Muscle Soreness (DOMS) from intense or novel exercise causes "
+            "localised inflammation that can elevate resting heart rate by 3-8 bpm and "
+            "temporarily suppress HRV for 24-72 hours. This closely mimics the illness "
+            "signature (elevated RHR + low HRV). CRITICAL: When DOMS is logged, do not "
+            "interpret elevated RHR or suppressed HRV as illness — it is a normal "
+            "inflammatory recovery response. Body battery may also read lower than expected."
+        ),
+    ),
+
+    # ===== PET IN BEDROOM =====
+    InsightRule(
+        name="pet_in_bedroom_sleep",
+        category="sleep",
+        trigger_behavior="Pet in Bedroom",
+        trigger_metric="awakeCount",
+        comparison_metric="sleepScore",
+        direction="higher_is_worse",
+        description_template=(
+            "Pet-in-bedroom nights show sleep score of {mean_with:.0f} vs {mean_without:.0f} "
+            "and {awake_with:.1f} vs {awake_without:.1f} awakenings."
+        ),
+        research_citation="Patel et al., 2017, Mayo Clinic Proceedings",
+        research_summary=(
+            "Pets in the bedroom — especially on the bed — increase sleep fragmentation "
+            "through movement and noise. A Mayo Clinic study found pet owners who allowed "
+            "pets on the bed had measurably lower sleep efficiency scores. The effect is "
+            "worse for light sleepers and those with pets that move frequently overnight."
+        ),
+    ),
+
+    # ===== EMOTIONAL UPSET =====
+    InsightRule(
+        name="emotional_upset_hrv",
+        category="stress",
+        trigger_behavior="Emotional Upset",
+        trigger_metric="avgOvernightHrv",
+        comparison_metric="stressPercentage",
+        direction="lower_is_worse",
+        description_template=(
+            "Emotional upset days show overnight HRV of {mean_with:.0f} ms "
+            "vs {mean_without:.0f} ms on other days ({difference:+.0f} ms)."
+        ),
+        research_citation="Thayer & Lane, 2009, Neuroscience & Biobehavioral Reviews",
+        research_summary=(
+            "Acute psychological stress and emotional upset directly suppress vagal tone, "
+            "reducing overnight HRV by 10-20 ms. The effect persists into the following "
+            "night's sleep even if subjective mood has improved. Elevated daytime stress "
+            "percentage and reduced body battery on emotional upset days are expected — "
+            "do not conflate with illness unless RHR is also significantly elevated."
+        ),
+    ),
+
+    # ===== TRAVELING =====
+    InsightRule(
+        name="travel_sleep_disruption",
+        category="sleep",
+        trigger_behavior="Traveling/Vacation",
+        trigger_metric="sleepScore",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "Travel days show sleep score of {mean_with:.0f} vs {mean_without:.0f} at home."
+        ),
+        research_citation="Waterhouse et al., 2007, Journal of Sleep Research",
+        research_summary=(
+            "Travel — especially across time zones — disrupts circadian rhythm, sleep timing, "
+            "and sleep quality. Even without jet lag, sleeping in an unfamiliar environment "
+            "triggers the 'first-night effect': lighter sleep, more awakenings, and reduced "
+            "slow-wave sleep. HRV and body battery often read lower for 1-3 nights after "
+            "arriving somewhere new. This is expected and should not be compared against "
+            "at-home baselines without noting the travel context."
+        ),
+    ),
+
+    # ===== WHO EXERCISE GUIDELINES =====
+    InsightRule(
+        name="who_exercise_guidelines",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="moderateIntensityMinutes",
+        comparison_metric="vigorousIntensityMinutes",
+        direction="lower_is_worse",
+        description_template=(
+            "This week: {moderate_mins:.0f} moderate + {vigorous_mins:.0f} vigorous minutes "
+            "vs WHO target of 150 moderate or 75 vigorous (or combination)."
+        ),
+        research_citation="WHO Physical Activity Guidelines, 2020; Bull et al., 2020, British Journal of Sports Medicine",
+        research_summary=(
+            "The WHO recommends 150-300 minutes of moderate-intensity or 75-150 minutes of "
+            "vigorous-intensity aerobic activity per week for adults. Vigorous minutes count "
+            "double (1 min vigorous = 2 min moderate). Consistently below target is associated "
+            "with higher all-cause mortality, cardiovascular disease risk, and metabolic syndrome. "
+            "Garmin's moderateIntensityMinutes and vigorousIntensityMinutes fields map directly "
+            "to these categories and reset weekly."
+        ),
+    ),
+
+    # ===== FITNESS AGE =====
+    InsightRule(
+        name="fitness_age_vs_chronological",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="fitness_age",
+        comparison_metric="vo2_max_value",
+        direction="correlation",
+        description_template=(
+            "Fitness age: {fitness_age:.0f} vs chronological age {chronological_age:.0f} "
+            "(achievable: {achievable_fitness_age:.0f})."
+        ),
+        research_citation="Nes et al., 2013, Medicine & Science in Sports & Exercise",
+        research_summary=(
+            "Garmin's fitness age is derived from VO2 max relative to age-sex norms. "
+            "A fitness age below chronological age indicates above-average cardiovascular "
+            "fitness; above indicates below-average. Each 1 ml/kg/min improvement in VO2 max "
+            "reduces all-cause mortality risk by ~4%. The achievable fitness age shows how "
+            "much improvement is possible with optimal training."
+        ),
+    ),
+
+    # ===== ALCOHOL + NEXT-MORNING RHR =====
+    InsightRule(
+        name="alcohol_morning_rhr",
+        category="lifestyle",
+        trigger_behavior="Alcohol",
+        trigger_metric="restingHeartRate",
+        comparison_metric=None,
+        direction="higher_is_worse",
+        description_template=(
+            "The morning after alcohol nights your RHR averages {mean_with:.0f} bpm "
+            "vs {mean_without:.0f} bpm on other mornings ({difference:+.0f} bpm)."
+        ),
+        research_citation="Sagawa et al., 2011, Alcohol & Alcoholism",
+        research_summary=(
+            "Alcohol metabolism produces acetaldehyde, which directly elevates heart rate "
+            "during processing and into the following morning. Even 1-2 drinks can raise "
+            "next-morning RHR by 3-8 bpm and suppress HRV — effects are visible on Garmin "
+            "data the morning after drinking. This is one of the clearest alcohol signals "
+            "in wearable data and is separate from the same-night sleep quality impact."
         ),
     ),
 

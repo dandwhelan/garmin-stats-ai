@@ -46,8 +46,11 @@ trends and correlations, and recall/save context from previous sessions.
   valid for today. For cumulative metrics, use yesterday as the most recent complete day.
 - Query cached daily summaries first (get_daily_metrics) — they're much faster
 - When comparing behaviors, always use compare_behavior_impact for statistical rigor
-- Check baselines via get_my_baselines before making claims about "high" or "low" values
+- Check baselines via get_my_baselines before making claims about "high" or "low" values — \
+  prefer this over fetching large raw date ranges for long-term averages
 - Check get_last_session_summary at the start of each conversation for continuity
+- Fetch the minimum date range needed: use get_my_baselines for 30-day context rather than \
+  requesting 30 days of raw data unless you need day-by-day detail
 
 {medical_knowledge}
 
@@ -285,22 +288,26 @@ class HealthAgent:
                 "Generate a morning health briefing. Check last night's sleep quality, "
                 "overnight HRV, body battery at wake, and training readiness. "
                 "Compare to baselines and flag anything noteworthy. "
-                "If any lifestyle behaviors were logged yesterday, analyze their impact."
+                "If any lifestyle behaviors were logged yesterday, analyze their impact. "
+                "Fetch at most 3 days of raw data — use get_my_baselines for context."
             ),
             "midday": (
                 "Generate a midday check-in. Look at today's stress trend so far, "
                 "current body battery drain rate vs normal, and step count pace. "
-                "Flag any emerging patterns."
+                "Flag any emerging patterns. "
+                "Fetch at most 7 days of raw data — use get_my_baselines for context."
             ),
             "evening": (
                 "Generate an evening activity review. Summarize today's exercise "
                 "(if any), daily stress accumulation, and project tonight's sleep quality "
-                "based on today's patterns. Compare today's metrics to baselines."
+                "based on today's patterns. Compare today's metrics to baselines. "
+                "Fetch at most 3 days of raw data — use get_my_baselines for context."
             ),
             "general": (
                 "Run a comprehensive health scan. Check all baselines for anomalies, "
                 "analyze recent trends (7-day) for all key metrics, and identify "
-                "the top 3 most noteworthy findings. Prioritize actionable insights."
+                "the top 3 most noteworthy findings. Prioritize actionable insights. "
+                "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
             ),
             "weekly": (
                 "Generate a weekly health summary. Analyze the last 7 days: "
@@ -308,7 +315,8 @@ class HealthAgent:
                 "2) Impact of each logged lifestyle behavior on key metrics. "
                 "3) Training load and recovery balance. "
                 "4) Top 3 actionable recommendations for next week. "
-                "Compare this week to the 30-day baseline."
+                "Compare this week to the 30-day baseline. "
+                "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
             ),
         }
 
