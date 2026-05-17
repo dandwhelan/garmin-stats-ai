@@ -714,6 +714,11 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
   });
 });
 
+function safeRender(name, fn) {
+  try { fn(); }
+  catch (e) { console.error(`Renderer "${name}" failed:`, e); }
+}
+
 async function loadVisualizations(start, end) {
   try {
     const params = new URLSearchParams();
@@ -723,14 +728,14 @@ async function loadVisualizations(start, end) {
     const res = await fetch(`/api/visualizations?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     vizData = await res.json();
-    renderAcwrChart(vizData.training);
-    renderReadinessChart(vizData.training);
-    renderSleepTimeline(vizData.sleep_timeline);
-    renderBodyComposition(vizData.body_composition);
-    renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric);
-    renderAnomalyCalendar(vizData.anomaly_calendar);
-    renderHrZones(vizData.hr_zones);
-    renderCorrelationMatrix(vizData.correlations);
+    safeRender('acwr', () => renderAcwrChart(vizData.training));
+    safeRender('readiness', () => renderReadinessChart(vizData.training));
+    safeRender('sleepTimeline', () => renderSleepTimeline(vizData.sleep_timeline));
+    safeRender('bodyComp', () => renderBodyComposition(vizData.body_composition));
+    safeRender('behaviorImpact', () => renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric));
+    safeRender('anomalyCalendar', () => renderAnomalyCalendar(vizData.anomaly_calendar));
+    safeRender('hrZones', () => renderHrZones(vizData.hr_zones));
+    safeRender('correlationMatrix', () => renderCorrelationMatrix(vizData.correlations));
   } catch (e) {
     console.error('Visualizations load failed:', e);
   }
@@ -1591,25 +1596,25 @@ async function loadLifestyle(start, end) {
     const res = await fetch(`/api/lifestyle?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     lifestyleData = await res.json();
-    renderIllnessRadar(lifestyleData.illness_radar);
-    renderRecoveryDebt(lifestyleData.recovery_debt);
-    renderInflammation(lifestyleData.inflammation_index);
-    renderSRI(lifestyleData.sleep_regularity);
-    renderSocialJetLag(lifestyleData.social_jet_lag);
-    renderResilience(lifestyleData.stress_resilience);
-    renderBBDecay(lifestyleData.body_battery_decay);
-    renderRecoveryCost(lifestyleData.recovery_cost);
-    renderDoseControls(lifestyleData.dose_response);
-    renderCaffeineCutoff(lifestyleData.caffeine_cutoff);
-    renderHabitHalfLife(lifestyleData.habit_half_life);
-    renderStreakCalendar(lifestyleData.streak_calendar);
-    renderCooccurrence(lifestyleData.cooccurrence);
-    renderStressTriggers(lifestyleData.stress_triggers);
-    renderStepCDF(lifestyleData.step_distribution);
-    renderWhoTarget(lifestyleData.who_target);
-    renderStressFingerprint(lifestyleData.stress_hour_fingerprint);
-    renderFitnessAge(lifestyleData.fitness_age_delta);
-    renderCycleHrv(lifestyleData.cycle_hrv);
+    safeRender('illnessRadar',    () => renderIllnessRadar(lifestyleData.illness_radar));
+    safeRender('recoveryDebt',    () => renderRecoveryDebt(lifestyleData.recovery_debt));
+    safeRender('inflammation',    () => renderInflammation(lifestyleData.inflammation_index));
+    safeRender('sri',             () => renderSRI(lifestyleData.sleep_regularity));
+    safeRender('socialJetLag',    () => renderSocialJetLag(lifestyleData.social_jet_lag));
+    safeRender('resilience',      () => renderResilience(lifestyleData.stress_resilience));
+    safeRender('bbDecay',         () => renderBBDecay(lifestyleData.body_battery_decay));
+    safeRender('recoveryCost',    () => renderRecoveryCost(lifestyleData.recovery_cost));
+    safeRender('doseControls',    () => renderDoseControls(lifestyleData.dose_response));
+    safeRender('caffeineCutoff',  () => renderCaffeineCutoff(lifestyleData.caffeine_cutoff));
+    safeRender('habitHalfLife',   () => renderHabitHalfLife(lifestyleData.habit_half_life));
+    safeRender('streakCalendar',  () => renderStreakCalendar(lifestyleData.streak_calendar));
+    safeRender('cooccurrence',    () => renderCooccurrence(lifestyleData.cooccurrence));
+    safeRender('stressTriggers',  () => renderStressTriggers(lifestyleData.stress_triggers));
+    safeRender('stepCDF',         () => renderStepCDF(lifestyleData.step_distribution));
+    safeRender('whoTarget',       () => renderWhoTarget(lifestyleData.who_target));
+    safeRender('stressFp',        () => renderStressFingerprint(lifestyleData.stress_hour_fingerprint));
+    safeRender('fitnessAge',      () => renderFitnessAge(lifestyleData.fitness_age_delta));
+    safeRender('cycleHrv',        () => renderCycleHrv(lifestyleData.cycle_hrv));
   } catch (e) {
     console.error('Lifestyle load failed:', e);
   }
