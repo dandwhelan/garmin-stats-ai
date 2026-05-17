@@ -714,22 +714,6 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
   });
 });
 
-// ---- Chat ----
-const chatMessages = document.getElementById('chat-messages');
-const chatInput = document.getElementById('chat-input');
-const sendBtn = document.getElementById('send-btn');
-const resetBtn = document.getElementById('reset-btn');
-
-// Per-browser session id, persisted in localStorage
-const SESSION_KEY = 'garmin-chat-session';
-let sessionId = localStorage.getItem(SESSION_KEY) || null;
-
-// Auto-resize textarea
-chatInput.addEventListener('input', () => {
-  chatInput.style.height = 'auto';
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
-});
-
 async function loadVisualizations(start, end) {
   try {
     const params = new URLSearchParams();
