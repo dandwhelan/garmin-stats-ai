@@ -37,6 +37,9 @@ setInterval(checkHealth, 30_000);
 let chartInstance = null;
 let dashboardData = null;
 let activeMetric = 'sleepScore';
+let selectedStart = null;
+let selectedEnd = null;
+let selectedDays = 14;  // null when a custom range is active
 
 const METRIC_CONFIG = {
   sleepScore:            { label: 'Sleep Score',        unit: '',    decimals: 0, good: v => v >= 80, warn: v => v >= 60 },
@@ -66,11 +69,22 @@ function formatValue(metric, value) {
 
 function getLatestAndPrev(summaries, key) {
   const sorted = [...summaries].sort((a, b) => b.date.localeCompare(a.date));
-  // skip today (potentially incomplete) for cumulative metrics
+  // Cumulative metrics keep skipping today even if non-null (today is still accumulating).
   const cumulativeMetrics = ['totalSteps', 'stressPercentage'];
-  const skip = cumulativeMetrics.includes(key) ? 1 : 0;
-  const latest = sorted[skip];
-  const prev = sorted[skip + 1];
+  const startIdx = cumulativeMetrics.includes(key) ? 1 : 0;
+
+  // Walk back to the first row that actually has a value for this metric
+  // (today's sleep/HRV/RHR/battery rows are null until the next sleep is recorded).
+  let latestIdx = -1;
+  for (let i = startIdx; i < sorted.length; i++) {
+    if (sorted[i]?.[key] != null) { latestIdx = i; break; }
+  }
+  let prevIdx = -1;
+  for (let i = latestIdx + 1; i < sorted.length; i++) {
+    if (sorted[i]?.[key] != null) { prevIdx = i; break; }
+  }
+  const latest = latestIdx >= 0 ? sorted[latestIdx] : null;
+  const prev = prevIdx >= 0 ? sorted[prevIdx] : null;
   return {
     value: latest?.[key] ?? null,
     prevValue: prev?.[key] ?? null,
@@ -106,7 +120,6 @@ function renderCards(summaries, baselines) {
 function getMetricSeries(summaries, key) {
   return [...summaries]
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-14)
     .map(s => ({ x: s.date, y: s[key] ?? null }));
 }
 
@@ -177,9 +190,20 @@ function destroyAux(key) {
 }
 
 function lastNDays(summaries, n) {
-  return [...summaries]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-n);
+  // n is treated as an upper bound; if the selected window is shorter we just
+  // return everything we have.
+  const sorted = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
+  return n ? sorted.slice(-n) : sorted;
+}
+
+function currentWindowSize() {
+  // How many points to render in the aux charts. Cap at 90 to keep them legible.
+  if (selectedDays) return Math.min(selectedDays, 90);
+  if (selectedStart && selectedEnd) {
+    const days = Math.round((new Date(selectedEnd) - new Date(selectedStart)) / 86_400_000) + 1;
+    return Math.min(days, 90);
+  }
+  return 14;
 }
 
 function commonScales(yLabel = '') {
@@ -211,7 +235,7 @@ function commonPlugins(extra = {}) {
 }
 
 function renderSleepArchitecture(summaries) {
-  const recent = lastNDays(summaries, 14);
+  const recent = lastNDays(summaries, currentWindowSize());
   const labels = recent.map(s => s.date.slice(5));
   const toHours = secs => secs == null ? null : +(secs / 3600).toFixed(2);
 
@@ -240,7 +264,7 @@ function renderSleepArchitecture(summaries) {
 }
 
 function renderRecoveryChart(summaries, baselines) {
-  const recent = lastNDays(summaries, 14);
+  const recent = lastNDays(summaries, currentWindowSize());
   const labels = recent.map(s => s.date.slice(5));
 
   // Normalize each metric to % of 7-day baseline so they share a Y scale
@@ -283,7 +307,7 @@ function renderRecoveryChart(summaries, baselines) {
 }
 
 function renderActivityChart(summaries) {
-  const recent = lastNDays(summaries, 14);
+  const recent = lastNDays(summaries, currentWindowSize());
   const labels = recent.map(s => s.date.slice(5));
 
   destroyAux('activity');
@@ -309,7 +333,7 @@ function renderActivityChart(summaries) {
 }
 
 function renderStressChart(summaries) {
-  const recent = lastNDays(summaries, 14);
+  const recent = lastNDays(summaries, currentWindowSize());
   const labels = recent.map(s => s.date.slice(5));
 
   destroyAux('stress');
@@ -352,12 +376,32 @@ function renderStressChart(summaries) {
   });
 }
 
+function buildDashboardUrl() {
+  const params = new URLSearchParams();
+  if (selectedStart) params.set('start', selectedStart);
+  if (selectedEnd) params.set('end', selectedEnd);
+  const qs = params.toString();
+  return qs ? `/api/dashboard?${qs}` : '/api/dashboard';
+}
+
+function updateChartTitles(dateRange) {
+  if (!dateRange) return;
+  const { start, end } = dateRange;
+  const days = Math.round((new Date(end) - new Date(start)) / 86_400_000) + 1;
+  const label = selectedDays ? `${days}-Day` : `${start} → ${end}`;
+  const title = document.getElementById('trend-chart-title');
+  if (title) title.textContent = `${label} Trend`;
+  const sleepTitle = document.getElementById('sleep-chart-title');
+  if (sleepTitle) sleepTitle.textContent = `Sleep Architecture (${label})`;
+}
+
 async function loadDashboard() {
   try {
-    const res = await fetch('/api/dashboard');
+    const res = await fetch(buildDashboardUrl());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     dashboardData = await res.json();
-    const { summaries, baselines } = dashboardData;
+    const { summaries, baselines, date_range } = dashboardData;
+    updateChartTitles(date_range);
     renderCards(summaries, baselines);
     renderChart(summaries, activeMetric);
     renderSleepArchitecture(summaries);
@@ -379,23 +423,104 @@ document.querySelectorAll('.chart-toggle').forEach(btn => {
   });
 });
 
+// ---- Date range controls ----
+const dateStartInput = document.getElementById('date-start');
+const dateEndInput = document.getElementById('date-end');
+
+function setActivePreset(days) {
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.days === String(days));
+  });
+}
+
+function applyPreset(days) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - (days - 1));
+  selectedEnd = end.toISOString().slice(0, 10);
+  selectedStart = start.toISOString().slice(0, 10);
+  selectedDays = days;
+  if (dateStartInput) dateStartInput.value = selectedStart;
+  if (dateEndInput) dateEndInput.value = selectedEnd;
+  setActivePreset(days);
+  loadDashboard();
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyPreset(Number(btn.dataset.days)));
+});
+
+document.getElementById('date-apply-btn')?.addEventListener('click', () => {
+  const s = dateStartInput?.value;
+  const e = dateEndInput?.value;
+  if (!s || !e) return;
+  if (s > e) { alert('Start date must be before end date.'); return; }
+  selectedStart = s;
+  selectedEnd = e;
+  selectedDays = null;
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  loadDashboard();
+});
+
+// Initialise date inputs with the default 14-day window
+(function initDateInputs() {
+  if (!dateStartInput || !dateEndInput) return;
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 13);
+  const isoEnd = end.toISOString().slice(0, 10);
+  const isoStart = start.toISOString().slice(0, 10);
+  dateStartInput.value = isoStart;
+  dateEndInput.value = isoEnd;
+  dateStartInput.max = isoEnd;
+  dateEndInput.max = isoEnd;
+  selectedStart = isoStart;
+  selectedEnd = isoEnd;
+})();
+
 loadDashboard();
 setInterval(loadDashboard, 5 * 60_000); // refresh every 5 min
 
 // ---- AI Scan ----
+const scanDateStart = document.getElementById('scan-date-start');
+const scanDateEnd = document.getElementById('scan-date-end');
+const scanDateClear = document.getElementById('scan-date-clear');
+
+scanDateClear?.addEventListener('click', () => {
+  if (scanDateStart) scanDateStart.value = '';
+  if (scanDateEnd) scanDateEnd.value = '';
+});
+
 document.querySelectorAll('.scan-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const focus = btn.dataset.focus;
     const output = document.getElementById('scan-output');
     document.querySelectorAll('.scan-btn').forEach(b => b.disabled = true);
     output.classList.remove('hidden');
-    output.innerHTML = '<em>Running scan, please wait...</em>';
+
+    const startVal = scanDateStart?.value || null;
+    const endVal = scanDateEnd?.value || null;
+
+    if (startVal && endVal && startVal > endVal) {
+      output.innerHTML = `<span style="color:var(--red)">Start date must be before end date.</span>`;
+      document.querySelectorAll('.scan-btn').forEach(b => b.disabled = false);
+      return;
+    }
+
+    const dateNote = startVal && endVal
+      ? ` <em style="color:var(--muted);font-size:0.85em">(${startVal} → ${endVal})</em>`
+      : '';
+    output.innerHTML = `<em>Running scan, please wait...${dateNote}</em>`;
+
+    const body = { focus };
+    if (startVal) body.start_date = startVal;
+    if (endVal) body.end_date = endVal;
 
     try {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ focus }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -407,6 +532,95 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
     }
   });
 });
+
+// ---- Show / hide customize panel ----
+const PREFS_KEY = 'garmin-chart-prefs-v1';
+
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function savePrefs(prefs) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+function slugify(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+}
+
+function initChartCustomization() {
+  const dash = document.getElementById('tab-dashboard');
+  if (!dash) return;
+
+  const prefs = loadPrefs();
+  const items = [];
+  const idCounts = new Map();
+
+  dash.querySelectorAll('.chart-section').forEach(node => {
+    const h2 = node.querySelector('.chart-header h2');
+    if (!h2) return;
+    // Take only the first text node so the (i) tooltip span doesn't leak into the label
+    const label = (h2.firstChild?.textContent || h2.textContent).trim();
+    let id = slugify(label);
+    const n = (idCounts.get(id) || 0) + 1;
+    idCounts.set(id, n);
+    if (n > 1) id = `${id}-${n}`;
+    node.dataset.chartId = id;
+    if (prefs[id] === false) node.classList.add('chart-hidden');
+    items.push({ id, label, el: node });
+  });
+
+  const list = document.getElementById('customize-list');
+  if (list) {
+    list.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'customize-items';
+    items.forEach(({ id, label }) => {
+      const checked = prefs[id] !== false;
+      const lbl = document.createElement('label');
+      lbl.className = 'customize-item';
+      lbl.innerHTML = `<input type="checkbox" data-chart-id="${id}" ${checked ? 'checked' : ''}/> <span>${escapeHtml(label)}</span>`;
+      grid.appendChild(lbl);
+    });
+    list.appendChild(grid);
+
+    list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.chartId;
+        const sec = dash.querySelector(`[data-chart-id="${id}"]`);
+        if (!sec) return;
+        sec.classList.toggle('chart-hidden', !cb.checked);
+        const updated = loadPrefs();
+        updated[id] = cb.checked;
+        savePrefs(updated);
+      });
+    });
+  }
+
+  function setAllVisible(visible) {
+    const updated = loadPrefs();
+    dash.querySelectorAll('[data-chart-id]').forEach(sec => {
+      sec.classList.toggle('chart-hidden', !visible);
+      updated[sec.dataset.chartId] = visible;
+    });
+    document.querySelectorAll('#customize-list input[type="checkbox"]').forEach(cb => {
+      cb.checked = visible;
+    });
+    savePrefs(updated);
+  }
+
+  document.getElementById('customize-btn')?.addEventListener('click', () => {
+    document.getElementById('customize-panel')?.classList.toggle('hidden');
+  });
+  document.getElementById('customize-close-btn')?.addEventListener('click', () => {
+    document.getElementById('customize-panel')?.classList.add('hidden');
+  });
+  document.getElementById('customize-all-btn')?.addEventListener('click', () => setAllVisible(true));
+  document.getElementById('customize-none-btn')?.addEventListener('click', () => setAllVisible(false));
+}
+
+initChartCustomization();
 
 // ---- Chat ----
 const chatMessages = document.getElementById('chat-messages');
