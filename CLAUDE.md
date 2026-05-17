@@ -39,9 +39,13 @@ bash scripts/run-helen.sh  # fetcher + web on WEB_PORT=8081
 # Generic launcher (used by the per-user wrappers):
 bash scripts/run-user.sh <username>
 
-# Cron @reboot (add to crontab -e):
-# @reboot sleep 10 && bash /home/dan/garmin-data/scripts/run-dan.sh
-# @reboot sleep 10 && bash /home/dan/garmin-data/scripts/run-helen.sh
+# Cron — @reboot starts both users, */10 minutes self-heals if anything died.
+# run-user.sh is idempotent: checks /proc/<pid>/environ for SQLITE_DB_PATH and
+# skips relaunching what's already alive. Safe to invoke as often as you like.
+# @reboot      sleep 20 && bash /home/dan/garmin-data/scripts/run-dan.sh
+# @reboot      sleep 25 && bash /home/dan/garmin-data/scripts/run-helen.sh
+# */10 * * * * bash /home/dan/garmin-data/scripts/run-dan.sh
+# */10 * * * * bash /home/dan/garmin-data/scripts/run-helen.sh
 ```
 
 ### CLI tools

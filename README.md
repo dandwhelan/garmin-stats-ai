@@ -104,14 +104,19 @@ bash scripts/run-bob.sh
 # Bob:   http://localhost:8082
 ```
 
-To start automatically on boot, add to crontab (`crontab -e`):
+To keep both users syncing forever — start on reboot **and** auto-restart anything that dies — add four lines to `crontab -e`:
 
 ```
-@reboot sleep 10 && bash /home/pi/garmin-data/scripts/run-alice.sh
-@reboot sleep 10 && bash /home/pi/garmin-data/scripts/run-bob.sh
+# Start on reboot (small stagger so they don't hit Garmin auth at the exact same instant)
+@reboot       sleep 20 && bash /home/pi/garmin-data/scripts/run-alice.sh >> /home/pi/garmin-data/logs/cron.log 2>&1
+@reboot       sleep 25 && bash /home/pi/garmin-data/scripts/run-bob.sh   >> /home/pi/garmin-data/logs/cron.log 2>&1
+
+# Self-heal every 10 minutes — if a fetcher or web server has died, relaunch it
+*/10 * * * *  bash /home/pi/garmin-data/scripts/run-alice.sh >> /home/pi/garmin-data/logs/cron.log 2>&1
+*/10 * * * *  bash /home/pi/garmin-data/scripts/run-bob.sh   >> /home/pi/garmin-data/logs/cron.log 2>&1
 ```
 
-> **Tip:** `run-user.sh` sources the user's `.env` file, so each process only ever sees one user's credentials and database. If a process is already running for that user, kill it first or add a guard check (see Troubleshooting).
+> **Safe to re-run.** `run-user.sh` checks `/proc/<pid>/environ` for each running fetcher / web process and only launches what's missing for that user. Running it again when both processes are already alive is a no-op — it logs "already running … skipping". That's what makes the 10-minute cron line a working watchdog.
 
 ## Usage
 
@@ -279,7 +284,7 @@ All data stays local. Nothing is sent to external servers except:
 - **Login issues**: Delete the token directory (default `~/.garminconnect`, or `TOKEN_DIR` if set) to clear stale tokens, then re-run the fetcher
 - **No data in dashboard**: Run the fetcher first. The dashboard now auto-refreshes its cache every 60 s; if data still doesn't appear, restart the web server to trigger a full 90-day cache rebuild.
 - **Database locked**: Only one process should write to a `garmin.db` at a time. In multi-user mode each user has their own DB file, so there is no contention between users.
-- **Duplicate processes on restart**: `run-user.sh` launches a new fetcher + web server on every call. Before restarting, kill the old processes first: `pkill -f "garmin_fetch"` / `pkill -f "garmin-insights web"`. A future guard in `run-user.sh` will handle this automatically.
+- **Duplicate processes on restart**: `run-user.sh` is now idempotent — it skips launching anything that's already running for that user (matched by `SQLITE_DB_PATH` in `/proc/<pid>/environ`). Re-running is safe and is exactly how the 10-minute self-heal cron works.
 - **Steps / daily metrics seem one day behind** (BST/non-UTC timezones): Older versions of the fetcher stored `daily_stats` rows under the previous UTC date. The current code uses noon-UTC of the requested date as the timestamp, so `daily_stats.date` always matches the local calendar day. If you have stale mis-dated rows, delete them and let the fetcher rewrite them: `DELETE FROM daily_stats WHERE date >= 'YYYY-MM-DD'`.
 
 ## For developers
