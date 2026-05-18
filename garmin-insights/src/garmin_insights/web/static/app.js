@@ -523,6 +523,8 @@ async function loadDashboard() {
     loadVisualizations(date_range.start, date_range.end);
     loadIntradayHeatmap(activeHeatmapMetric);
     loadLifestyle(date_range.start, date_range.end);
+    loadMenstrual(date_range.start, date_range.end);
+    loadActivityMap(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1229,6 +1231,7 @@ function renderIntradayHeatmap(data) {
     stress:        ['#1a1d27', '#fbbf24', '#f87171'],
     body_battery:  ['#1a1d27', '#4f9cf9', '#34d399'],
     heart_rate:    ['#1a1d27', '#7c6af7', '#f87171'],
+    steps:         ['#1a1d27', '#22d3ee', '#34d399'],
   };
   const stops = palette[metric] || palette.stress;
 
@@ -1623,6 +1626,154 @@ async function loadLifestyle(start, end) {
     safeRender('cycleHrv',        () => renderCycleHrv(lifestyleData.cycle_hrv));
   } catch (e) {
     console.error('Lifestyle load failed:', e);
+  }
+}
+
+let menstrualChart = null;
+async function loadMenstrual(start, end) {
+  const section = document.getElementById('menstrual-section');
+  if (!section) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/menstrual?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.tracked || !data.entries?.length) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    renderMenstrual(data.entries);
+  } catch (e) {
+    console.error('Menstrual load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderMenstrual(entries) {
+  const latest = entries[entries.length - 1];
+  const summary = document.getElementById('menstrual-summary');
+  if (summary) {
+    const phase = latest.current_cycle_phase || '—';
+    const day = latest.current_day_of_cycle != null ? `Day ${latest.current_day_of_cycle}` : '';
+    const len = latest.cycle_length || latest.predicted_cycle_length;
+    const lenTxt = len ? ` of ~${len}` : '';
+    const flow = latest.menstrual_flow && latest.menstrual_flow !== 'NONE' ? ` · Flow: ${latest.menstrual_flow}` : '';
+    summary.innerHTML = `<div class="alert"><strong>${phase}</strong> · ${day}${lenTxt}${flow}</div>`;
+  }
+  const ctx = document.getElementById('menstrual-chart');
+  if (!ctx) return;
+  if (menstrualChart) menstrualChart.destroy();
+  const labels = entries.map(e => e.date?.slice(5) ?? '');
+  const dayOfCycle = entries.map(e => e.current_day_of_cycle);
+  const flowMap = { NONE: 0, SPOTTING: 1, LIGHT: 2, MEDIUM: 3, HEAVY: 4 };
+  const flow = entries.map(e => flowMap[(e.menstrual_flow || 'NONE').toUpperCase()] ?? 0);
+  menstrualChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Day of cycle', data: dayOfCycle, borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.15)', tension: 0.25, yAxisID: 'y' },
+        { label: 'Flow intensity', data: flow, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.3)', type: 'bar', yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { title: { display: true, text: 'Day of cycle' } },
+        y1: { position: 'right', min: 0, max: 4, title: { display: true, text: 'Flow (0–4)' }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+}
+
+// ---- Activity GPS map (Leaflet) ----
+let activityMap = null;
+let activityTrackLayer = null;
+let activityList = [];
+
+async function loadActivityMap(start, end) {
+  const section = document.getElementById('activity-map-section');
+  const picker = document.getElementById('activity-map-picker');
+  if (!section || !picker) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/activities/gps?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    activityList = data.activities || [];
+    if (!activityList.length) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    picker.innerHTML = activityList.map(a => {
+      const d = (a.distance || 0) / 1000;
+      const date = (a.time || '').slice(0, 16).replace('T', ' ');
+      return `<option value="${a.activity_id}">${date} · ${a.activity_name || a.activity_type || 'activity'} · ${d.toFixed(2)} km</option>`;
+    }).join('');
+    if (!picker.dataset.bound) {
+      picker.addEventListener('change', () => showActivityTrack(picker.value));
+      picker.dataset.bound = '1';
+    }
+    showActivityTrack(picker.value);
+  } catch (e) {
+    console.error('Activity map load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function ensureMap() {
+  if (activityMap) return activityMap;
+  const el = document.getElementById('activity-map');
+  if (!el || typeof L === 'undefined') return null;
+  activityMap = L.map(el).setView([51.5, -0.1], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap',
+  }).addTo(activityMap);
+  return activityMap;
+}
+
+async function showActivityTrack(activityId) {
+  if (!activityId) return;
+  const map = ensureMap();
+  if (!map) return;
+  try {
+    const params = new URLSearchParams();
+    addUserParam(params);
+    const res = await fetch(`/api/activities/${activityId}/track?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const points = (data.points || []).filter(p => p.latitude != null && p.longitude != null);
+    if (activityTrackLayer) {
+      map.removeLayer(activityTrackLayer);
+      activityTrackLayer = null;
+    }
+    const meta = document.getElementById('activity-map-meta');
+    if (!points.length) {
+      if (meta) meta.textContent = 'No GPS points for this activity';
+      return;
+    }
+    const latlngs = points.map(p => [p.latitude, p.longitude]);
+    activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 4, opacity: 0.85 }).addTo(map);
+    map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
+
+    const act = activityList.find(a => String(a.activity_id) === String(activityId));
+    if (meta && act) {
+      const km = ((act.distance || 0) / 1000).toFixed(2);
+      const hr = act.average_hr ? ` · ${Math.round(act.average_hr)} bpm avg` : '';
+      meta.textContent = `${points.length} GPS points · ${km} km${hr}`;
+    }
+  } catch (e) {
+    console.error('Activity track load failed:', e);
   }
 }
 

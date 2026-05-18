@@ -6,6 +6,10 @@
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
 </head>
@@ -154,6 +158,7 @@
           <button class="heatmap-toggle active" data-metric="stress">Stress</button>
           <button class="heatmap-toggle" data-metric="body_battery">Body Battery</button>
           <button class="heatmap-toggle" data-metric="heart_rate">Heart Rate</button>
+          <button class="heatmap-toggle" data-metric="steps">Steps</button>
         </div>
       </div>
       <div class="heatmap-container" id="intraday-heatmap"></div>
@@ -243,6 +248,29 @@
         <h2>Metric Correlation Matrix</h2>
       </div>
       <div class="correlation-container" id="correlation-matrix"></div>
+    </section>
+
+    <section class="chart-section" id="activity-map-section">
+      <div class="chart-header">
+        <h2>Activity Map <span class="info-icon" tabindex="0">i<span class="info-tooltip">GPS track for any activity in the selected date range. Click an activity to view its route, distance, and per-point heart rate on the map.</span></span></h2>
+        <span class="chart-sub">Pick an activity to view its GPS route</span>
+      </div>
+      <div class="activity-map-controls">
+        <select id="activity-map-picker" class="select-input"></select>
+        <span id="activity-map-meta" class="chart-sub"></span>
+      </div>
+      <div id="activity-map" style="height: 420px; border-radius: 8px; background: #1a1d27;"></div>
+    </section>
+
+    <section class="chart-section" id="menstrual-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip">Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Cycle phase correlates with HRV, RHR, sleep and training response — luteal phase typically shows higher RHR and lower HRV.</span></span></h2>
+        <span class="chart-sub">Phase, day-of-cycle and flow (last 90 days)</span>
+      </div>
+      <div id="menstrual-summary" class="alert-list"></div>
+      <div class="chart-container">
+        <canvas id="menstrual-chart"></canvas>
+      </div>
     </section>
 
     <h2 class="section-divider">Lifestyle &amp; Health Insights</h2>

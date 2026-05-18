@@ -131,6 +131,12 @@ class QueryToolHandler:
         df["time"] = df["time"].astype(str)
         return _df_to_clean_json(df)
 
+    def get_menstrual_cycle(self, start_date: str, end_date: str) -> str:
+        df = self._repo.query_menstrual_cycle(start_date, end_date)
+        if df.empty:
+            return json.dumps({"message": "No menstrual cycle data tracked for this window"})
+        return _df_to_clean_json(df)
+
     # ------------------------------------------------------------------
     # Analysis tools
     # ------------------------------------------------------------------
@@ -286,6 +292,23 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
         {
             "name": "get_training_readiness",
             "description": "Query Garmin training readiness scores and contributing factors for a date range.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        },
+        {
+            "name": "get_menstrual_cycle",
+            "description": (
+                "Query menstrual cycle data for a date range: cycle phase (menstrual/follicular/"
+                "ovulation/luteal), day of cycle, flow level, symptoms, mood, and cycle length. "
+                "Useful for correlating cycle phase with sleep, HRV, energy and training response. "
+                "Returns 'No menstrual cycle data tracked' if the user doesn't use this feature."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
