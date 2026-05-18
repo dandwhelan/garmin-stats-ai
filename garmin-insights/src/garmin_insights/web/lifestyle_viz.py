@@ -27,6 +27,24 @@ _LOWER_IS_BETTER = {"restingHeartRate", "stressPercentage", "highStressPercentag
                      "averageRespirationValue"}
 
 
+def _round(x, ndigits: int = 1):
+    try:
+        if x is None or pd.isna(x):
+            return None
+        return round(float(x), ndigits)
+    except Exception:
+        return None
+
+
+def _int_or_none(x):
+    try:
+        if x is None or pd.isna(x):
+            return None
+        return int(x)
+    except Exception:
+        return None
+
+
 class LifestyleService:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -579,12 +597,102 @@ class LifestyleService:
         }
 
     # ------------------------------------------------------------------
-    # 17. HRV through cycle phase — placeholder (no cycle data table)
+    # 17. HRV / RHR / sleep stratified by menstrual cycle phase + day-of-cycle
+    # ------------------------------------------------------------------
+    # Research citations surfaced in the UI tooltip:
+    #   - Shilaih 2017 (Sci Rep) — sleeping HR rises in luteal phase
+    #   - Maijala 2022 (Dovepress IJWH, Oura ring) — temp/HR/HRV across cycle
+    #   - Ultrahuman 2025 (bioRxiv) — sleep loss confounds cycle changes
+    #   - Lyu 2025 (Comput Biol Med) — ML phase classification from HR
     # ------------------------------------------------------------------
     def cycle_hrv(self, start: str, end: str) -> dict:
+        # Pull the user's full menstrual_cycle window — we widen vs the
+        # caller-supplied range so we have enough cycles to average.
+        with self._conn() as conn:
+            try:
+                mc = pd.read_sql_query(
+                    "SELECT date, current_day_of_cycle, current_cycle_phase, "
+                    "cycle_length, predicted_cycle_length, period_length, menstrual_flow "
+                    "FROM menstrual_cycle WHERE date >= ? AND date <= ? ORDER BY date",
+                    conn, params=(start, end),
+                )
+            except Exception:
+                return {"available": False, "note": "Menstrual cycle table not present."}
+
+        if mc.empty:
+            return {
+                "available": False,
+                "note": "No menstrual cycle entries in window — enable cycle tracking in Garmin Connect.",
+            }
+
+        ds = self._load_summaries(start, end)
+        if ds.empty:
+            return {"available": False, "note": "No daily summaries to correlate with cycle data."}
+
+        ds["rhr"] = pd.to_numeric(ds.get("restingHeartRate"), errors="coerce")
+        ds["hrv"] = pd.to_numeric(ds.get("avgOvernightHrv"), errors="coerce")
+        ds["sleep_score"] = pd.to_numeric(ds.get("sleepScore"), errors="coerce")
+        ds["body_battery"] = pd.to_numeric(ds.get("bodyBatteryAtWakeTime"), errors="coerce")
+        ds["stress"] = pd.to_numeric(ds.get("stressPercentage"), errors="coerce")
+
+        merged = mc.merge(ds[["date", "rhr", "hrv", "sleep_score", "body_battery", "stress"]],
+                          on="date", how="left")
+        merged["phase"] = merged["current_cycle_phase"].fillna("UNKNOWN").str.upper()
+
+        # ---- Phase-stratified means (RHR, HRV, sleep, body battery, stress) ----
+        phases_order = ["MENSTRUAL", "FOLLICULAR", "OVULATORY", "LUTEAL"]
+        phase_rows = []
+        for phase in phases_order:
+            sub = merged[merged["phase"] == phase]
+            if sub.empty:
+                continue
+            phase_rows.append({
+                "phase": phase.title(),
+                "n": int(sub["date"].nunique()),
+                "rhr": _round(sub["rhr"].mean()),
+                "hrv": _round(sub["hrv"].mean()),
+                "sleep_score": _round(sub["sleep_score"].mean()),
+                "body_battery": _round(sub["body_battery"].mean()),
+                "stress": _round(sub["stress"].mean()),
+            })
+
+        # ---- Per-cycle-day curve, averaged over recent cycles ----
+        valid_day = merged.dropna(subset=["current_day_of_cycle"]).copy()
+        valid_day["day"] = pd.to_numeric(valid_day["current_day_of_cycle"], errors="coerce")
+        valid_day = valid_day.dropna(subset=["day"])
+        by_day = []
+        if not valid_day.empty:
+            grp = valid_day.groupby(valid_day["day"].astype(int))
+            for day, sub in grp:
+                if day < 1 or day > 40:
+                    continue
+                by_day.append({
+                    "day": int(day),
+                    "n": int(len(sub)),
+                    "rhr": _round(sub["rhr"].mean()),
+                    "hrv": _round(sub["hrv"].mean()),
+                    "sleep_score": _round(sub["sleep_score"].mean()),
+                })
+            by_day.sort(key=lambda r: r["day"])
+
+        # ---- Latest entry for "where am I now" card ----
+        latest_row = mc.iloc[-1].to_dict()
+        latest = {
+            "date": latest_row.get("date"),
+            "phase": (latest_row.get("current_cycle_phase") or "").title() or None,
+            "day": _int_or_none(latest_row.get("current_day_of_cycle")),
+            "cycle_length": _int_or_none(latest_row.get("cycle_length")
+                                          or latest_row.get("predicted_cycle_length")),
+            "flow": latest_row.get("menstrual_flow"),
+        }
+
         return {
-            "available": False,
-            "note": "No menstrual cycle tracking table found in DB; enable cycle tracking in Garmin Connect.",
+            "available": True,
+            "latest": latest,
+            "phase_stratified": phase_rows,
+            "by_cycle_day": by_day,
+            "n_days": int(mc["date"].nunique()),
+            "n_cycles_observed": int(mc["current_day_of_cycle"].fillna(0).eq(1).sum()) or None,
         }
 
     # ------------------------------------------------------------------

@@ -719,6 +719,73 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
     ),
 
+    InsightRule(
+        name="follicular_training_window",
+        category="exercise",
+        trigger_behavior="Follicular Phase",
+        trigger_metric="trainingReadinessScore",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "Follicular-phase days show training readiness of {mean_with:.0f} "
+            "vs {mean_without:.0f} on other phases."
+        ),
+        research_citation=(
+            "Janse de Jonge 2019, Med Sci Sports Exerc; "
+            "J Appl Physiol systematic review 2025 (doi:10.1152/japplphysiol.00223.2025)"
+        ),
+        research_summary=(
+            "Low-oestrogen follicular days (post-menses through ovulation) are commonly "
+            "the preferred window for high-intensity strength and HIIT work — perceived "
+            "exertion is lower and recovery faster. Late luteal days favour lower-intensity "
+            "or skill work. Inter-individual variability is large; coach to the athlete's "
+            "OWN phase response, not population norms."
+        ),
+    ),
+    InsightRule(
+        name="cycle_sleep_loss_confound",
+        category="recovery",
+        trigger_behavior="Luteal Phase + Sleep Loss",
+        trigger_metric="restingHeartRate",
+        comparison_metric="sleepDurationHours",
+        direction="higher_is_worse",
+        description_template=(
+            "Short-sleep luteal nights show RHR {mean_with:.0f} bpm vs {mean_without:.0f} bpm "
+            "on well-rested luteal nights."
+        ),
+        research_citation="Ultrahuman 2025, bioRxiv (doi:10.1101/2025.09.11.675620)",
+        research_summary=(
+            "A 10% drop in weekly sleep duration raises RHR ~1.2% INDEPENDENT of cycle phase. "
+            "CRITICAL: before attributing elevated RHR or depressed HRV to the luteal phase, "
+            "check sleep duration vs the user's baseline. If sleep is short, attribute the "
+            "change to sleep debt first; cycle phase is an additive but separate driver."
+        ),
+    ),
+    InsightRule(
+        name="pms_sleep_architecture",
+        category="sleep",
+        trigger_behavior="Late Luteal Phase",
+        trigger_metric="deepSleepSeconds",
+        comparison_metric="sleepScore",
+        direction="lower_is_worse",
+        description_template=(
+            "Late-luteal nights show deep sleep of {mean_with:.0f}s vs {mean_without:.0f}s "
+            "on follicular nights."
+        ),
+        research_citation=(
+            "Baker 2007 (PMC2266284); "
+            "PMS & sleep quality cross-sectional 2025 (PMC11842786); "
+            "Wearable HRV & PMD 2024 (medRxiv 2024.10.27.24316196)"
+        ),
+        research_summary=(
+            "Women with significant PMS show reduced deep and REM sleep, more awakenings, "
+            "and lower wearable HRV in the late luteal phase. If sleep score drops, deep "
+            "sleep falls, and HRV is suppressed during days 21–28, treat as a PMS sleep "
+            "signature rather than illness. Sleep hygiene and stress-reduction interventions "
+            "are first-line; only escalate if pattern persists into follicular phase."
+        ),
+    ),
+
     # ===== DOMS =====
     InsightRule(
         name="doms_rhr_elevation",

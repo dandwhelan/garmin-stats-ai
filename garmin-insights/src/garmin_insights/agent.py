@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Generator
 
 import anthropic
@@ -121,6 +121,44 @@ class HealthAgent:
         self._history: list[dict] = []
         self._key_findings: list[str] = []
 
+    def _cycle_context_block(self) -> dict | None:
+        """Look up the most recent menstrual_cycle entry; if found, return a
+        small system block so every reply is phase-aware without the model
+        having to call a tool. Returns None when the user doesn't track cycles."""
+        try:
+            today = datetime.utcnow().date()
+            start = (today - timedelta(days=7)).isoformat()
+            end = today.isoformat()
+            df = self._repo.query_menstrual_cycle(start, end)
+            if df.empty:
+                return None
+            latest = df.iloc[-1].to_dict()
+            phase = (latest.get("current_cycle_phase") or "").title() or "Unknown"
+            day = latest.get("current_day_of_cycle")
+            length = latest.get("cycle_length") or latest.get("predicted_cycle_length")
+            day_txt = f"day {int(day)}" if day else "day unknown"
+            len_txt = f" of ~{int(length)}" if length else ""
+            text = (
+                "## Current Menstrual Cycle Context\n"
+                f"User is in the **{phase}** phase ({day_txt}{len_txt}).\n"
+                "Apply cycle-aware reasoning: luteal phase normally elevates RHR by 2–5 bpm "
+                "and depresses HRV (Shilaih 2017; Brar 2015) — do NOT flag this as illness or "
+                "overtraining unless other clear symptoms are present. Also consider sleep "
+                "duration as a confounder before attributing changes to phase (Ultrahuman 2025)."
+            )
+            return {"type": "text", "text": text}
+        except Exception as e:
+            logger.debug("Cycle context unavailable: %s", e)
+            return None
+
+    def _system_for_call(self) -> list[dict]:
+        """Build the system blocks for a single API call: cached prompt + dynamic context."""
+        blocks = list(self._system)
+        cycle = self._cycle_context_block()
+        if cycle is not None:
+            blocks.append(cycle)
+        return blocks
+
     def ensure_cache_fresh(self, days: int = 90) -> None:
         """Ensure recent daily summaries and baselines are up to date."""
         try:
@@ -176,7 +214,7 @@ class HealthAgent:
                 response = self._client.messages.create(
                     model=self._settings.claude_model,
                     max_tokens=8096,
-                    system=self._system,
+                    system=self._system_for_call(),
                     tools=self._tools_cache,
                     messages=history,
                     thinking=self._thinking,
@@ -232,7 +270,7 @@ class HealthAgent:
                 with self._client.messages.stream(
                     model=self._settings.claude_model,
                     max_tokens=8096,
-                    system=self._system,
+                    system=self._system_for_call(),
                     tools=self._tools_cache,
                     messages=history,
                     thinking=self._thinking,
