@@ -2420,14 +2420,80 @@ function renderFitnessAge(rows) {
   });
 }
 
-// 17. Cycle HRV (placeholder)
+// 17. Cycle Phase HRV / RHR / sleep + cycle-day curve
 function renderCycleHrv(payload) {
-  const el = document.getElementById('cycle-hrv');
-  if (!el) return;
-  if (payload?.available === false) {
-    el.textContent = payload.note || 'Cycle data not available.';
-  } else {
-    el.textContent = 'Cycle visualization coming soon.';
+  const phaseSection = document.getElementById('cycle-phase-section');
+  const daySection = document.getElementById('cycle-day-section');
+  if (!payload || payload.available === false) {
+    if (phaseSection) phaseSection.style.display = 'none';
+    if (daySection) daySection.style.display = 'none';
+    return;
+  }
+
+  // ---- Phase-stratified bars (multi-metric) ----
+  const phaseRows = payload.phase_stratified || [];
+  const phaseCtx = document.getElementById('cycle-phase-chart');
+  destroyAux('cyclePhase');
+  if (phaseSection && phaseCtx && phaseRows.length) {
+    phaseSection.style.display = '';
+    const labels = phaseRows.map(r => `${r.phase} (n=${r.n})`);
+    auxCharts.cyclePhase = new Chart(phaseCtx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'RHR (bpm)',          data: phaseRows.map(r => r.rhr),          backgroundColor: '#f87171', yAxisID: 'y' },
+          { label: 'HRV (ms)',           data: phaseRows.map(r => r.hrv),          backgroundColor: '#4f9cf9', yAxisID: 'y' },
+          { label: 'Sleep score',        data: phaseRows.map(r => r.sleep_score),  backgroundColor: '#34d399', yAxisID: 'y' },
+          { label: 'Body Battery (wake)',data: phaseRows.map(r => r.body_battery), backgroundColor: '#fbbf24', yAxisID: 'y' },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { x: commonScales().x, y: commonScales().y },
+        plugins: commonPlugins(),
+      },
+    });
+    const meta = document.getElementById('cycle-phase-meta');
+    if (meta && payload.latest) {
+      const l = payload.latest;
+      const parts = [];
+      if (l.phase) parts.push(`Latest: <strong>${l.phase}</strong>`);
+      if (l.day) parts.push(`day ${l.day}${l.cycle_length ? ` / ~${l.cycle_length}` : ''}`);
+      if (payload.n_cycles_observed) parts.push(`${payload.n_cycles_observed} cycle starts in window`);
+      meta.innerHTML = parts.join(' · ');
+    }
+  } else if (phaseSection) {
+    phaseSection.style.display = 'none';
+  }
+
+  // ---- Cycle-day RHR & HRV line ----
+  const byDay = payload.by_cycle_day || [];
+  const dayCtx = document.getElementById('cycle-day-chart');
+  destroyAux('cycleDay');
+  if (daySection && dayCtx && byDay.length >= 3) {
+    daySection.style.display = '';
+    auxCharts.cycleDay = new Chart(dayCtx, {
+      type: 'line',
+      data: {
+        labels: byDay.map(r => `D${r.day}`),
+        datasets: [
+          { label: 'RHR (bpm)', data: byDay.map(r => r.rhr), borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.1)', tension: 0.3, spanGaps: true, yAxisID: 'y' },
+          { label: 'HRV (ms)', data: byDay.map(r => r.hrv), borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.3, spanGaps: true, yAxisID: 'y1' },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: commonScales('day of cycle').x,
+          y:  { ...commonScales('RHR').y, position: 'left' },
+          y1: { ...commonScales('HRV').y, position: 'right', grid: { drawOnChartArea: false } },
+        },
+        plugins: commonPlugins(),
+      },
+    });
+  } else if (daySection) {
+    daySection.style.display = 'none';
   }
 }
 

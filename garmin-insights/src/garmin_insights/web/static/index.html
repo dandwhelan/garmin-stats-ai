@@ -264,7 +264,7 @@
 
     <section class="chart-section" id="menstrual-section" style="display:none;">
       <div class="chart-header">
-        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip">Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Cycle phase correlates with HRV, RHR, sleep and training response — luteal phase typically shows higher RHR and lower HRV.</span></span></h2>
+        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip">Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Cycle phase modulates HRV, RHR, sleep architecture and training response: luteal phase shows ~2–5 bpm higher RHR, lower rMSSD HRV, and PMS days are associated with reduced deep/REM sleep and more awakenings.<br><br>Sources: Shilaih 2017 (Sci Rep); Brar 2015 (J Women's Health); Baker 2007 (PMC2266284); Wearable HRV &amp; PMD 2024 (medRxiv).</span></span></h2>
         <span class="chart-sub">Phase, day-of-cycle and flow (last 90 days)</span>
       </div>
       <div id="menstrual-summary" class="alert-list"></div>
@@ -460,12 +460,28 @@
       </div>
     </section>
 
-    <section class="chart-section">
+    <section class="chart-section" id="cycle-phase-section" style="display:none;">
       <div class="chart-header">
-        <h2>Cycle Phase HRV</h2>
+        <h2>Vitals by Menstrual Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip">RHR, overnight HRV, sleep score and morning Body Battery averaged within each menstrual phase. Expected pattern: RHR is lowest in the follicular phase and rises 2–5 bpm in the luteal phase, with HRV typically dropping in late luteal — this is normal physiology, not illness or overtraining.<br><br>Sources: Shilaih 2017 (Sci Rep); Maijala 2022 (Dovepress IJWH, Oura ring); Nakagawa 2020 (J Clin Med).</span></span></h2>
+        <span class="chart-sub">Per-phase averages over the selected window (only phases with data shown)</span>
       </div>
-      <div id="cycle-hrv" class="empty-state"></div>
+      <div class="chart-container">
+        <canvas id="cycle-phase-chart"></canvas>
+      </div>
+      <div id="cycle-phase-meta" class="chart-sub" style="margin-top:8px;"></div>
     </section>
+
+    <section class="chart-section" id="cycle-day-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Cycle-Day Curve (RHR &amp; HRV) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Your sleeping RHR and overnight HRV averaged at each day-of-cycle across the selected window. Look for the biphasic pattern: a follicular trough (days 6–13), an ovulatory inflection, and a luteal rise (days 18–28). ML models can classify cycle phase from sleeping HR alone.<br><br>Caveat: a 10% drop in weekly sleep raises RHR ~1.2% independent of phase — control for sleep duration before attributing changes to your cycle.<br><br>Sources: Shilaih 2017 (Sci Rep); Lyu 2025 (Comput Biol Med); Ultrahuman 2025 (bioRxiv).</span></span></h2>
+        <span class="chart-sub">Averaged across recent cycles in window</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="cycle-day-chart"></canvas>
+      </div>
+    </section>
+
+    <div id="cycle-hrv" style="display:none;"></div>
 
     <section class="scan-section">
       <h2>AI Health Scan</h2>
