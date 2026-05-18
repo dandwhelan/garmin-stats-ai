@@ -110,6 +110,24 @@ def _resolve_range(start: str | None, end: str | None, default_days: int = 30) -
     return start, end
 
 
+def _extract_chat_tags(text: str) -> list[str]:
+    t = (text or "").lower()
+    keyword_tags = {
+        "sleep": ["sleep", "insomnia", "wake", "bed"],
+        "stress": ["stress", "anxious", "anxiety", "overwhelmed"],
+        "hrv": ["hrv"],
+        "rhr": ["resting heart", "rhr", "pulse"],
+        "illness": ["sick", "ill", "fever", "cold", "flu"],
+        "nutrition": ["ate", "meal", "food", "dinner", "lunch", "breakfast"],
+        "alcohol": ["alcohol", "drink", "beer", "wine"],
+        "caffeine": ["coffee", "caffeine", "espresso", "tea"],
+        "training": ["workout", "run", "ride", "lifting", "training", "exercise"],
+        "mood": ["mood", "sad", "happy", "irritable", "depressed"],
+    }
+    tags = [k for k, words in keyword_tags.items() if any(w in t for w in words)]
+    return tags[:8]
+
+
 # ------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------
@@ -303,6 +321,7 @@ async def lifestyle(
         _run(svc.cycle_hrv, start, end),
         _run(svc.stress_hour_fingerprint, start, end),
         _run(svc.stress_trigger_leaderboard, start, end),
+        _run(svc.research_signal_scorecard, start, end),
     )
     keys = [
         "dose_response", "caffeine_cutoff", "sleep_regularity", "social_jet_lag",
@@ -310,6 +329,7 @@ async def lifestyle(
         "inflammation_index", "recovery_debt", "streak_calendar", "habit_half_life",
         "cooccurrence", "step_distribution", "fitness_age_delta", "who_target",
         "cycle_hrv", "stress_hour_fingerprint", "stress_triggers",
+        "research_scorecard",
     ]
     return {"user": user, "date_range": {"start": start, "end": end}, **dict(zip(keys, results))}
 
@@ -427,6 +447,30 @@ async def chat(body: ChatRequest):
             logger.exception("Chat stream failed")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         finally:
+            try:
+                assistant_text = ""
+                for msg in reversed(history):
+                    if msg.get("role") != "assistant":
+                        continue
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        assistant_text = " ".join(
+                            b.get("text", "")
+                            for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                    elif isinstance(content, str):
+                        assistant_text = content
+                    if assistant_text:
+                        break
+                bundle.agent._memory.save_chat_memory(
+                    user_id=body.user,
+                    user_text=body.message,
+                    assistant_text=assistant_text[:2000] if assistant_text else None,
+                    tags=_extract_chat_tags(body.message),
+                )
+            except Exception:
+                logger.warning("Failed to persist chat memory", exc_info=True)
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -446,6 +490,17 @@ async def chat_reset(body: ResetRequest):
         raise HTTPException(status_code=503, detail="Sessions not initialised")
     _sessions.reset(body.session_id)
     return {"reset": True, "session_id": body.session_id}
+
+
+@app.get("/api/chat/history")
+async def chat_history(
+    user: str = Query(default="default"),
+    limit: int = Query(default=25, ge=1, le=100),
+):
+    bundle = _require_user(user)
+    loop = asyncio.get_event_loop()
+    items = await loop.run_in_executor(None, bundle.agent._memory.get_recent_chat_memory, user, limit)
+    return {"user": user, "count": len(items), "items": items}
 
 
 @app.post("/api/scan")
