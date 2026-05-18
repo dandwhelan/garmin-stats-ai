@@ -330,6 +330,31 @@ async def intraday_heatmap(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/menstrual")
+async def menstrual(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Menstrual cycle data for the requested window. Empty result if user doesn't track."""
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=90)
+    loop = asyncio.get_event_loop()
+    try:
+        df = await loop.run_in_executor(None, bundle.agent._repo.query_menstrual_cycle, s, e)
+        if df.empty:
+            return {"start": s, "end": e, "tracked": False, "entries": []}
+        return {
+            "start": s,
+            "end": e,
+            "tracked": True,
+            "entries": df.to_dict(orient="records"),
+        }
+    except Exception as ex:
+        logger.exception("Menstrual query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
 @app.post("/api/chat")
 async def chat(body: ChatRequest):
     """Stream a chat response via Server-Sent Events with per-session history."""

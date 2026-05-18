@@ -183,6 +183,19 @@ class SqliteRepo:
         q = f"SELECT * FROM hydration WHERE {self._date_clause(start, end)}"
         return self._query(q)
 
+    def query_menstrual_cycle(self, start: str, end: str) -> pd.DataFrame:
+        q = (
+            "SELECT date, cycle_start_date, current_day_of_cycle, current_cycle_phase, "
+            "cycle_length, predicted_cycle_length, period_length, menstrual_flow, "
+            "pregnancy_status, symptoms, mood, notes "
+            f"FROM menstrual_cycle WHERE date BETWEEN :start AND :end ORDER BY date"
+        )
+        try:
+            return self._query(q, {"start": start, "end": end})
+        except Exception:
+            # Table may not exist yet if the fetcher hasn't been re-run since the upgrade.
+            return pd.DataFrame()
+
     # ------------------------------------------------------------------
     # Lifestyle journal (behaviour tags)
     # ------------------------------------------------------------------

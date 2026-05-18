@@ -403,6 +403,26 @@ class GarminDB:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS menstrual_cycle (
+                date TEXT PRIMARY KEY,
+                time TEXT,
+                device TEXT,
+                cycle_start_date TEXT,
+                current_day_of_cycle INTEGER,
+                current_cycle_phase TEXT,
+                cycle_length INTEGER,
+                predicted_cycle_length INTEGER,
+                period_length INTEGER,
+                menstrual_flow TEXT,
+                pregnancy_status TEXT,
+                symptoms TEXT,
+                mood TEXT,
+                notes TEXT,
+                raw_json TEXT
+            )
+        """)
+
         conn.commit()
 
         conn.close()
@@ -715,6 +735,25 @@ class GarminDB:
                         'solar_utilization': fields.get('solarUtilization'),
                         'activity_time_gain_ms': fields.get('activityTimeGainMs'),
                     }, ['time', 'device'])
+
+                elif measurement == 'MenstrualCycle':
+                    self._upsert(cursor, 'menstrual_cycle', {
+                        'date': fields.get('date'),
+                        'time': timestamp,
+                        'device': device,
+                        'cycle_start_date': fields.get('cycleStartDate'),
+                        'current_day_of_cycle': fields.get('currentDayOfCycle'),
+                        'current_cycle_phase': fields.get('currentCyclePhase'),
+                        'cycle_length': fields.get('cycleLength'),
+                        'predicted_cycle_length': fields.get('predictedCycleLength'),
+                        'period_length': fields.get('periodLength'),
+                        'menstrual_flow': fields.get('menstrualFlow'),
+                        'pregnancy_status': fields.get('pregnancyStatus'),
+                        'symptoms': fields.get('symptoms'),
+                        'mood': fields.get('mood'),
+                        'notes': fields.get('notes'),
+                        'raw_json': fields.get('rawJson'),
+                    }, ['date'])
 
                 elif measurement == 'LactateThreshold':
                     self._upsert(cursor, 'lactate_threshold', {

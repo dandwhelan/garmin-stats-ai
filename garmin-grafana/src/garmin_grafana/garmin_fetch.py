@@ -1,6 +1,6 @@
 # %%
 import traceback
-import base64, requests, time, pytz, logging, os, sys, dotenv, io, zipfile
+import base64, requests, time, pytz, logging, os, sys, dotenv, io, zipfile, json
 from fitparse import FitFile, FitParseError
 from datetime import datetime, timedelta
 from datetime import datetime, timedelta
@@ -52,7 +52,7 @@ RATE_LIMIT_CALLS_SECONDS = int(os.getenv("RATE_LIMIT_CALLS_SECONDS", 5)) # optio
 MAX_CONSECUTIVE_500_ERRORS = int(os.getenv("MAX_CONSECUTIVE_500_ERRORS", 10)) # optional, maximum consecutive HTTP 500 errors before continuing without retrying
 GARMIN_DEVICENAME_AUTOMATIC = False if GARMIN_DEVICENAME != "Unknown" else True # optional
 UPDATE_INTERVAL_SECONDS = int(os.getenv("UPDATE_INTERVAL_SECONDS", 300)) # optional
-FETCH_SELECTION = os.getenv("FETCH_SELECTION", "daily_avg,sleep,steps,heartrate,stress,breathing,hrv,fitness_age,vo2,activity,race_prediction,body_composition,lifestyle") # additional available values are lactate_threshold,training_status,training_readiness,hill_score,endurance_score,blood_pressure,hydration,solar_intensity which you can add to the list seperated by , without any space
+FETCH_SELECTION = os.getenv("FETCH_SELECTION", "daily_avg,sleep,steps,heartrate,stress,breathing,hrv,fitness_age,vo2,activity,race_prediction,body_composition,lifestyle,menstrual") # additional available values are lactate_threshold,training_status,training_readiness,hill_score,endurance_score,blood_pressure,hydration,solar_intensity which you can add to the list seperated by , without any space
 LACTATE_THRESHOLD_SPORTS = os.getenv("LACTATE_THRESHOLD_SPORTS", "RUNNING").upper().split(",") # Garmin currently implements RUNNING, but has provisions for CYCLING, and SWIMMING
 KEEP_FIT_FILES = True if os.getenv("KEEP_FIT_FILES") in ['True', 'true', 'TRUE','t', 'T', 'yes', 'Yes', 'YES', '1'] else False # optional
 FIT_FILE_STORAGE_LOCATION = os.getenv("FIT_FILE_STORAGE_LOCATION", os.path.join(os.path.expanduser("~"), "fit_filestore"))
@@ -1228,6 +1228,61 @@ def get_lifestyle_data(date_str):
 
 
 # %%
+def get_menstrual_data(date_str):
+    points_list = []
+    try:
+        data = garmin_obj.get_menstrual_data_for_date(date_str)
+        if not data or not isinstance(data, dict):
+            logging.debug(f"No menstrual data available for date {date_str}")
+            return []
+
+        summary = data.get('summary') or {}
+        day = data.get('dayData') or data.get('day') or {}
+
+        symptoms = day.get('symptoms')
+        if isinstance(symptoms, list):
+            symptoms = ','.join(str(s.get('name', s) if isinstance(s, dict) else s) for s in symptoms)
+
+        cycle_start = summary.get('cycleStartDate') or summary.get('startDate')
+        cycle_phase = summary.get('currentCyclePhase') or day.get('cyclePhase')
+        flow = day.get('menstrualFlow') or day.get('flow')
+
+        # Skip silently if there's no meaningful menstrual data for the day.
+        if not any([cycle_start, cycle_phase, flow, summary.get('currentDayOfCycle')]):
+            logging.debug(f"No menstrual data tracked for date {date_str}")
+            return []
+
+        points_list.append({
+            "measurement": "MenstrualCycle",
+            "time": datetime.strptime(date_str, "%Y-%m-%d").replace(hour=12, tzinfo=pytz.UTC).isoformat(),
+            "tags": {
+                "Device": GARMIN_DEVICENAME,
+                "Database_Name": "GarminDB",
+            },
+            "fields": {
+                "date": date_str,
+                "cycleStartDate": cycle_start,
+                "currentDayOfCycle": summary.get('currentDayOfCycle') or day.get('currentDayOfCycle'),
+                "currentCyclePhase": cycle_phase,
+                "cycleLength": summary.get('cycleLength'),
+                "predictedCycleLength": summary.get('predictedCycleLength') or summary.get('predictedMenstrualCycleLength'),
+                "periodLength": summary.get('periodLength') or summary.get('predictedPeriodLength'),
+                "menstrualFlow": flow,
+                "pregnancyStatus": summary.get('pregnancyStatus') or day.get('pregnancyStatus'),
+                "symptoms": symptoms,
+                "mood": day.get('mood'),
+                "notes": day.get('notes'),
+                "rawJson": json.dumps(data),
+            }
+        })
+        logging.info(f"Success : Fetching menstrual cycle data for date {date_str}")
+    except Exception as e:
+        # Silent skip on error - user may not have cycle tracking enabled.
+        logging.debug(f"Skipping menstrual data for date {date_str}: {e}")
+    return points_list
+
+
+# %%
 def daily_fetch_write(date_str):
     if REQUEST_INTRADAY_DATA_REFRESH and (datetime.strptime(date_str, "%Y-%m-%d") <= (datetime.today() - timedelta(days=IGNORE_INTRADAY_DATA_REFRESH_DAYS))):
         data_refresh_response = garmin_obj.connectapi(f"wellness-service/wellness/epoch/request/{date_str}", method="POST").get("status", "Unknown")
@@ -1294,6 +1349,8 @@ def daily_fetch_write(date_str):
         write_points_to_db(get_solar_intensity(date_str))
     if 'lifestyle' in FETCH_SELECTION:
         write_points_to_db(get_lifestyle_data(date_str))
+    if 'menstrual' in FETCH_SELECTION:
+        write_points_to_db(get_menstrual_data(date_str))
 
 
 # %%

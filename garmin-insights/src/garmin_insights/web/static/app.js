@@ -523,6 +523,7 @@ async function loadDashboard() {
     loadVisualizations(date_range.start, date_range.end);
     loadIntradayHeatmap(activeHeatmapMetric);
     loadLifestyle(date_range.start, date_range.end);
+    loadMenstrual(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1624,6 +1625,68 @@ async function loadLifestyle(start, end) {
   } catch (e) {
     console.error('Lifestyle load failed:', e);
   }
+}
+
+let menstrualChart = null;
+async function loadMenstrual(start, end) {
+  const section = document.getElementById('menstrual-section');
+  if (!section) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/menstrual?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.tracked || !data.entries?.length) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    renderMenstrual(data.entries);
+  } catch (e) {
+    console.error('Menstrual load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderMenstrual(entries) {
+  const latest = entries[entries.length - 1];
+  const summary = document.getElementById('menstrual-summary');
+  if (summary) {
+    const phase = latest.current_cycle_phase || '—';
+    const day = latest.current_day_of_cycle != null ? `Day ${latest.current_day_of_cycle}` : '';
+    const len = latest.cycle_length || latest.predicted_cycle_length;
+    const lenTxt = len ? ` of ~${len}` : '';
+    const flow = latest.menstrual_flow && latest.menstrual_flow !== 'NONE' ? ` · Flow: ${latest.menstrual_flow}` : '';
+    summary.innerHTML = `<div class="alert"><strong>${phase}</strong> · ${day}${lenTxt}${flow}</div>`;
+  }
+  const ctx = document.getElementById('menstrual-chart');
+  if (!ctx) return;
+  if (menstrualChart) menstrualChart.destroy();
+  const labels = entries.map(e => e.date?.slice(5) ?? '');
+  const dayOfCycle = entries.map(e => e.current_day_of_cycle);
+  const flowMap = { NONE: 0, SPOTTING: 1, LIGHT: 2, MEDIUM: 3, HEAVY: 4 };
+  const flow = entries.map(e => flowMap[(e.menstrual_flow || 'NONE').toUpperCase()] ?? 0);
+  menstrualChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Day of cycle', data: dayOfCycle, borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.15)', tension: 0.25, yAxisID: 'y' },
+        { label: 'Flow intensity', data: flow, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.3)', type: 'bar', yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { title: { display: true, text: 'Day of cycle' } },
+        y1: { position: 'right', min: 0, max: 4, title: { display: true, text: 'Flow (0–4)' }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
 }
 
 // 8. Illness radar
