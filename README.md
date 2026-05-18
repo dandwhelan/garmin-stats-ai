@@ -350,3 +350,7 @@ All data stays local. Nothing is sent to external servers except:
 ## For developers
 
 See [CLAUDE.md](CLAUDE.md) for architecture details, file map, and instructions for extending the agent.
+
+## Credits
+
+The `garmin-grafana/` data-ingestion module is derived from [**garmin-grafana**](https://github.com/arpanghosh8453/garmin-grafana) by [Arpan Ghosh](https://github.com/arpanghosh8453), which provides the Garmin Connect polling logic (`garmin_fetch.py`). This project adapts it to write to SQLite instead of InfluxDB and pairs it with a Claude-powered analysis layer and a FastAPI dashboard. Huge thanks to the upstream project — its original LICENSE is retained in `garmin-grafana/LICENSE`.
