@@ -1135,3 +1135,23 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   .header-inner { gap: 12px; }
   .logo { font-size: 0.9rem; }
 }
+
+/* Activity map controls */
+.activity-map-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.activity-map-controls .select-input {
+  background: var(--bg-elev, #1a1d27);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.9rem;
+  flex: 1 1 auto;
+  min-width: 240px;
+}
+#activity-map .leaflet-tile { filter: brightness(0.85) contrast(1.05); }

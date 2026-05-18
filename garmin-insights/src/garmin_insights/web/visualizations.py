@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 _INTRADAY_METRICS = {
-    "stress":       ("stress_intraday",       "stress_level"),
-    "body_battery": ("body_battery_intraday", "body_battery_level"),
-    "heart_rate":   ("heart_rate_intraday",   "heart_rate"),
+    "stress":       ("stress_intraday",       "stress_level",       "AVG"),
+    "body_battery": ("body_battery_intraday", "body_battery_level", "AVG"),
+    "heart_rate":   ("heart_rate_intraday",   "heart_rate",         "AVG"),
+    "steps":        ("steps_intraday",        "steps_count",        "SUM"),
 }
 
 
@@ -38,13 +39,13 @@ class VisualizationService:
     def intraday_heatmap(self, metric: str, days: int = 14) -> dict:
         if metric not in _INTRADAY_METRICS:
             return {"error": f"unknown metric '{metric}'", "available": list(_INTRADAY_METRICS)}
-        table, col = _INTRADAY_METRICS[metric]
+        table, col, agg = _INTRADAY_METRICS[metric]
         end = datetime.utcnow().date()
         start = end - timedelta(days=days - 1)
         sql = f"""
             SELECT substr(time, 1, 10) AS date,
                    CAST(substr(time, 12, 2) AS INTEGER) AS hour,
-                   AVG({col}) AS value
+                   {agg}({col}) AS value
             FROM {table}
             WHERE time >= ? AND time <= ? AND {col} IS NOT NULL AND {col} >= 0
             GROUP BY date, hour

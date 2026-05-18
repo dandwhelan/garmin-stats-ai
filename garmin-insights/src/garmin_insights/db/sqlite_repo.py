@@ -183,6 +183,43 @@ class SqliteRepo:
         q = f"SELECT * FROM hydration WHERE {self._date_clause(start, end)}"
         return self._query(q)
 
+    def query_activities_with_gps(self, start: str, end: str) -> pd.DataFrame:
+        """Activities in the window that have GPS track points stored."""
+        q = """
+            SELECT s.activity_id, s.time, s.activity_name, s.activity_type,
+                   s.distance, s.elapsed_duration, s.average_hr, s.calories,
+                   s.location_name,
+                   (SELECT COUNT(*) FROM activity_gps g WHERE g.activity_id = s.activity_id) AS point_count
+            FROM activity_summary s
+            WHERE s.time BETWEEN :start AND :end
+              AND EXISTS (SELECT 1 FROM activity_gps g WHERE g.activity_id = s.activity_id)
+            ORDER BY s.time DESC
+        """
+        try:
+            return self._query(
+                q,
+                {"start": f"{start}T00:00:00", "end": f"{end}T23:59:59"},
+            )
+        except Exception as e:
+            logger.error("query_activities_with_gps failed: %s", e)
+            return pd.DataFrame()
+
+    def query_activity_gps(self, activity_id: int) -> pd.DataFrame:
+        """GPS track + per-point metrics for a single activity."""
+        q = """
+            SELECT time, latitude, longitude, altitude, distance, heart_rate,
+                   speed, cadence, power, temperature
+            FROM activity_gps
+            WHERE activity_id = :aid
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+            ORDER BY time
+        """
+        try:
+            return self._query(q, {"aid": activity_id})
+        except Exception as e:
+            logger.error("query_activity_gps failed: %s", e)
+            return pd.DataFrame()
+
     def query_menstrual_cycle(self, start: str, end: str) -> pd.DataFrame:
         q = (
             "SELECT date, cycle_start_date, current_day_of_cycle, current_cycle_phase, "
