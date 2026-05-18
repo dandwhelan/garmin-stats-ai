@@ -1426,6 +1426,7 @@ const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const resetBtn = document.getElementById('reset-btn');
+const historyBtn = document.getElementById('history-btn');
 
 // Per-browser session id, persisted in localStorage
 const SESSION_KEY = 'garmin-chat-session';
@@ -1462,6 +1463,28 @@ resetBtn.addEventListener('click', async () => {
         <p>Conversation cleared. What would you like to know about your health data?</p>
       </div>
     </div>`;
+});
+
+historyBtn?.addEventListener('click', async () => {
+  try {
+    const res = await fetch(withUser('/api/chat/history?limit=12'));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const items = data.items || [];
+    if (!items.length) {
+      addMessage('assistant', '<strong>Health Agent</strong><p>No saved chat memory yet for this user.</p>');
+      return;
+    }
+    const html = items.map(i => {
+      const tags = (i.tags || []).length ? ` <span style="color:var(--muted)">[${(i.tags || []).join(', ')}]</span>` : '';
+      const u = escapeHtml((i.user_text || '').slice(0, 180));
+      const a = escapeHtml((i.assistant_text || '').slice(0, 220));
+      return `<div style="margin-bottom:10px"><div><strong>${i.created_at}</strong>${tags}</div><div style="margin-top:3px">You: ${u}</div><div style="margin-top:2px;color:var(--muted)">Agent: ${a || '—'}</div></div>`;
+    }).join('');
+    addMessage('assistant', `<strong>Recent Chat Memory</strong><div>${html}</div>`);
+  } catch (e) {
+    addMessage('assistant', `<strong>Health Agent</strong><p style="color:var(--red)">Failed to load history: ${escapeHtml(e.message)}</p>`);
+  }
 });
 
 function scrollToBottom() {
@@ -1606,6 +1629,7 @@ async function loadLifestyle(start, end) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     lifestyleData = await res.json();
     safeRender('illnessRadar',    () => renderIllnessRadar(lifestyleData.illness_radar));
+    safeRender('researchScorecard', () => renderResearchScorecard(lifestyleData.research_scorecard));
     safeRender('recoveryDebt',    () => renderRecoveryDebt(lifestyleData.recovery_debt));
     safeRender('inflammation',    () => renderInflammation(lifestyleData.inflammation_index));
     safeRender('sri',             () => renderSRI(lifestyleData.sleep_regularity));
@@ -1627,6 +1651,23 @@ async function loadLifestyle(start, end) {
   } catch (e) {
     console.error('Lifestyle load failed:', e);
   }
+}
+
+function renderResearchScorecard(payload) {
+  const el = document.getElementById('research-scorecard');
+  if (!el) return;
+  const tiles = payload?.tiles || [];
+  if (!tiles.length) {
+    el.innerHTML = '<div class="empty-state">Not enough data for scorecard yet.</div>';
+    return;
+  }
+  el.innerHTML = tiles.map(t => `
+    <div class="research-tile ${t.state || 'warn'}">
+      <div class="research-name">${escapeHtml(t.name)}</div>
+      <div class="research-value">${escapeHtml(t.value)}</div>
+      <div class="research-note">${escapeHtml(t.note)}</div>
+    </div>
+  `).join('');
 }
 
 let menstrualChart = null;
@@ -2107,20 +2148,23 @@ function renderCaffeineCutoff(payload) {
     el.innerHTML = '<div class="empty-state">Log "Caffeine" / "Late Caffeine" in Garmin Connect to populate</div>';
     return;
   }
+  const fmtDelta = v => v == null ? '—' : `${v > 0 ? '+' : ''}${v}`;
   el.innerHTML = `
     <div class="caffeine-row caffeine-head">
-      <div></div><div>n</div><div>Sleep</div><div>Deep h</div><div>HRV</div><div>Wake-ups</div>
+      <div></div><div>n</div><div>Sleep</div><div>Δ vs none</div><div>Deep h</div><div>HRV</div><div>Wake-ups</div>
     </div>
     ${groups.map(g => `
       <div class="caffeine-row">
-        <div class="caffeine-label">${escapeHtml(g.group)}</div>
+        <div class="caffeine-label">${escapeHtml(g.group)} <span class="pill ${g.sample_quality || 'low'}">${g.sample_quality || 'low'} n</span></div>
         <div>${g.n}</div>
         <div>${g.sleep_score ?? '—'}</div>
+        <div>${fmtDelta(g.sleep_score_delta_vs_none)}</div>
         <div>${g.deep_sleep_h ?? '—'}</div>
         <div>${g.hrv ?? '—'}</div>
         <div>${g.awakenings ?? '—'}</div>
       </div>
     `).join('')}
+    <div class="chart-sub" style="margin-top:8px;">Δ column compares each group to your no-caffeine nights in this date range.</div>
   `;
 }
 
@@ -2237,7 +2281,7 @@ function renderStressTriggers(payload) {
         <div class="trigger-row">
           <div class="trigger-name">${escapeHtml(t.behavior)}</div>
           <div class="trigger-bar"><div class="trigger-fill" style="width:${w}%;background:${color}"></div></div>
-          <div class="trigger-lift">${t.lift > 0 ? '+' : ''}${(t.lift * 100).toFixed(0)}pp</div>
+          <div class="trigger-lift">${t.lift > 0 ? '+' : ''}${(t.lift * 100).toFixed(0)}pp · OR ${t.odds_ratio ?? '—'} · ${t.sample_quality || 'low'} n</div>
         </div>`;
     }).join('')}
   `;

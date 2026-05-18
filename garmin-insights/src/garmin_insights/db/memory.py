@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS user_profile (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS chat_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    event_date TEXT,
+    tags_json TEXT,
+    user_text TEXT,
+    assistant_text TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_memory_user_created ON chat_memory (user_id, created_at DESC);
 """
 
 class MemoryStore:
@@ -401,6 +412,66 @@ class MemoryStore:
             cursor = conn.cursor()
             cursor.execute("SELECT key, value_json FROM user_profile")
             return {row["key"]: json.loads(row["value_json"]) for row in cursor.fetchall()}
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Chat memory (lightweight longitudinal context)
+    # ------------------------------------------------------------------
+    def save_chat_memory(
+        self,
+        user_id: str,
+        user_text: str,
+        assistant_text: str | None = None,
+        tags: list[str] | None = None,
+        event_date: str | None = None,
+    ) -> int:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO chat_memory (user_id, event_date, tags_json, user_text, assistant_text, created_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (
+                    user_id,
+                    event_date,
+                    json.dumps(tags or []),
+                    user_text,
+                    assistant_text,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_recent_chat_memory(self, user_id: str, limit: int = 25) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT user_id, event_date, tags_json, user_text, assistant_text, created_at
+                FROM chat_memory
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (user_id, max(1, min(limit, 100))),
+            )
+            out: list[dict[str, Any]] = []
+            for row in cursor.fetchall():
+                out.append({
+                    "user_id": row["user_id"],
+                    "event_date": row["event_date"],
+                    "tags": json.loads(row["tags_json"]) if row["tags_json"] else [],
+                    "user_text": row["user_text"],
+                    "assistant_text": row["assistant_text"],
+                    "created_at": row["created_at"],
+                })
+            return out
         finally:
             conn.close()
 

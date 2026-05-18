@@ -141,6 +141,22 @@ class LifestyleService:
             _stats(early_dates, "Early-only"),
             _stats(set(ds["date"]) - any_dates, "No caffeine"),
         ]
+        # Add practical deltas vs no-caffeine baseline to make the dashboard more actionable.
+        baseline = next((g for g in groups if g["group"] == "No caffeine"), None)
+        if baseline:
+            for g in groups:
+                g["sample_quality"] = (
+                    "high" if g["n"] >= 14 else "medium" if g["n"] >= 7 else "low"
+                )
+                for key in ("sleep_score", "deep_sleep_h", "hrv", "awakenings"):
+                    base_val = baseline.get(key)
+                    cur_val = g.get(key)
+                    delta_key = f"{key}_delta_vs_none"
+                    g[delta_key] = (
+                        round(float(cur_val - base_val), 2)
+                        if cur_val is not None and base_val is not None
+                        else None
+                    )
         return {"groups": groups}
 
     # ------------------------------------------------------------------
@@ -617,20 +633,78 @@ class LifestyleService:
         n_low = max(1, len(set(ds["date"]) - high_dates))
         triggers = []
         for behavior in on_high["behavior"].dropna().unique():
-            high_freq = (on_high["behavior"] == behavior).sum() / n_high
-            low_freq = (on_low["behavior"] == behavior).sum() / n_low
+            count_high = int((on_high["behavior"] == behavior).sum())
+            count_low = int((on_low["behavior"] == behavior).sum())
+            high_freq = count_high / n_high
+            low_freq = count_low / n_low
+            # Laplace-smoothed odds ratio for better small-sample stability.
+            odds_high = (count_high + 1) / (max(0, n_high - count_high) + 1)
+            odds_low = (count_low + 1) / (max(0, n_low - count_low) + 1)
             triggers.append({
                 "behavior": behavior,
                 "high_stress_freq": round(float(high_freq), 3),
                 "normal_stress_freq": round(float(low_freq), 3),
                 "lift": round(float(high_freq - low_freq), 3),
-                "count_on_high": int((on_high["behavior"] == behavior).sum()),
+                "count_on_high": count_high,
+                "count_on_low": count_low,
+                "odds_ratio": round(float(odds_high / odds_low), 2),
+                "sample_quality": (
+                    "high" if (count_high + count_low) >= 20
+                    else "medium" if (count_high + count_low) >= 10
+                    else "low"
+                ),
             })
         triggers.sort(key=lambda x: x["lift"], reverse=True)
         return {
             "top_quintile_threshold": round(float(threshold), 1),
             "triggers": triggers[:12],
         }
+
+    # ------------------------------------------------------------------
+    # 20. Research signal scorecard (summary synthesis)
+    # ------------------------------------------------------------------
+    def research_signal_scorecard(self, start: str, end: str) -> dict:
+        sri = self.sleep_regularity(start, end)
+        sjl = self.social_jet_lag(start, end)
+        caffeine = self.caffeine_cutoff(start, end)
+        steps = self.step_distribution(start, end)
+        who = self.who_intensity_target(start, end)
+        resilience = self.stress_resilience(start, end)
+
+        def tile(name: str, value: str, state: str, note: str) -> dict:
+            return {"name": name, "value": value, "state": state, "note": note}
+
+        tiles: list[dict] = []
+        v = sri.get("current")
+        if v is not None:
+            state = "good" if v >= 85 else "warn" if v >= 70 else "risk"
+            tiles.append(tile("Sleep Regularity", f"{v:.1f}/100", state, "Higher regularity is usually associated with better cardiometabolic health."))
+        if sjl.get("delta_h") is not None:
+            d = float(sjl["delta_h"])
+            state = "good" if d <= 1 else "warn" if d <= 1.5 else "risk"
+            tiles.append(tile("Social Jet Lag", f"{d:.2f}h", state, "A >1h weekday/weekend midpoint gap can disrupt circadian alignment."))
+        groups = {g.get("group"): g for g in caffeine.get("groups", [])}
+        if groups.get("Late caffeine"):
+            delta = groups["Late caffeine"].get("sleep_score_delta_vs_none")
+            if delta is not None:
+                dv = float(delta)
+                state = "good" if dv >= 0 else "warn" if dv > -3 else "risk"
+                tiles.append(tile("Late Caffeine Δ Sleep", f"{dv:+.1f}", state, "Compared with your no-caffeine nights in this selected window."))
+        if steps.get("pct_over_7500") is not None:
+            p = float(steps["pct_over_7500"])
+            state = "good" if p >= 70 else "warn" if p >= 40 else "risk"
+            tiles.append(tile("Days ≥7.5k Steps", f"{p:.0f}%", state, "7.5k/day is a commonly used mortality-benefit reference point."))
+        weeks = who.get("weeks", [])
+        if weeks:
+            pct = float(weeks[-1].get("target_pct", 0))
+            state = "good" if pct >= 100 else "warn" if pct >= 70 else "risk"
+            tiles.append(tile("WHO Activity Target", f"{pct:.0f}%", state, "Moderate-equivalent weekly minutes vs WHO 150-minute target."))
+        r_vals = [r.get("resilience") for r in resilience if r.get("resilience") is not None]
+        if r_vals:
+            last = float(r_vals[-1])
+            state = "good" if last >= 60 else "warn" if last >= 45 else "risk"
+            tiles.append(tile("Stress Resilience", f"{last:.1f}/100", state, "Lower values often reflect sustained stress load or incomplete recovery."))
+        return {"tiles": tiles}
 
 
 # ----------------------------------------------------------------------
