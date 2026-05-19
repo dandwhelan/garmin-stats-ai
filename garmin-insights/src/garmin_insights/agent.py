@@ -121,6 +121,26 @@ class HealthAgent:
         self._history: list[dict] = []
         self._key_findings: list[str] = []
 
+    def _identity_block(self) -> dict | None:
+        """Tell the model which user it's talking to, so replies can address
+        them by name and use sex-appropriate physiological priors. Returns
+        None when neither name nor biological sex is configured."""
+        name = (self._settings.display_name or "").strip()
+        sex = (self._settings.biological_sex or "").strip()
+        if not name and not sex:
+            return None
+        parts = ["## Current User"]
+        if name:
+            parts.append(f"You are speaking with **{name}**. Address them by their first name where natural.")
+        if sex:
+            parts.append(
+                f"Biological sex: **{sex}**. Apply sex-specific physiological reference "
+                "ranges (e.g. typical HRV, RHR, hemoglobin, iron status) when interpreting metrics."
+            )
+            if sex.lower().startswith("m"):
+                parts.append("This user does NOT have menstrual cycle data — do not reference cycle phase.")
+        return {"type": "text", "text": "\n".join(parts)}
+
     def _cycle_context_block(self) -> dict | None:
         """Look up the most recent menstrual_cycle entry; if found, return a
         small system block so every reply is phase-aware without the model
@@ -154,6 +174,9 @@ class HealthAgent:
     def _system_for_call(self) -> list[dict]:
         """Build the system blocks for a single API call: cached prompt + dynamic context."""
         blocks = list(self._system)
+        identity = self._identity_block()
+        if identity is not None:
+            blocks.append(identity)
         cycle = self._cycle_context_block()
         if cycle is not None:
             blocks.append(cycle)

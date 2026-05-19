@@ -69,8 +69,14 @@ else
         >> "${LOG_DIR}/${USER_NAME}-fetch.log" 2>&1 &
 fi
 
-# Web server: long-running daemon on the port from the env file
-if pid=$(is_alive "garmin-insights web"); then
+# Web server: long-running daemon on the port from the env file.
+# Honors START_WEB=false in the user's env (set for the secondary user when
+# both users share one consolidated dashboard).
+START_WEB="${START_WEB:-true}"
+if [ "$START_WEB" != "true" ]; then
+    echo "[$TS] START_WEB=$START_WEB for ${USER_NAME} — skipping web server" \
+        >> "${LOG_DIR}/${USER_NAME}-web.log"
+elif pid=$(is_alive "garmin-insights web"); then
     echo "[$TS] web server already running for ${USER_NAME} (pid $pid) — skipping" \
         >> "${LOG_DIR}/${USER_NAME}-web.log"
 else

@@ -573,6 +573,13 @@ const ENTITY_LABELS = {
   avgSleepStress: 'Sleep stress avg',
   moderateIntensityMinutes: 'Moderate-intensity min',
   vigorousIntensityMinutes: 'Vigorous-intensity min',
+  cycleDay: 'Cycle day (1–40)',
+  cycleLength: 'Cycle length (days)',
+  cycleFlowIntensity: 'Flow intensity (0–3)',
+  cyclePhaseMenstrual: 'Phase: Menstrual (0/1)',
+  cyclePhaseFollicular: 'Phase: Follicular (0/1)',
+  cyclePhaseOvulatory: 'Phase: Ovulatory (0/1)',
+  cyclePhaseLuteal: 'Phase: Luteal (0/1)',
 };
 
 // Excluded from the picker: non-numeric, identifier, or metadata fields.
@@ -2495,6 +2502,117 @@ function renderCycleHrv(payload) {
   } else if (daySection) {
     daySection.style.display = 'none';
   }
+
+  renderCycleCalendar(payload.cycle_calendar);
+  renderCycleSleep(payload.sleep_by_phase);
+  renderCycleStress(payload.stress_by_phase);
+}
+
+const CYCLE_PHASE_COLORS = {
+  Menstrual:  '#f87171',
+  Follicular: '#34d399',
+  Ovulatory:  '#fbbf24',
+  Luteal:     '#a78bfa',
+};
+
+function renderCycleCalendar(entries) {
+  const section = document.getElementById('cycle-calendar-section');
+  const el = document.getElementById('cycle-calendar');
+  if (!section || !el) return;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  el.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'cycle-grid';
+  entries.forEach(e => {
+    const cell = document.createElement('div');
+    cell.className = 'cycle-cell';
+    cell.style.background = CYCLE_PHASE_COLORS[e.phase] || '#2a2d37';
+    const flow = (e.flow || '').toString().toLowerCase();
+    let mark = '';
+    if (flow.includes('heavy')) mark = '⬤';
+    else if (flow.includes('medium')) mark = '●';
+    else if (flow.includes('light')) mark = '·';
+    if (mark) {
+      const m = document.createElement('span');
+      m.className = 'cycle-flow';
+      m.textContent = mark;
+      cell.appendChild(m);
+    }
+    const flowText = e.flow ? ` · flow ${e.flow}` : '';
+    const dayText = e.day != null ? ` · day ${e.day}` : '';
+    cell.title = `${e.date} · ${e.phase || 'Unknown'}${dayText}${flowText}`;
+    grid.appendChild(cell);
+  });
+  el.appendChild(grid);
+}
+
+function renderCycleSleep(rows) {
+  const section = document.getElementById('cycle-sleep-section');
+  const ctx = document.getElementById('cycle-sleep-chart');
+  destroyAux('cycleSleep');
+  if (!section || !ctx || !Array.isArray(rows) || rows.length === 0) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  const labels = rows.map(r => `${r.phase} (n=${r.n})`);
+  auxCharts.cycleSleep = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Deep',  data: rows.map(r => r.deep_min),  backgroundColor: '#4f9cf9', stack: 'sleep' },
+        { label: 'REM',   data: rows.map(r => r.rem_min),   backgroundColor: '#a78bfa', stack: 'sleep' },
+        { label: 'Light', data: rows.map(r => r.light_min), backgroundColor: '#34d399', stack: 'sleep' },
+        { label: 'Awake', data: rows.map(r => r.awake_min), backgroundColor: '#f87171', stack: 'sleep' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales().x, stacked: true },
+        y: { ...commonScales('minutes').y, stacked: true, beginAtZero: true },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderCycleStress(rows) {
+  const section = document.getElementById('cycle-stress-section');
+  const ctx = document.getElementById('cycle-stress-chart');
+  destroyAux('cycleStress');
+  if (!section || !ctx || !Array.isArray(rows) || rows.length === 0) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  const labels = rows.map(r => `${r.phase} (n=${r.n})`);
+  auxCharts.cycleStress = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Stress %',       data: rows.map(r => r.stress_pct),      backgroundColor: '#f87171', yAxisID: 'y' },
+        { label: 'High-stress %',  data: rows.map(r => r.high_stress_pct), backgroundColor: '#fbbf24', yAxisID: 'y' },
+        { label: 'BB lowest',      data: rows.map(r => r.bb_lowest),       backgroundColor: '#4f9cf9', yAxisID: 'y1' },
+        { label: 'BB drained/day', data: rows.map(r => r.bb_drained),      backgroundColor: '#a78bfa', yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: commonScales().x,
+        y:  { ...commonScales('%').y, position: 'left', beginAtZero: true, max: 100 },
+        y1: { ...commonScales('Body Battery').y, position: 'right', grid: { drawOnChartArea: false }, beginAtZero: true },
+      },
+      plugins: commonPlugins(),
+    },
+  });
 }
 
 /* =========================================================

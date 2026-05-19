@@ -481,6 +481,40 @@
       </div>
     </section>
 
+    <section class="chart-section" id="cycle-calendar-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Cycle Calendar <span class="info-icon" tabindex="0">i<span class="info-tooltip">Last ~60 days colored by phase, with period days marked by flow intensity. Phases: Menstrual (red), Follicular (green), Ovulatory (yellow), Luteal (purple). Flow markers — dot = light, ● = medium, ⬤ = heavy.</span></span></h2>
+        <span class="chart-sub">Hover a cell for date · phase · cycle day · flow</span>
+      </div>
+      <div id="cycle-calendar" class="cycle-calendar"></div>
+      <div class="cycle-legend" style="margin-top:10px;">
+        <span class="legend-chip" style="background:#f87171">Menstrual</span>
+        <span class="legend-chip" style="background:#34d399">Follicular</span>
+        <span class="legend-chip" style="background:#fbbf24">Ovulatory</span>
+        <span class="legend-chip" style="background:#a78bfa">Luteal</span>
+      </div>
+    </section>
+
+    <section class="chart-section" id="cycle-sleep-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Sleep Architecture by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip">Average minutes of deep, REM, light, and awake sleep within each menstrual phase. Late-luteal/PMS commonly shows reduced REM and more awake time; the follicular phase tends to have the most restorative sleep.<br><br>Sources: Baker 2007 (Sleep Med Rev); medRxiv 2024 (cycle × sleep architecture).</span></span></h2>
+        <span class="chart-sub">Per-phase sleep stage averages (minutes)</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="cycle-sleep-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section" id="cycle-stress-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Stress &amp; Body Battery by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip">Average daily stress %, high-stress %, lowest Body Battery, and Body Battery drained per day within each phase. Stress often elevates in late-luteal/PMS alongside lower Body Battery recovery.<br><br>Sources: Schmalenberger 2020 (Front Endocrinol — HRV across cycle); Ultrahuman 2025 (cycle × autonomic load).</span></span></h2>
+        <span class="chart-sub">Per-phase averages (only phases with data shown)</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="cycle-stress-chart"></canvas>
+      </div>
+    </section>
+
     <div id="cycle-hrv" style="display:none;"></div>
 
     <section class="scan-section">

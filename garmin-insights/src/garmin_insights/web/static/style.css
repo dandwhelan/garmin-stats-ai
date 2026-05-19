@@ -659,6 +659,36 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .streak-row-label { font-size: 0.78rem; color: var(--muted); padding: 4px 8px 4px 0; text-align: right; align-self: center; }
 .streak-col-label { font-size: 0.65rem; color: var(--muted); text-align: center; align-self: center; }
 
+.cycle-calendar { overflow-x: auto; }
+.cycle-grid {
+  display: grid;
+  grid-template-columns: repeat(15, 1fr);
+  gap: 3px;
+  min-width: 420px;
+}
+.cycle-cell {
+  position: relative;
+  aspect-ratio: 1/1;
+  min-width: 20px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0b0d12;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.cycle-flow { font-size: 0.95rem; }
+.cycle-legend { display: flex; gap: 8px; flex-wrap: wrap; }
+.legend-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  color: #0b0d12;
+  font-weight: 600;
+}
+
 .trigger-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
 .trigger-head { font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
 .trigger-row {

@@ -686,11 +686,80 @@ class LifestyleService:
             "flow": latest_row.get("menstrual_flow"),
         }
 
+        # ---- Cycle calendar (last ~60 days, phase + flow per day) ----
+        cal_window = merged.tail(60)
+        cycle_calendar = []
+        for _, row in cal_window.iterrows():
+            phase_raw = row.get("current_cycle_phase")
+            cycle_calendar.append({
+                "date": row["date"],
+                "phase": (phase_raw or "").title() or None,
+                "day": _int_or_none(row.get("current_day_of_cycle")),
+                "flow": row.get("menstrual_flow"),
+            })
+
+        # ---- Sleep architecture & stress by phase ----
+        sleep_by_phase: list[dict] = []
+        stress_by_phase: list[dict] = []
+        try:
+            with self._conn() as conn:
+                sleep_df = pd.read_sql_query(
+                    "SELECT date, deep_sleep_seconds, rem_sleep_seconds, "
+                    "light_sleep_seconds, awake_sleep_seconds "
+                    "FROM sleep_summary WHERE date >= ? AND date <= ?",
+                    conn, params=(start, end),
+                )
+                stress_df = pd.read_sql_query(
+                    "SELECT date, stress_percentage, high_stress_percentage, "
+                    "body_battery_lowest_value, body_battery_drained_value "
+                    "FROM daily_stats WHERE date >= ? AND date <= ?",
+                    conn, params=(start, end),
+                )
+        except Exception:
+            sleep_df = pd.DataFrame()
+            stress_df = pd.DataFrame()
+
+        phase_map = mc[["date", "current_cycle_phase"]].copy()
+        phase_map["phase"] = phase_map["current_cycle_phase"].fillna("UNKNOWN").str.upper()
+
+        if not sleep_df.empty:
+            sm = phase_map.merge(sleep_df, on="date", how="inner")
+            for phase in phases_order:
+                sub = sm[sm["phase"] == phase].dropna(subset=["deep_sleep_seconds"])
+                if sub.empty:
+                    continue
+                sleep_by_phase.append({
+                    "phase": phase.title(),
+                    "n": int(len(sub)),
+                    "deep_min": _round(sub["deep_sleep_seconds"].mean() / 60),
+                    "rem_min": _round(sub["rem_sleep_seconds"].mean() / 60),
+                    "light_min": _round(sub["light_sleep_seconds"].mean() / 60),
+                    "awake_min": _round(sub["awake_sleep_seconds"].mean() / 60),
+                })
+
+        if not stress_df.empty:
+            st = phase_map.merge(stress_df, on="date", how="inner")
+            for phase in phases_order:
+                sub = st[st["phase"] == phase].dropna(subset=["stress_percentage"])
+                if sub.empty:
+                    continue
+                stress_by_phase.append({
+                    "phase": phase.title(),
+                    "n": int(len(sub)),
+                    "stress_pct": _round(sub["stress_percentage"].mean()),
+                    "high_stress_pct": _round(sub["high_stress_percentage"].mean()),
+                    "bb_lowest": _round(sub["body_battery_lowest_value"].mean()),
+                    "bb_drained": _round(sub["body_battery_drained_value"].mean()),
+                })
+
         return {
             "available": True,
             "latest": latest,
             "phase_stratified": phase_rows,
             "by_cycle_day": by_day,
+            "cycle_calendar": cycle_calendar,
+            "sleep_by_phase": sleep_by_phase,
+            "stress_by_phase": stress_by_phase,
             "n_days": int(mc["date"].nunique()),
             "n_cycles_observed": int(mc["current_day_of_cycle"].fillna(0).eq(1).sum()) or None,
         }

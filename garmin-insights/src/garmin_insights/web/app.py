@@ -165,6 +165,46 @@ def _resolve_user_identity(settings) -> dict[str, str]:
     return {"name": name, "email": email}
 
 
+_FLOW_INTENSITY = {"LIGHT": 1, "MEDIUM": 2, "HEAVY": 3}
+_CYCLE_PHASES = ("MENSTRUAL", "FOLLICULAR", "OVULATORY", "LUTEAL")
+
+
+def _enrich_summaries_with_cycle(bundle, summaries, start, end):
+    """Merge menstrual cycle fields into each daily summary so the Entities
+    tab can chart them like any other numeric metric. No-op when the user
+    doesn't track cycles."""
+    if not summaries:
+        return
+    try:
+        df = bundle.agent._repo.query_menstrual_cycle(start, end)
+    except Exception:
+        return
+    if df is None or df.empty:
+        return
+    by_date = {row["date"]: row for _, row in df.iterrows()}
+    for s in summaries:
+        row = by_date.get(s.get("date"))
+        if row is None:
+            continue
+        day = row.get("current_day_of_cycle")
+        if day is not None and not (isinstance(day, float) and day != day):
+            try:
+                s["cycleDay"] = int(day)
+            except (TypeError, ValueError):
+                pass
+        phase = (row.get("current_cycle_phase") or "").upper()
+        for p in _CYCLE_PHASES:
+            s[f"cyclePhase{p.title()}"] = 1 if phase == p else 0
+        flow = (row.get("menstrual_flow") or "").upper()
+        s["cycleFlowIntensity"] = _FLOW_INTENSITY.get(flow, 0)
+        clen = row.get("cycle_length") or row.get("predicted_cycle_length")
+        if clen is not None and not (isinstance(clen, float) and clen != clen):
+            try:
+                s["cycleLength"] = int(clen)
+            except (TypeError, ValueError):
+                pass
+
+
 def _last_sync_iso(db_path: str) -> str | None:
     """Return the SQLite DB file's mtime as an ISO 8601 UTC timestamp.
 
@@ -236,6 +276,7 @@ async def dashboard(
             None, bundle.agent._memory.get_daily_summaries_range, start, end
         )
         baselines = await loop.run_in_executor(None, bundle.agent._memory.get_baselines)
+        _enrich_summaries_with_cycle(bundle, summaries, start, end)
         return {
             "user": user,
             "summaries": summaries,

@@ -6,6 +6,19 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _parse_env_file(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.is_file():
+        return out
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
 class Settings(BaseSettings):
     """All application settings, loaded from environment / .env file."""
 
@@ -21,6 +34,11 @@ class Settings(BaseSettings):
     # User identity (shown in the web UI; derived from the Garmin login)
     garminconnect_email: str = ""
     display_name: str = ""
+    biological_sex: str = ""
+
+    # Directory containing per-user env files (e.g. users/dan.env). Looked up
+    # by settings_for_user() to resolve the right display name / email / sex.
+    users_dir: str = "users"
 
     # Claude / Anthropic
     anthropic_api_key: str = ""
@@ -66,11 +84,22 @@ class Settings(BaseSettings):
         return result
 
     def settings_for_user(self, user_id: str) -> "Settings":
-        """Return a copy of these settings with sqlite_db_path set to the user's DB."""
+        """Return a copy of these settings with the user's DB path AND their
+        identity fields (display name, email, biological sex) overlaid from
+        users/<user_id>.env so each user gets the right header + AI persona."""
         db_path = self.user_map.get(user_id)
         if not db_path:
             raise ValueError(f"Unknown user: {user_id}")
-        return self.model_copy(update={"sqlite_db_path": db_path})
+        updates: dict[str, str] = {"sqlite_db_path": db_path}
+        env_path = Path(self.users_dir) / f"{user_id}.env"
+        per_user = _parse_env_file(env_path)
+        if per_user.get("DISPLAY_NAME"):
+            updates["display_name"] = per_user["DISPLAY_NAME"]
+        if per_user.get("GARMINCONNECT_EMAIL"):
+            updates["garminconnect_email"] = per_user["GARMINCONNECT_EMAIL"]
+        if per_user.get("BIOLOGICAL_SEX"):
+            updates["biological_sex"] = per_user["BIOLOGICAL_SEX"]
+        return self.model_copy(update=updates)
 
 
 def get_settings() -> Settings:
