@@ -5,9 +5,9 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 ## Project Structure
 
 - **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
-- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab) and CLI, powered by Claude. Defaults to `claude-sonnet-4-6`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-7`.
-- **`users/`** — Per-user `.env` files for multi-user mode (one Garmin account per file). Real `.env`s are git-ignored; `*.env.example` templates are checked in.
-- **`scripts/`** — Launcher scripts (`run-user.sh`, `run-dan.sh`, `run-helen.sh`) that start a fetcher + web server for one user, suitable for `cron @reboot`.
+- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab) and CLI, powered by Claude. Defaults to `claude-sonnet-4-6`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-7`. Multi-user aware: one web server can serve any number of users via a header dropdown, each backed by their own SQLite DB and AI agent instance.
+- **`users/`** — Per-user `.env` files for multi-user mode (one Garmin account per file). Real `.env`s are git-ignored; `*.env.example` templates are checked in. Each file declares `DISPLAY_NAME`, `BIOLOGICAL_SEX`, `START_WEB`, plus its own DB / token paths.
+- **`scripts/`** — Launcher scripts (`run-user.sh`, `run-dan.sh`, `run-helen.sh`) that start a fetcher (and optionally a web server) for one user, suitable for `cron @reboot`. Honours `START_WEB=false` so only one user's launcher owns the shared dashboard while others run fetchers only.
 
 ## Prerequisites
 
@@ -60,11 +60,13 @@ ANTHROPIC_API_KEY=sk-ant-...
 CLAUDE_MODEL=claude-sonnet-4-6   # default; set to claude-opus-4-7 for Opus
 WEB_PORT=8080
 DISPLAY_NAME=Alice
+BIOLOGICAL_SEX=Female            # Male / Female — applied to the AI prompt for sex-specific
+                                 # reference ranges and (for Female) menstrual-phase context
 ```
 
-### Multi-user setup (Path A — separate processes)
+### Multi-user setup (one web server, N fetchers)
 
-Each user gets their own `.env` file, their own SQLite database, their own Garmin token directory, and their own web server port.
+Each user gets their own `.env` file, their own SQLite database, and their own Garmin token directory. **One** user owns the shared web server (sets `START_WEB=true` and supplies `WEB_PORT`); all other users run a fetcher only (`START_WEB=false`). The single web instance serves every user through a header dropdown.
 
 ```
 garmin-stats-ai/
@@ -79,9 +81,10 @@ garmin-stats-ai/
 └── ...
 ```
 
-Copy `users/alice.env.example` to `users/alice.env` and fill in real values:
+Copy `users/alice.env.example` to `users/alice.env` and fill in real values. The user who owns the shared dashboard:
 
 ```bash
+# users/alice.env  ← this user owns the web server
 GARMINCONNECT_EMAIL=alice@example.com
 GARMINCONNECT_PASSWORD=her_password
 
@@ -90,18 +93,40 @@ TOKEN_DIR=/home/pi/.garminconnect-alice
 ANTHROPIC_API_KEY=sk-ant-...
 
 WEB_PORT=8081
+START_WEB=true
 DISPLAY_NAME=Alice
+BIOLOGICAL_SEX=Female
 ```
 
-Repeat for each additional user with a **different** `SQLITE_DB_PATH`, `TOKEN_DIR`, and `WEB_PORT`.
-
-Launch both users (each gets an independent fetcher + web server):
+And every other user — fetcher only, no web:
 
 ```bash
-bash scripts/run-alice.sh
-bash scripts/run-bob.sh
-# Alice: http://localhost:8081
-# Bob:   http://localhost:8082
+# users/bob.env  ← fetcher only, shares Alice's dashboard
+GARMINCONNECT_EMAIL=bob@example.com
+GARMINCONNECT_PASSWORD=his_password
+
+SQLITE_DB_PATH=/home/pi/garmin-data/bob.db
+TOKEN_DIR=/home/pi/.garminconnect-bob
+ANTHROPIC_API_KEY=sk-ant-...
+
+START_WEB=false
+DISPLAY_NAME=Bob
+BIOLOGICAL_SEX=Male
+```
+
+Also set `USERS` in the repo-root `.env` so the dashboard knows about every account:
+
+```bash
+# .env (repo root)
+USERS=alice:/home/pi/garmin-data/alice.db,bob:/home/pi/garmin-data/bob.db
+```
+
+Launch both users (only Alice's run script actually starts a web server; Bob's runs the fetcher only):
+
+```bash
+bash scripts/run-alice.sh   # fetcher + web on port 8081
+bash scripts/run-bob.sh     # fetcher only (START_WEB=false)
+# Open http://localhost:8081 — switch between Alice and Bob via the header dropdown
 ```
 
 To keep both users syncing forever — start on reboot **and** auto-restart anything that dies — add four lines to `crontab -e`:
@@ -160,6 +185,13 @@ Lifestyle & Health Insights:
 - Habit Half-Life, Behavior Streak Calendar, Behavior Co-occurrence, Stress Trigger Leaderboard
 - Stress Hour-of-Day Fingerprint (weekday vs weekend)
 
+Menstrual cycle (auto-hidden for users with no cycle data):
+- Vitals by Menstrual Phase — RHR / HRV / Sleep score / Body Battery across follicular / ovulatory / luteal / menstrual phases (Shilaih 2017, Maijala 2022)
+- Cycle-Day Curve — RHR + HRV averaged at each day-of-cycle (Lyu 2025, Ultrahuman 2025)
+- Cycle Calendar — 60-day phase grid with flow-intensity markers
+- Sleep Architecture by Phase — deep / REM / light / awake minutes per phase (Baker 2007)
+- Stress & Body Battery by Phase — daily stress % + Body Battery drain across phases
+
 ### AI Health Scan
 
 Below the dashboard, three buttons run a one-shot Claude analysis: General Scan, Morning Brief, Weekly Summary. An optional date-range picker scopes the scan to a specific window — leave blank for the default (last 7/14 days depending on focus).
@@ -173,35 +205,15 @@ garmin-insights scan --weekly # full weekly summary
 garmin-insights status        # check DB + API connectivity
 ```
 
-## Multi-user setup
+## Multi-user mode — how it works at runtime
 
-Multiple Garmin accounts can share a single server instance. Each user gets their own SQLite database and Garmin token directory.
+The full setup steps live under [Multi-user setup (one web server, N fetchers)](#multi-user-setup-one-web-server-n-fetchers). At runtime:
 
-**1. Create per-user env files** (see `users/alice.env.example` and `users/bob.env.example` for templates):
-
-```bash
-# users/alice.env
-GARMINCONNECT_EMAIL=alice@example.com
-GARMINCONNECT_PASSWORD=alices_password
-SQLITE_DB_PATH=/home/pi/garmin-data/alice.db
-TOKEN_DIR=/home/pi/.garminconnect-alice
-```
-
-**2. Fetch data per user** (run separately for each account):
-
-```bash
-# Load alice's env then fetch
-set -a && source users/alice.env && set +a
-python -m garmin_grafana.garmin_fetch
-```
-
-**3. Tell the insights server about all users** via the `USERS` env var:
-
-```bash
-USERS=alice:/home/pi/garmin-data/alice.db,bob:/home/pi/garmin-data/bob.db
-```
-
-The web interface routes each logged-in user to their own database. When `USERS` is unset the app runs in single-user mode using `SQLITE_DB_PATH`.
+- The web server reads `USERS` from the repo-root `.env` to learn every configured user.
+- For each user, `Settings.settings_for_user(user_id)` overlays `DISPLAY_NAME`, `GARMINCONNECT_EMAIL`, and `BIOLOGICAL_SEX` from `users/<id>.env`, giving the UI badge and the AI agent the correct identity.
+- One `HealthAgent` is constructed per user (lazy), each with its own SQLite DB, baselines, memory store, and chat session. There is no cross-contamination — switching the dropdown clears the chat session and reloads dashboard data against the active user's DB.
+- The AI's system prompt is also personalised: each call appends an identity block (`You are speaking with <Name>. Biological sex: <M/F>...`) and, for female users with cycle data, a "Current Menstrual Cycle Context" block stating today's phase + day so the model interprets vitals cycle-aware without an extra tool round-trip.
+- When `USERS` is unset the app runs in single-user mode using the root `.env`'s `SQLITE_DB_PATH`, and the dropdown is hidden.
 
 ## Example questions for the chat
 
@@ -222,6 +234,7 @@ The web interface routes each logged-in user to their own database. When `USERS`
 | **Stress & body battery** | Stress %, high-stress %, body battery (peak / floor / charged / drained / at-wake), intraday stress and battery |
 | **Activity** | Steps, distance, floors, sedentary / active / highly-active seconds, moderate & vigorous intensity minutes, calories (active + BMR) |
 | **Workouts** | Per-activity HR zones (Z1–Z5), pace, distance, duration, calories, GPS tracks |
+| **Menstrual cycle** | Cycle phase, day-of-cycle, predicted vs observed cycle length, period length, flow intensity, symptoms / mood / notes — when tracked in Garmin Connect |
 | **Body composition** | Weight, BMI, body fat %, muscle mass, bone mass, body water, visceral fat |
 | **Performance** | VO2 max, lactate threshold, hill score (strength + endurance), endurance score, race predictions (5k / 10k / HM / marathon), fitness age |
 | **Training load** | Training readiness score, recovery time, ACWR (acute:chronic workload ratio), HRV factor, stress history factor |
@@ -257,7 +270,7 @@ Raw Garmin data           →  Daily summary cache    →  Statistical analysis 
 
 ## Medical Knowledge Base
 
-The agent has **34 evidence-backed insight rules** in `garmin-insights/src/garmin_insights/knowledge/medical.py`. Each rule includes a research citation, a plain-language summary of the finding, and the metric pattern it triggers on. The full knowledge base is injected into the AI's system prompt and cached, so every response is grounded in published research.
+The agent has **37 evidence-backed insight rules** in `garmin-insights/src/garmin_insights/knowledge/medical.py`. Each rule includes a research citation, a plain-language summary of the finding, and the metric pattern it triggers on. The full knowledge base is injected into the AI's system prompt and cached, so every response is grounded in published research.
 
 ### Studies referenced
 
@@ -297,6 +310,12 @@ The agent has **34 evidence-backed insight rules** in `garmin-insights/src/garmi
 | **Visceral fat and HRV** | Felber Dietrich et al., 2006, *European Heart Journal* |
 | **Hydration and resting heart rate** | Watso & Farquhar, 2019, *Nutrients* |
 | **Overnight SpO2 and sleep-disordered breathing** | Berry et al., 2017, *AASM Clinical Practice Guidelines* |
+| **Sleeping HR rises in luteal phase** | Shilaih et al., 2017, *Scientific Reports* |
+| **Temperature / HR / HRV across the menstrual cycle (Oura)** | Maijala et al., 2022, *International Journal of Women's Health* |
+| **ML classification of cycle phase from HR** | Lyu et al., 2025, *Computers in Biology and Medicine* |
+| **Sleep loss as a cycle-phase confounder** | Ultrahuman, 2025, *bioRxiv* |
+| **Cycle phase × sleep architecture** | Baker & Driver, 2007, *Sleep Medicine Reviews* |
+| **Follicular-phase training window** | Janse de Jonge, 2019, *Sports Medicine* |
 
 ### What the rules cover
 
@@ -306,6 +325,7 @@ The agent has **34 evidence-backed insight rules** in `garmin-insights/src/garmi
 - **Exercise & training** (5 rules) — exercise sleep benefit, late workouts, ACWR injury risk, grey-zone training, VO2 max plateau
 - **Lifestyle** (10 rules) — caffeine, cold exposure, sunlight, allergies, migraines, stretching, meal quality, fasting, hydration
 - **Body composition** (1 rule) — visceral fat / HRV coupling
+- **Menstrual cycle** (3 rules) — follicular training window (Janse de Jonge 2019), cycle vs sleep-loss confound (Ultrahuman 2025), PMS sleep architecture (Baker 2007)
 
 ### Important disclaimers
 
@@ -323,7 +343,8 @@ The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUD
 - **34 medical rules** — full knowledge base injected into the system prompt
 - **Per-session memory** — each browser tab has its own conversation history, separate from CLI sessions
 - **True token streaming** — the web chat uses Server-Sent Events to stream tokens as Claude generates them
-- **User identity in the header** — web UI shows a name badge (from `DISPLAY_NAME` or Garmin email) and a colour-coded last-sync badge that auto-refreshes every 30 s (green < 10 min, amber < 60 min, red otherwise)
+- **User identity in the header** — web UI shows a name badge (`DISPLAY_NAME` or name derived from the Garmin email) and a colour-coded last-sync badge that auto-refreshes every 30 s (green < 10 min, amber < 60 min, red otherwise). In multi-user mode a dropdown switches between configured users; the badge, AI agent, chat session, and dashboard all repoint to the selected user.
+- **Cycle-aware AI** — for users whose `BIOLOGICAL_SEX=Female` and who have data in the `menstrual_cycle` table, every Claude API call gets a dynamic system block with the user's current phase + day so replies don't need a tool round-trip to know where the user is in their cycle. Male users are explicitly told they have no cycle data so the model doesn't fabricate cycle interpretations.
 
 ### Dashboard analytics pipeline (no LLM cost)
 
