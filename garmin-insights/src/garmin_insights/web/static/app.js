@@ -1655,6 +1655,7 @@ async function loadLifestyle(start, end) {
     safeRender('stressFp',        () => renderStressFingerprint(lifestyleData.stress_hour_fingerprint));
     safeRender('fitnessAge',      () => renderFitnessAge(lifestyleData.fitness_age_delta));
     safeRender('cycleHrv',        () => renderCycleHrv(lifestyleData.cycle_hrv));
+    safeRender('cycleYearly',     () => renderCycleYearly(lifestyleData.cycle_yearly));
   } catch (e) {
     console.error('Lifestyle load failed:', e);
   }
@@ -2609,6 +2610,147 @@ function renderCycleStress(rows) {
         x: commonScales().x,
         y:  { ...commonScales('%').y, position: 'left', beginAtZero: true, max: 100 },
         y1: { ...commonScales('Body Battery').y, position: 'right', grid: { drawOnChartArea: false }, beginAtZero: true },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// 17b. Year-over-year cycle trends (always 365-day window)
+function renderCycleYearly(payload) {
+  const lengthSec = document.getElementById('cycle-length-history-section');
+  const vitalsSec = document.getElementById('cycle-vitals-trend-section');
+  const phaseDurSec = document.getElementById('cycle-phase-durations-section');
+  destroyAux('cycleLengthHist');
+  destroyAux('cycleVitalsTrend');
+  destroyAux('cyclePhaseDur');
+  if (!payload || payload.available === false) {
+    [lengthSec, vitalsSec, phaseDurSec].forEach(s => { if (s) s.style.display = 'none'; });
+    return;
+  }
+  renderCycleLengthHistory(payload.cycle_history, lengthSec);
+  renderCycleVitalsTrend(payload.vitals_per_cycle, vitalsSec);
+  renderCyclePhaseDurations(payload.phase_durations, phaseDurSec);
+}
+
+function renderCycleLengthHistory(rows, section) {
+  if (!section) return;
+  const ctx = document.getElementById('cycle-length-history-chart');
+  if (!ctx || !Array.isArray(rows) || rows.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  const labels = rows.map(r => r.cycle_start);
+  const actual = rows.map(r => r.cycle_length);
+  const predicted = rows.map(r => r.predicted_length);
+  const lo = labels.map(() => 21);
+  const hi = labels.map(() => 35);
+  auxCharts.cycleLengthHist = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar',  label: 'Cycle length (days)',     data: actual,    backgroundColor: '#a78bfa', borderColor: '#a78bfa' },
+        { type: 'line', label: 'Predicted',               data: predicted, borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.2, spanGaps: true },
+        { type: 'line', label: 'Normal range (21–35 d)',  data: hi,        borderColor: 'rgba(52,211,153,0.5)', borderDash: [4,4], pointRadius: 0, fill: '+1' },
+        { type: 'line', label: '',                         data: lo,        borderColor: 'rgba(52,211,153,0.5)', borderDash: [4,4], pointRadius: 0, backgroundColor: 'rgba(52,211,153,0.08)' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales('cycle start').x, ticks: { maxRotation: 60, minRotation: 45, font: { size: 10 } } },
+        y: { ...commonScales('days').y, beginAtZero: false, suggestedMin: 15, suggestedMax: 45 },
+      },
+      plugins: {
+        ...commonPlugins(),
+        legend: { ...commonPlugins().legend, labels: { ...commonPlugins().legend.labels, filter: item => item.text !== '' } },
+      },
+    },
+  });
+  const meta = document.getElementById('cycle-length-history-meta');
+  if (meta) {
+    const observed = rows.map(r => r.cycle_length).filter(v => typeof v === 'number');
+    if (observed.length) {
+      const mean = observed.reduce((a,b) => a+b, 0) / observed.length;
+      const min = Math.min(...observed);
+      const max = Math.max(...observed);
+      meta.textContent = `${rows.length} cycles · mean ${mean.toFixed(1)} d · range ${min}–${max} d`;
+    } else {
+      meta.textContent = `${rows.length} cycles`;
+    }
+  }
+}
+
+function _linearTrendline(yvals) {
+  const n = yvals.length;
+  if (n < 2) return null;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, k = 0;
+  yvals.forEach((y, i) => {
+    if (y == null || !Number.isFinite(y)) return;
+    sumX += i; sumY += y; sumXY += i*y; sumXX += i*i; k++;
+  });
+  if (k < 2) return null;
+  const slope = (k*sumXY - sumX*sumY) / (k*sumXX - sumX*sumX);
+  const intercept = (sumY - slope*sumX) / k;
+  return yvals.map((_, i) => intercept + slope * i);
+}
+
+function renderCycleVitalsTrend(rows, section) {
+  if (!section) return;
+  const ctx = document.getElementById('cycle-vitals-trend-chart');
+  if (!ctx || !Array.isArray(rows) || rows.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  const labels = rows.map(r => r.cycle_start);
+  const rhr = rows.map(r => r.rhr);
+  const hrv = rows.map(r => r.hrv);
+  const sleep = rows.map(r => r.sleep_score);
+  const bb = rows.map(r => r.body_battery);
+  const rhrTrend = _linearTrendline(rhr);
+  const hrvTrend = _linearTrendline(hrv);
+  const datasets = [
+    { label: 'RHR (bpm)',           data: rhr,   borderColor: '#f87171', backgroundColor: '#f87171', showLine: false, pointRadius: 4, yAxisID: 'y' },
+    { label: 'HRV (ms)',            data: hrv,   borderColor: '#4f9cf9', backgroundColor: '#4f9cf9', showLine: false, pointRadius: 4, yAxisID: 'y1' },
+    { label: 'Sleep score',         data: sleep, borderColor: '#34d399', backgroundColor: '#34d399', showLine: false, pointRadius: 4, yAxisID: 'y' },
+    { label: 'Body Battery (wake)', data: bb,    borderColor: '#fbbf24', backgroundColor: '#fbbf24', showLine: false, pointRadius: 4, yAxisID: 'y' },
+  ];
+  if (rhrTrend) datasets.push({ label: 'RHR trend', data: rhrTrend, borderColor: 'rgba(248,113,113,0.7)', borderDash: [6,4], pointRadius: 0, fill: false, yAxisID: 'y' });
+  if (hrvTrend) datasets.push({ label: 'HRV trend', data: hrvTrend, borderColor: 'rgba(79,156,249,0.7)', borderDash: [6,4], pointRadius: 0, fill: false, yAxisID: 'y1' });
+  auxCharts.cycleVitalsTrend = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x:  { ...commonScales('cycle start').x, ticks: { maxRotation: 60, minRotation: 45, font: { size: 10 } } },
+        y:  { ...commonScales('RHR / sleep / BB').y, position: 'left' },
+        y1: { ...commonScales('HRV (ms)').y, position: 'right', grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderCyclePhaseDurations(rows, section) {
+  if (!section) return;
+  const ctx = document.getElementById('cycle-phase-durations-chart');
+  if (!ctx || !Array.isArray(rows) || rows.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  const labels = rows.map(r => r.cycle_start);
+  auxCharts.cyclePhaseDur = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Menstrual',  data: rows.map(r => r.menstrual_days),  backgroundColor: '#f87171', stack: 'phases' },
+        { label: 'Follicular', data: rows.map(r => r.follicular_days), backgroundColor: '#34d399', stack: 'phases' },
+        { label: 'Ovulatory',  data: rows.map(r => r.ovulatory_days),  backgroundColor: '#fbbf24', stack: 'phases' },
+        { label: 'Luteal',     data: rows.map(r => r.luteal_days),     backgroundColor: '#a78bfa', stack: 'phases' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ...commonScales('cycle start').x, stacked: true, ticks: { maxRotation: 60, minRotation: 45, font: { size: 10 } } },
+        y: { ...commonScales('days').y, stacked: true, beginAtZero: true },
       },
       plugins: commonPlugins(),
     },

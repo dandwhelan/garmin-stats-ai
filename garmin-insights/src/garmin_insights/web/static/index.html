@@ -515,6 +515,37 @@
       </div>
     </section>
 
+    <section class="chart-section" id="cycle-length-history-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Cycle Length — Year Over Year <span class="info-icon" tabindex="0">i<span class="info-tooltip">Length of every cycle in the last 365 days, alongside Garmin's predicted length and the typical 21–35-day reference band (ACOG). Sustained drift outside this range, or a swing &gt;7 days between cycles, is worth discussing with a clinician.<br><br>Source: ACOG Committee Opinion 651 (2015) — Menstruation as a Vital Sign.</span></span></h2>
+        <span class="chart-sub">Last 365 days · always year-scale regardless of dashboard date range</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="cycle-length-history-chart"></canvas>
+      </div>
+      <div id="cycle-length-history-meta" class="chart-sub" style="margin-top:8px;"></div>
+    </section>
+
+    <section class="chart-section" id="cycle-vitals-trend-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Per-Cycle Vital Averages <span class="info-icon" tabindex="0">i<span class="info-tooltip">Mean RHR, overnight HRV, sleep score and morning Body Battery for each cycle in the last 365 days, with a linear trendline. A persistent upward drift in RHR or downward drift in HRV across cycles can flag chronic stress, illness, or training overload independent of cycle-phase noise.<br><br>Sources: Plews 2013 (IJSPP); Shilaih 2017 (Sci Rep).</span></span></h2>
+        <span class="chart-sub">One point per cycle, linear trendline overlaid</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="cycle-vitals-trend-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section" id="cycle-phase-durations-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Phase Duration per Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip">Days spent in each phase per cycle. A consistently short luteal phase (&lt;10 days) can indicate low progesterone; a lengthening follicular phase can indicate delayed ovulation. Patterns trend more meaningfully than single cycles.<br><br>Source: Kuhl 2005 (Climacteric); Vollman 1977 (Major Probl Obstet Gynecol).</span></span></h2>
+        <span class="chart-sub">Stacked bars per cycle, last 365 days</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="cycle-phase-durations-chart"></canvas>
+      </div>
+    </section>
+
     <div id="cycle-hrv" style="display:none;"></div>
 
     <section class="scan-section">

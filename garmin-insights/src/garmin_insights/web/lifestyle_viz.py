@@ -765,6 +765,94 @@ class LifestyleService:
         }
 
     # ------------------------------------------------------------------
+    # 17b. Cycle YEARLY trends — one row per cycle across the last 365 days.
+    # Always uses the last 365 days regardless of the caller's window so
+    # cycle-over-cycle drift is visible at the right time scale.
+    # ------------------------------------------------------------------
+    def cycle_yearly(self) -> dict:
+        from datetime import date as _date, timedelta
+        end = _date.today().isoformat()
+        start = (_date.today() - timedelta(days=365)).isoformat()
+
+        with self._conn() as conn:
+            try:
+                mc = pd.read_sql_query(
+                    "SELECT date, cycle_start_date, current_day_of_cycle, "
+                    "current_cycle_phase, cycle_length, predicted_cycle_length, "
+                    "period_length, menstrual_flow "
+                    "FROM menstrual_cycle WHERE date >= ? AND date <= ? ORDER BY date",
+                    conn, params=(start, end),
+                )
+            except Exception:
+                return {"available": False, "note": "Menstrual cycle table not present."}
+
+        if mc.empty:
+            return {"available": False, "note": "No menstrual cycle entries in the last 365 days."}
+        mc = mc.dropna(subset=["cycle_start_date"])
+        if mc.empty:
+            return {"available": False, "note": "No complete cycles in the last 365 days."}
+
+        ds = self._load_summaries(start, end)
+        if not ds.empty:
+            ds["rhr"] = pd.to_numeric(ds.get("restingHeartRate"), errors="coerce")
+            ds["hrv"] = pd.to_numeric(ds.get("avgOvernightHrv"), errors="coerce")
+            ds["sleep_score"] = pd.to_numeric(ds.get("sleepScore"), errors="coerce")
+            ds["body_battery"] = pd.to_numeric(ds.get("bodyBatteryAtWakeTime"), errors="coerce")
+            merged = mc.merge(
+                ds[["date", "rhr", "hrv", "sleep_score", "body_battery"]],
+                on="date", how="left",
+            )
+        else:
+            merged = mc.copy()
+            for col in ("rhr", "hrv", "sleep_score", "body_battery"):
+                merged[col] = None
+
+        merged["phase"] = merged["current_cycle_phase"].fillna("UNKNOWN").str.upper()
+        phases_order = ["MENSTRUAL", "FOLLICULAR", "OVULATORY", "LUTEAL"]
+
+        cycle_history: list[dict] = []
+        vitals_per_cycle: list[dict] = []
+        phase_durations: list[dict] = []
+
+        for cycle_start, grp in merged.groupby("cycle_start_date"):
+            def _mode_int(s):
+                m = s.dropna().mode()
+                return int(m.iloc[0]) if not m.empty else None
+
+            cycle_history.append({
+                "cycle_start": cycle_start,
+                "cycle_length": _mode_int(grp["cycle_length"]),
+                "predicted_length": _mode_int(grp["predicted_cycle_length"]),
+                "period_length": _mode_int(grp["period_length"]),
+                "days_observed": int(len(grp)),
+            })
+            vitals_per_cycle.append({
+                "cycle_start": cycle_start,
+                "n": int(grp["rhr"].notna().sum()) if "rhr" in grp else 0,
+                "rhr": _round(grp["rhr"].mean()) if "rhr" in grp else None,
+                "hrv": _round(grp["hrv"].mean()) if "hrv" in grp else None,
+                "sleep_score": _round(grp["sleep_score"].mean()) if "sleep_score" in grp else None,
+                "body_battery": _round(grp["body_battery"].mean()) if "body_battery" in grp else None,
+            })
+            row = {"cycle_start": cycle_start}
+            for phase in phases_order:
+                row[phase.lower() + "_days"] = int((grp["phase"] == phase).sum())
+            phase_durations.append(row)
+
+        cycle_history.sort(key=lambda r: r["cycle_start"])
+        vitals_per_cycle.sort(key=lambda r: r["cycle_start"])
+        phase_durations.sort(key=lambda r: r["cycle_start"])
+
+        return {
+            "available": True,
+            "range": {"start": start, "end": end},
+            "n_cycles": len(cycle_history),
+            "cycle_history": cycle_history,
+            "vitals_per_cycle": vitals_per_cycle,
+            "phase_durations": phase_durations,
+        }
+
+    # ------------------------------------------------------------------
     # 18. Stress hour-of-day fingerprint
     # ------------------------------------------------------------------
     def stress_hour_fingerprint(self, start: str, end: str) -> dict:

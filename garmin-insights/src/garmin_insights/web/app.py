@@ -360,6 +360,7 @@ async def lifestyle(
         _run(svc.fitness_age_delta, start, end),
         _run(svc.who_intensity_target, start, end),
         _run(svc.cycle_hrv, start, end),
+        _run(svc.cycle_yearly),
         _run(svc.stress_hour_fingerprint, start, end),
         _run(svc.stress_trigger_leaderboard, start, end),
         _run(svc.research_signal_scorecard, start, end),
@@ -369,7 +370,7 @@ async def lifestyle(
         "recovery_cost", "stress_resilience", "body_battery_decay", "illness_radar",
         "inflammation_index", "recovery_debt", "streak_calendar", "habit_half_life",
         "cooccurrence", "step_distribution", "fitness_age_delta", "who_target",
-        "cycle_hrv", "stress_hour_fingerprint", "stress_triggers",
+        "cycle_hrv", "cycle_yearly", "stress_hour_fingerprint", "stress_triggers",
         "research_scorecard",
     ]
     return {"user": user, "date_range": {"start": start, "end": end}, **dict(zip(keys, results))}
