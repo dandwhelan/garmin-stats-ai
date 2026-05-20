@@ -192,6 +192,8 @@ class SqliteRepo:
                    (SELECT COUNT(*) FROM activity_gps g WHERE g.activity_id = s.activity_id) AS point_count
             FROM activity_summary s
             WHERE s.time BETWEEN :start AND :end
+              AND COALESCE(s.activity_name, '') != 'END'
+              AND COALESCE(s.activity_type, '') != 'No Activity'
               AND EXISTS (SELECT 1 FROM activity_gps g WHERE g.activity_id = s.activity_id)
             ORDER BY s.time DESC
         """
