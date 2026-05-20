@@ -55,9 +55,6 @@ trends and correlations, and recall/save context from previous sessions.
   requesting 30 days of raw data unless you need day-by-day detail
 
 {medical_knowledge}
-
-## Today's Date
-{today}
 """
 
 
@@ -96,7 +93,6 @@ class HealthAgent:
 
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(),
-            today=datetime.utcnow().strftime("%Y-%m-%d"),
         )
         # Cache the large system prompt to reduce token costs on repeat calls
         self._system = [
@@ -120,6 +116,12 @@ class HealthAgent:
         # Default history for CLI use; web callers pass their own list
         self._history: list[dict] = []
         self._key_findings: list[str] = []
+
+    def _today_block(self) -> dict:
+        """Inject the current local date on every call so a long-running
+        agent process doesn't end up stuck on the day it was started."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        return {"type": "text", "text": f"## Today's Date\n{today}"}
 
     def _identity_block(self) -> dict | None:
         """Tell the model which user it's talking to, so replies can address
@@ -174,6 +176,7 @@ class HealthAgent:
     def _system_for_call(self) -> list[dict]:
         """Build the system blocks for a single API call: cached prompt + dynamic context."""
         blocks = list(self._system)
+        blocks.append(self._today_block())
         identity = self._identity_block()
         if identity is not None:
             blocks.append(identity)
