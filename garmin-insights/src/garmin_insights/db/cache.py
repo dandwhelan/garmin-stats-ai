@@ -235,6 +235,13 @@ class CacheBuilder:
         start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
         # Always rebuild today (data still accumulating) — marked incomplete
         self.build_daily_summary(today, is_complete=False)
+        # Re-promote past days still cached as incomplete. Mid-day builds leave
+        # is_complete=False; without this, that partial snapshot (e.g. 107 steps
+        # logged by 09:43) is never replaced with the day's final totals once the
+        # day ends, because build_range skips dates that already have a row.
+        for entry in self._memory.get_daily_summaries_range(start, yesterday):
+            if not entry.get("is_complete", True):
+                self.build_daily_summary(entry["date"], is_complete=True)
         # Build any other missing days (these are complete)
         self.build_range(start, yesterday)
         # Update baselines (excludes today)
