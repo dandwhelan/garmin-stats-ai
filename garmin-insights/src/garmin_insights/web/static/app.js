@@ -1233,12 +1233,21 @@ function renderIntradayHeatmap(data) {
     return;
   }
 
-  // Determine value range for the metric
-  let min = Infinity, max = -Infinity;
-  matrix.forEach(row => row.forEach(v => {
-    if (v != null) { if (v < min) min = v; if (v > max) max = v; }
-  }));
-  if (!isFinite(min) || !isFinite(max) || min === max) { min = 0; max = 100; }
+  // Winsorised range — use 2nd–98th percentile so a handful of outlier hours
+  // don't compress the gradient for the bulk of the data. Cells outside the
+  // p2/p98 window saturate to the end-stop colour but the tooltip still shows
+  // their true value.
+  const flat = matrix.flat().filter(v => v != null && isFinite(v)).sort((a, b) => a - b);
+  let min, max;
+  if (flat.length < 5) {
+    min = flat[0] ?? 0;
+    max = flat[flat.length - 1] ?? 100;
+  } else {
+    const q = (p) => flat[Math.min(flat.length - 1, Math.max(0, Math.floor(flat.length * p)))];
+    min = q(0.02);
+    max = q(0.98);
+  }
+  if (min === max) { min = 0; max = (max || 0) + 1; }
 
   // Color: stress (red high), body_battery (green high), heart_rate (orange high)
   const palette = {
@@ -1257,7 +1266,8 @@ function renderIntradayHeatmap(data) {
   const c0 = hexToRgb(stops[0]), c1 = hexToRgb(stops[1]), c2 = hexToRgb(stops[2]);
   function colorFor(v) {
     if (v == null) return '#0f1117';
-    const t = (v - min) / (max - min);
+    const raw = (v - min) / (max - min);
+    const t = Math.max(0, Math.min(1, raw));
     const c = t < 0.5
       ? c0.map((x, i) => lerp(x, c1[i], t * 2))
       : c1.map((x, i) => lerp(x, c2[i], (t - 0.5) * 2));
