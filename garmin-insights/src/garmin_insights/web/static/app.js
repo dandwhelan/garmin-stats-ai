@@ -1859,7 +1859,7 @@ function renderActivityTrack() {
   const mode = activityColorMode;
   // Mode -> (point accessor, hue, units, label)
   const modeConfig = {
-    hr:        { val: p => p.heart_rate, hue: 0,   unit: ' bpm', label: 'Heart rate' },
+    hr:        { val: p => p.heart_rate, hue: 285, unit: ' bpm', label: 'Heart rate' },
     elevation: { val: p => p.altitude,   hue: 140, unit: ' m',   label: 'Elevation' },
   };
   const cfg = modeConfig[mode];
@@ -1867,7 +1867,7 @@ function renderActivityTrack() {
   if (!cfg) {
     // Plain — single thick polyline
     const latlngs = points.map(p => [p.latitude, p.longitude]);
-    activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 6, opacity: 0.9 }).addTo(map);
+    activityTrackLayer = L.polyline(latlngs, { color: '#c084fc', weight: 6, opacity: 0.95 }).addTo(map);
     map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
     if (legend) legend.style.display = 'none';
   } else {
@@ -1875,7 +1875,7 @@ function renderActivityTrack() {
     if (!vals.length) {
       // Fall back to plain line if metric missing
       const latlngs = points.map(p => [p.latitude, p.longitude]);
-      activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 6, opacity: 0.9 }).addTo(map);
+      activityTrackLayer = L.polyline(latlngs, { color: '#c084fc', weight: 6, opacity: 0.95 }).addTo(map);
       map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
       if (legend) legend.style.display = 'none';
       if (meta) meta.textContent = `${points.length} GPS points · ${cfg.label} unavailable for this activity`;

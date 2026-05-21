@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=20260521b" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -257,10 +257,10 @@
       </div>
       <div class="activity-map-controls">
         <select id="activity-map-picker" class="select-input"></select>
-        <select id="activity-map-color-mode" class="select-input" style="max-width: 180px;">
+        <select id="activity-map-color-mode" class="select-input" style="max-width: 200px;">
           <option value="plain">Plain</option>
-          <option value="hr">Color by heart rate</option>
-          <option value="elevation">Color by elevation</option>
+          <option value="hr">Colour by heart rate</option>
+          <option value="elevation">Colour by elevation</option>
         </select>
         <span id="activity-map-meta" class="chart-sub"></span>
       </div>
@@ -650,6 +650,6 @@
     </div>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260521b"></script>
 </body>
 </html>
