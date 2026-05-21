@@ -15,7 +15,12 @@ from garmin_insights.db.memory import MemoryStore
 from garmin_insights.db.cache import CacheBuilder
 from garmin_insights.knowledge.medical import get_rules_summary_for_llm
 from garmin_insights.tools.analysis_tools import AnalysisEngine
-from garmin_insights.tools.query_tools import QueryToolHandler, get_all_tools_anthropic
+from garmin_insights.tools.query_tools import (
+    QueryToolHandler,
+    get_all_tools_anthropic,
+    _round_floats,
+    _strip_zero_lifestyle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -466,11 +471,22 @@ class HealthAgent:
             baselines = {}
             logger.warning("Portable prompt: baselines fetch failed: %s", e)
 
-        cycle_rows: list[dict] = []
+        # Merge menstrual cycle fields directly into daily summaries (keyed by date)
         try:
             df = self._repo.query_menstrual_cycle(start, end)
             if df is not None and not df.empty:
-                cycle_rows = df.to_dict(orient="records")
+                cycle_by_date: dict = {}
+                for row in df.reset_index().to_dict(orient="records"):
+                    d = str(row.get("date", ""))[:10]
+                    cycle_by_date[d] = {
+                        k: row[k] for k in ("current_day_of_cycle", "current_cycle_phase")
+                        if row.get(k) is not None
+                    }
+                summaries = [
+                    {**s, **cycle_by_date[str(s.get("date", ""))[:10]]}
+                    if str(s.get("date", ""))[:10] in cycle_by_date else s
+                    for s in summaries
+                ]
         except Exception:
             pass
 
@@ -482,23 +498,26 @@ class HealthAgent:
                 system_text_parts.append(text)
         system_text = "\n\n".join(system_text_parts)
 
-        sep = "═" * 60
+        sep = "-" * 40
         header_note = (
-            "You are about to be given the full system prompt and a snapshot of "
-            "the user's Garmin health data that a tool-calling agent would normally "
-            "fetch on demand. Since this is a plain chat window you have NO tools — "
-            "use only the inline data below. If a question can't be answered from "
-            "the snapshot, say so honestly instead of guessing."
+            "Full system prompt + pre-fetched Garmin data snapshot below. "
+            "You have NO tools — use only the inline data; say so honestly if a "
+            "question can't be answered from it."
         )
 
-        cycle_section = ""
-        if cycle_rows:
-            cycle_section = (
-                f"\n## Menstrual cycle ({start} → {end}, {len(cycle_rows)} rows)\n"
-                "```json\n"
-                f"{json.dumps(cycle_rows, indent=2, default=str)}\n"
-                "```\n"
-            )
+        # Convert to date-keyed dict — removes the repeated "date" field from every row
+        def _to_date_dict(rows: list[dict]) -> dict:
+            return {
+                str(s.get("date", ""))[:10]: {k: v for k, v in s.items() if k != "date"}
+                for s in rows
+            }
+
+        clean_summaries = _round_floats(_to_date_dict(_strip_zero_lifestyle(summaries)))
+        clean_baselines = _round_floats({
+            m: {k: v for k, v in vals.items() if v is not None}
+            for m, vals in baselines.items()
+            if any(v is not None for v in vals.values())
+        })
 
         return (
             f"{header_note}\n\n"
@@ -510,15 +529,14 @@ class HealthAgent:
             f"DATA SNAPSHOT (pre-fetched — treat as your tool results)\n"
             f"{sep}\n\n"
             f"## Date range: {start} → {end}\n\n"
-            f"## Baselines ({len(baselines)} metrics)\n"
+            f"## Baselines ({len(clean_baselines)} metrics)\n"
             "```json\n"
-            f"{json.dumps(baselines, indent=2, default=str)}\n"
+            f"{json.dumps(clean_baselines, default=str)}\n"
             "```\n\n"
-            f"## Daily summaries ({len(summaries)} days)\n"
+            f"## Daily summaries ({len(clean_summaries)} days, keyed by date)\n"
             "```json\n"
-            f"{json.dumps(summaries, indent=2, default=str)}\n"
-            "```\n"
-            f"{cycle_section}\n"
+            f"{json.dumps(clean_summaries, default=str)}\n"
+            "```\n\n"
             f"{sep}\n"
             f"USER QUESTION\n"
             f"{sep}\n\n"

@@ -451,6 +451,109 @@ async def activity_track(
         raise HTTPException(status_code=500, detail=str(ex))
 
 
+@app.get("/api/activities/{activity_id}/export")
+async def activity_export(
+    activity_id: int,
+    user: str = Query(default="default"),
+):
+    """Return a plain-text stats block for one activity — suitable for pasting into AI."""
+    bundle = _require_user(user)
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(
+            None, bundle.agent._repo.query_activity_export, activity_id
+        )
+    except Exception as ex:
+        logger.exception("Activity export query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    s = data["summary"]
+    g = data.get("gps", {})
+
+    def _fmt_duration(secs) -> str:
+        if secs is None:
+            return "—"
+        secs = int(secs)
+        h, m, sec = secs // 3600, (secs % 3600) // 60, secs % 60
+        return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+    def _fmt_pace(dist_m, secs) -> str:
+        if not dist_m or not secs or dist_m < 1:
+            return "—"
+        sec_per_km = secs / (dist_m / 1000)
+        m, s = int(sec_per_km // 60), int(sec_per_km % 60)
+        return f"{m}:{s:02d} /km"
+
+    def _fmt_speed(mps) -> str:
+        if mps is None:
+            return "—"
+        return f"{mps * 3.6:.1f} km/h"
+
+    def _zone_line(key, label) -> str:
+        val = s.get(key)
+        if val is None:
+            return ""
+        return f"  {label}: {_fmt_duration(val)}\n"
+
+    activity_time = s.get("time", "")
+    if hasattr(activity_time, "isoformat"):
+        activity_time = activity_time.isoformat()
+
+    dist_m = s.get("distance")
+    dist_km = f"{dist_m / 1000:.2f} km" if dist_m else "—"
+    activity_type = (s.get("activity_type") or "activity").title()
+    name = s.get("activity_name") or activity_type
+    location = s.get("location_name") or ""
+
+    lines = [
+        f"## {name} — {activity_time}",
+        "",
+        f"**Type:** {activity_type}" + (f" | {location}" if location else ""),
+        f"**Duration:** {_fmt_duration(s.get('elapsed_duration'))} total"
+        + (f" ({_fmt_duration(s.get('moving_duration'))} moving)" if s.get("moving_duration") else ""),
+        f"**Distance:** {dist_km}",
+        f"**Avg pace / speed:** {_fmt_pace(dist_m, s.get('elapsed_duration'))} / {_fmt_speed(s.get('average_speed'))}",
+        f"**Best pace / speed:** {_fmt_pace(dist_m, s.get('moving_duration'))} / {_fmt_speed(s.get('max_speed'))}",
+        f"**Calories:** {int(s['calories'])} kcal" + (f" (+ {int(s['bmr_calories'])} BMR)" if s.get("bmr_calories") else "")
+        if s.get("calories") else "",
+        "",
+        f"**Heart Rate:** avg {int(s['average_hr'])} bpm | max {int(s['max_hr'])} bpm"
+        if s.get("average_hr") and s.get("max_hr") else "",
+    ]
+
+    zones = (
+        _zone_line("hr_time_in_zone_1", "Zone 1") +
+        _zone_line("hr_time_in_zone_2", "Zone 2") +
+        _zone_line("hr_time_in_zone_3", "Zone 3") +
+        _zone_line("hr_time_in_zone_4", "Zone 4") +
+        _zone_line("hr_time_in_zone_5", "Zone 5")
+    )
+    if zones:
+        lines += ["**HR Zones:**", zones.rstrip()]
+
+    if g.get("elevation_gain_m") is not None:
+        lines += ["", f"**Elevation:** +{g['elevation_gain_m']} m gain / {g['elevation_loss_m']} m loss"]
+
+    for metric, label in [
+        ("cadence_spm", "Cadence"),
+        ("power_w", "Power"),
+        ("temp_c", "Temperature"),
+    ]:
+        avg_k, max_k = f"avg_{metric}", f"max_{metric}"
+        if g.get(avg_k) is not None:
+            unit = {"cadence_spm": "spm", "power_w": "W", "temp_c": "°C"}[metric]
+            lines.append(f"**{label}:** avg {g[avg_k]} {unit} | max {g[max_k]} {unit}")
+
+    if s.get("lap_count"):
+        lines.append(f"**Laps:** {int(s['lap_count'])}")
+
+    text = "\n".join(l for l in lines if l is not None)
+    return JSONResponse({"text": text, "activity_id": activity_id, "name": name})
+
+
 @app.get("/api/menstrual")
 async def menstrual(
     user: str = Query(default="default"),

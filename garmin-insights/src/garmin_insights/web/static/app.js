@@ -1980,7 +1980,7 @@ async function loadActivityMap(start, end) {
     const res = await fetch(`/api/activities/gps?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    activityList = data.activities || [];
+    activityList = (data.activities || []).slice().reverse(); // newest first
     if (!activityList.length) {
       section.style.display = 'none';
       return;
@@ -2002,6 +2002,28 @@ async function loadActivityMap(start, end) {
         renderActivityTrack();
       });
       modeSel.dataset.bound = '1';
+    }
+    const exportBtn = document.getElementById('activity-export-btn');
+    if (exportBtn && !exportBtn.dataset.bound) {
+      exportBtn.addEventListener('click', async () => {
+        const id = picker.value;
+        if (!id) return;
+        const params = new URLSearchParams();
+        addUserParam(params);
+        try {
+          exportBtn.textContent = 'Copying…';
+          const res = await fetch(`/api/activities/${id}/export?${params.toString()}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const ok = await copyToClipboard(data.text);
+          exportBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+          setTimeout(() => { exportBtn.textContent = 'Copy stats'; }, 2000);
+        } catch (e) {
+          console.error('Activity export failed:', e);
+          exportBtn.textContent = 'Copy stats';
+        }
+      });
+      exportBtn.dataset.bound = '1';
     }
     showActivityTrack(picker.value);
   } catch (e) {
@@ -2026,6 +2048,7 @@ async function showActivityTrack(activityId) {
   if (!activityId) return;
   const map = ensureMap();
   if (!map) return;
+  const exportBtn = document.getElementById('activity-export-btn');
   try {
     const params = new URLSearchParams();
     addUserParam(params);
@@ -2034,9 +2057,11 @@ async function showActivityTrack(activityId) {
     const data = await res.json();
     activityTrackPoints = (data.points || []).filter(p => p.latitude != null && p.longitude != null);
     activityTrackPoints.activityId = activityId;
+    if (exportBtn) exportBtn.style.display = '';
     renderActivityTrack();
   } catch (e) {
     console.error('Activity track load failed:', e);
+    if (exportBtn) exportBtn.style.display = 'none';
   }
 }
 

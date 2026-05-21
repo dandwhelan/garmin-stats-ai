@@ -13,17 +13,56 @@ from garmin_insights.tools.analysis_tools import AnalysisEngine
 logger = logging.getLogger(__name__)
 
 
+def _round_floats(obj: Any, ndigits: int = 1) -> Any:
+    """Recursively round all floats in a nested dict/list to ndigits decimal places."""
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, ndigits) for v in obj]
+    return obj
+
+
 def _clean_records(records: list[dict]) -> list[dict]:
-    """Strip None/NaN values from tool result dicts before JSON serialisation.
+    """Strip None/NaN values and round floats before JSON serialisation.
 
     Null fields add tokens without informing Claude — omitting them cuts
-    payload size by 20-30% on sparse tables (sleep, body composition, etc.).
+    payload size by 20-30% on sparse tables. Floats are rounded to 1 d.p.;
+    the model needs no more precision than that for health analytics.
     """
-    return [{k: v for k, v in row.items() if v is not None} for row in records]
+    return [
+        _round_floats({k: v for k, v in row.items() if v is not None})
+        for row in records
+    ]
+
+
+def _strip_zero_lifestyle(summaries: list[dict]) -> list[dict]:
+    """Convert lifestyle dicts to a compact string list, dropping zero entries.
+
+    {"Caffeine": {"status": 1, "value": 2.0}, "Alcohol": {"status": 0, "value": 0.0}}
+    becomes ["Caffeine: 2"] — status=0/value=0 entries are dropped entirely.
+    Binary occurrences (value=0 but status=1) become just the behavior name.
+    """
+    result = []
+    for s in summaries:
+        lf = s.get("lifestyle")
+        if lf:
+            items = []
+            for behavior, v in lf.items():
+                if v.get("status") == 0 and v.get("value") == 0.0:
+                    continue
+                val = v.get("value", 0.0)
+                items.append(f"{behavior}: {val:g}" if val else behavior)
+            s = {k: v for k, v in s.items() if k != "lifestyle"}
+            if items:
+                s["lifestyle"] = items
+        result.append(s)
+    return result
 
 
 def _df_to_clean_json(df) -> str:
-    """Convert a DataFrame to compact JSON with nulls stripped."""
+    """Convert a DataFrame to compact JSON with nulls stripped and floats rounded."""
     records = json.loads(df.to_json(orient="records"))
     return json.dumps(_clean_records(records))
 
@@ -56,7 +95,10 @@ class QueryToolHandler:
                 {k: v for k, v in s.items() if k in metrics or k == "date"}
                 for s in summaries
             ]
-        return json.dumps(_clean_records(summaries), default=str)
+        cleaned = _clean_records(_strip_zero_lifestyle(summaries))
+        by_date = {s["date"]: {k: v for k, v in s.items() if k != "date"}
+                   for s in cleaned if "date" in s}
+        return json.dumps(by_date, default=str)
 
     def get_sleep_data(self, start_date: str, end_date: str) -> str:
         df = self._repo.query_sleep_summary(start_date, end_date)
@@ -175,7 +217,11 @@ class QueryToolHandler:
     # ------------------------------------------------------------------
     def get_my_baselines(self) -> str:
         baselines = self._memory.get_baselines()
-        return json.dumps(baselines, default=str)
+        # Strip null sub-fields and drop metrics where everything is null
+        clean = {m: {k: v for k, v in vals.items() if v is not None}
+                 for m, vals in baselines.items()}
+        clean = {m: v for m, v in clean.items() if v}
+        return json.dumps(_round_floats(clean), default=str)
 
     def get_recent_insights(self, hours: int = 168) -> str:
         insights = self._memory.get_recent_insights(hours)

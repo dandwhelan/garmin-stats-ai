@@ -222,6 +222,49 @@ class SqliteRepo:
             logger.error("query_activity_gps failed: %s", e)
             return pd.DataFrame()
 
+    def query_activity_export(self, activity_id: int) -> dict:
+        """All stats for one activity — summary row + GPS-derived aggregates.
+
+        Returns a dict with keys:
+          summary  — full activity_summary row as a dict
+          gps      — GPS-derived aggregates (elevation, cadence, power, temp)
+                     only populated for fields that have non-null values
+        """
+        import numpy as np
+
+        # Full summary row
+        sq = "SELECT * FROM activity_summary WHERE activity_id = :aid LIMIT 1"
+        summary_df = self._query(sq, {"aid": activity_id})
+        if summary_df.empty:
+            return {}
+        # reset_index to bring time back as a column (it may be the index)
+        summary_df = summary_df.reset_index()
+        row = summary_df.iloc[0].where(summary_df.iloc[0].notna(), other=None).to_dict()
+
+        # GPS aggregates (no lat/lon)
+        gq = """
+            SELECT altitude, cadence, power, temperature
+            FROM activity_gps
+            WHERE activity_id = :aid
+            ORDER BY time
+        """
+        gps_df = self._query(gq, {"aid": activity_id})
+        gps: dict = {}
+        if not gps_df.empty:
+            alt = gps_df["altitude"].dropna()
+            if not alt.empty:
+                gains = alt.diff().clip(lower=0).sum()
+                losses = alt.diff().clip(upper=0).sum()
+                gps["elevation_gain_m"] = round(float(gains), 1)
+                gps["elevation_loss_m"] = round(float(losses), 1)
+            for col, label in [("cadence", "cadence_spm"), ("power", "power_w"), ("temperature", "temp_c")]:
+                series = gps_df[col].dropna() if col in gps_df.columns else pd.Series([], dtype=float)
+                if not series.empty and series.max() > 0:
+                    gps[f"avg_{label}"] = round(float(series.mean()), 1)
+                    gps[f"max_{label}"] = round(float(series.max()), 1)
+
+        return {"summary": row, "gps": gps}
+
     def query_menstrual_cycle(self, start: str, end: str) -> pd.DataFrame:
         q = (
             "SELECT date, cycle_start_date, current_day_of_cycle, current_cycle_phase, "

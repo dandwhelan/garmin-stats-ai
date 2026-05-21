@@ -1253,12 +1253,34 @@ def get_behavior_rules() -> list[InsightRule]:
     return [r for r in INSIGHT_RULES if r.trigger_behavior is not None]
 
 
+def _abbrev_citation(citation: str) -> str:
+    """Compress a citation string to [Author Year, Author Year] format.
+
+    Drops journal names and 'et al.' suffixes to reduce system-prompt tokens.
+    e.g. 'Drake et al., 2013, J Clin Sleep Med; Gardiner et al., 2023, ...'
+      -> '[Drake 2013, Gardiner 2023]'
+    """
+    parts = []
+    for segment in citation.split(";"):
+        tokens = [t.strip().rstrip(",") for t in segment.split(",") if t.strip()]
+        # Tokens: [AuthorName, optional 'et al.', Year, ...JournalWords...]
+        author = tokens[0].split()[0] if tokens else ""
+        # Find the year — first token that looks like a 4-digit number
+        year = next((t for t in tokens if t.isdigit() and len(t) == 4), "")
+        if author and year:
+            parts.append(f"{author} {year}")
+        elif author:
+            parts.append(author)
+    return f"[{', '.join(parts)}]" if parts else citation
+
+
 def get_rules_summary_for_llm() -> str:
     """Format all rules as a concise text block for the LLM system prompt.
 
     Each rule is emitted with its evidence tier, claim strength, measurement
     confidence (when not 'high'), and confounder list so the agent can match
     its output language to the strength of the evidence.
+    Summaries are truncated to the first sentence; citations are abbreviated.
     """
     lines = ["## Medical Evidence Knowledge Base\n"]
     current_cat = ""
@@ -1266,15 +1288,20 @@ def get_rules_summary_for_llm() -> str:
         if rule.category != current_cat:
             current_cat = rule.category
             lines.append(f"\n### {current_cat.title()}")
-        meta_parts = [f"Tier {rule.evidence_tier}", rule.claim_strength]
+        _claim_abbrev = {"strong_association": "strong", "weak_association": "weak",
+                          "causal": "causal", "hypothesis": "hypothesis"}
+        meta_parts = [rule.evidence_tier, _claim_abbrev.get(rule.claim_strength, rule.claim_strength)]
         if rule.measurement_confidence != "high":
-            meta_parts.append(f"{rule.measurement_confidence}-confidence measurement")
+            meta_parts.append("medium-conf")
         if rule.requires_user_context:
-            meta_parts.append("requires user-logged context")
+            meta_parts.append("needs-log")
         meta = ", ".join(meta_parts)
+        # First sentence only — mechanism detail is captured in the full rule
+        # objects used by InsightScanner; the LLM only needs the key claim.
+        summary = rule.research_summary.split(".")[0] + "."
         lines.append(
-            f"- **{rule.name}** [{meta}]: {rule.research_summary} "
-            f"(Source: {rule.research_citation})"
+            f"- **{rule.name}** [{meta}]: {summary} "
+            f"{_abbrev_citation(rule.research_citation)}"
         )
         if rule.confounders:
             lines.append(f"  Confounders: {', '.join(rule.confounders)}")

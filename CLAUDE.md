@@ -67,8 +67,8 @@ garmin-insights status        # check DB + API connectivity
 | File | Purpose |
 |------|---------|
 | `garmin-insights/src/garmin_insights/agent.py` | Core Claude agent — tool-calling loop, prompt caching, streaming, per-model thinking config. Dynamic system blocks (`_identity_block`, `_cycle_context_block`, `_evidence_tier_block`) inject the active user's name + biological sex, current cycle phase (for menstruating users), and the evidence-tier output rules that govern how confidently the model phrases findings. |
-| `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (Anthropic JSON schema) + handler methods |
-| `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard (auto cache-refresh + date params + cycle-field enrichment), scan endpoints (with optional date range), user/sync identity, `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`, `/api/menstrual` |
+| `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (Anthropic JSON schema) + handler methods. Token-efficiency helpers: `_round_floats` (1 d.p.), `_clean_records` (strips nulls + rounds), `_strip_zero_lifestyle` (drops zero-status entries, compacts to `["Behavior: N"]` strings). `get_daily_metrics` returns a date-keyed dict `{"YYYY-MM-DD": {...}}` (not an array) to remove repeated `"date"` fields. `get_my_baselines` strips null sub-fields. |
+| `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard (auto cache-refresh + date params + cycle-field enrichment), scan endpoints (with optional date range), user/sync identity, `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`, `/api/menstrual`, `/api/activities/{id}/export` |
 | `garmin-insights/src/garmin_insights/web/user_context.py` | Per-user agent + viz pool — one `HealthAgent` / `VisualizationService` / `LifestyleService` per `users/<id>.env`, lazily constructed |
 | `garmin-insights/src/garmin_insights/web/visualizations.py` | `VisualizationService` — intraday heatmap, sleep timeline, anomaly z-score calendar, correlation matrix, 90-day behavior impact |
 | `garmin-insights/src/garmin_insights/web/lifestyle_viz.py` | `LifestyleService` — 15 research-backed lifestyle analytics (SRI, social jet lag, illness-like recovery strain pattern, recovery debt, etc.) |
@@ -136,7 +136,7 @@ QueryToolHandler (tools/query_tools.py)
 
 - **Model**: defaults to `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-7` to opt into Opus
 - **Per-model thinking**: Opus → `{"type": "adaptive"}`; Sonnet (and any non-Opus) → `{"type": "enabled", "budget_tokens": 8000}`
-- **Prompt caching**: System prompt (medical knowledge with tier badges + confounders, ~27k chars) has `cache_control: {"type": "ephemeral"}` — cached after the first call, saving ~80% of system prompt tokens on repeat queries. Dynamic per-call blocks (`_today_block`, `_evidence_tier_block`, `_identity_block`, `_cycle_context_block`) are appended uncached so identity, date, cycle phase, and tier-language rules always reflect the latest state.
+- **Prompt caching**: System prompt (medical knowledge with tier badges + confounders, **~11.7k chars** after optimisation) has `cache_control: {"type": "ephemeral"}` — cached after the first call, saving ~80% of system prompt tokens on repeat queries. Dynamic per-call blocks (`_today_block`, `_evidence_tier_block`, `_identity_block`, `_cycle_context_block`) are appended uncached so identity, date, cycle phase, and tier-language rules always reflect the latest state. KB was reduced from ~27k: first-sentence summaries only, abbreviated citations (`[Author Year]`), abbreviated tier tags (`[A, strong]` not `[Tier A, strong_association]`).
 - **Tool loop**: Manual (not automatic function calling) — dispatches tool calls, appends results, loops until `stop_reason == "end_turn"` (max 10 rounds)
 - **Streaming**: `chat_stream()` generator used by the SSE endpoint; yields status messages during tool calls, final text when done
 
@@ -187,6 +187,9 @@ All data lives in a single `garmin.db`. Key tables:
 | `GET /api/lifestyle?start=&end=` | 15 lifestyle analytics: SRI, social jet lag, illness radar, recovery debt, inflammation index, resilience, BB decay, recovery cost, dose-response, caffeine cutoff, streak calendar, habit half-life, co-occurrence, fingerprint, trigger leaderboard | last 90 days |
 | `GET /api/intraday/heatmap?metric=&days=` | 24h × N-day matrix for `stress` / `body_battery` / `heart_rate` | 14 days |
 | `GET /api/menstrual?start=&end=` | Raw `menstrual_cycle` rows for the window — phase, day-of-cycle, flow, predicted length | last 30 days |
+| `GET /api/activities/gps?start=&end=` | Activities with GPS tracks in the window (summary + point count) | last 30 days |
+| `GET /api/activities/{id}/track` | GPS polyline for one activity (lat, lon, alt, HR, speed, cadence, power, temp) | — |
+| `GET /api/activities/{id}/export` | Formatted markdown stats block for one activity — all metrics except GPS coordinates. Used by the "Copy stats" clipboard button. | — |
 | `POST /api/scan` (body: `focus`, optional `start_date`, `end_date`) | Markdown AI report scoped to focus + optional window | focus-dependent |
 
 All endpoints share the `_resolve_range(start, end, default_days)` helper so omitting either bound falls back to "ending today, going back N days".
@@ -231,7 +234,9 @@ When fewer than 21 days of HRV/RHR baseline data are available, findings are tag
 - Today's data is always marked `is_complete=False` — the agent is instructed not to compare cumulative metrics (steps, calories) for today against baselines
 - The dashboard rebuilds the `daily_summaries` cache automatically (throttled to once per 60 s) so fresh fetcher data appears without restarting the web server
 - On startup the agent rebuilds the full 90-day cache
-- The medical knowledge base (`knowledge/medical.py`) contains **48 evidence-tier-graded insight rules** (14 Tier A, 23 Tier B, 11 Tier C) injected into the system prompt (covers sleep, lifestyle, recovery, training load, illness-like patterns, body composition, menstrual cycle, travel, and a meta-rule for multi-cause attribution)
+- The medical knowledge base (`knowledge/medical.py`) contains **48 evidence-tier-graded insight rules** (14 Tier A, 23 Tier B, 11 Tier C) injected into the system prompt (~11.7k chars after optimisation — covers sleep, lifestyle, recovery, training load, illness-like patterns, body composition, menstrual cycle, travel, and a meta-rule for multi-cause attribution)
+- **Portable prompt** (`build_portable_prompt`) — used by the "Copy prompt" button. Serialises the full system context + data snapshot for pasting into any external LLM. Data is minified (no indent), floats rounded to 1 d.p., baselines null-stripped, zero lifestyle entries dropped, lifestyle compacted to `["Behavior: N"]` strings, daily summaries as a date-keyed dict with menstrual cycle fields merged inline, separate cycle array eliminated.
+- **`get_daily_metrics` tool format** — returns `{"YYYY-MM-DD": {metrics...}}` (date-keyed dict, not array). Removes the repeated `"date"` field from every row and allows O(1) date lookup by the model.
 - For menstruating users the agent's system prompt also gets a dynamic "Current Menstrual Cycle Context" block listing today's phase + day. The block frames cycle phase as a **confounder / context label**, not a single explanation, and reminds the model that luteal-phase RHR↑ / HRV↓ is normal physiology — confounded by sleep loss, alcohol, late training, heat, and travel before it should be attributed to phase.
 - The user identity block is dynamic too — male users are explicitly told "this user does NOT have menstrual cycle data" so the model doesn't fabricate cycle interpretations
 - **BST / non-UTC timezone note**: `daily_stats.date` uses noon-UTC of the requested date as its timestamp, so rows are always labelled with the correct local calendar day regardless of timezone offset
