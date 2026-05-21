@@ -2,6 +2,9 @@
 
 A privacy-first health analytics platform: fetches data from Garmin Connect, stores it locally in SQLite, and uses Claude AI to provide actionable health insights via a web dashboard and chat interface.
 
+<img width="945" height="778" alt="image" src="https://github.com/user-attachments/assets/fe935c7f-1c88-457a-884a-430ef55922d9" />
+
+
 ## Project Structure
 
 - **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
