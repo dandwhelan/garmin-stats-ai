@@ -1744,6 +1744,23 @@ function renderMenstrual(entries) {
 let activityMap = null;
 let activityTrackLayer = null;
 let activityList = [];
+let activityTrackPoints = [];  // cached for re-rendering when color mode changes
+let activityColorMode = 'plain';
+
+// Map a normalized value [0..1] to a brightness-graded HSL color.
+// Higher value -> brighter (higher lightness, same hue). Returns a CSS color.
+function gradientColor(t, hue) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const lightness = 25 + clamped * 50;  // 25% (dark) -> 75% (bright)
+  const saturation = 85;
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+}
+
+function gradientCssBar(hue) {
+  const stops = [];
+  for (let i = 0; i <= 10; i++) stops.push(gradientColor(i / 10, hue));
+  return `linear-gradient(90deg, ${stops.join(', ')})`;
+}
 
 async function loadActivityMap(start, end) {
   const section = document.getElementById('activity-map-section');
@@ -1771,6 +1788,14 @@ async function loadActivityMap(start, end) {
     if (!picker.dataset.bound) {
       picker.addEventListener('change', () => showActivityTrack(picker.value));
       picker.dataset.bound = '1';
+    }
+    const modeSel = document.getElementById('activity-map-color-mode');
+    if (modeSel && !modeSel.dataset.bound) {
+      modeSel.addEventListener('change', () => {
+        activityColorMode = modeSel.value;
+        renderActivityTrack();
+      });
+      modeSel.dataset.bound = '1';
     }
     showActivityTrack(picker.value);
   } catch (e) {
@@ -1801,28 +1826,94 @@ async function showActivityTrack(activityId) {
     const res = await fetch(`/api/activities/${activityId}/track?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const points = (data.points || []).filter(p => p.latitude != null && p.longitude != null);
-    if (activityTrackLayer) {
-      map.removeLayer(activityTrackLayer);
-      activityTrackLayer = null;
-    }
-    const meta = document.getElementById('activity-map-meta');
-    if (!points.length) {
-      if (meta) meta.textContent = 'No GPS points for this activity';
-      return;
-    }
-    const latlngs = points.map(p => [p.latitude, p.longitude]);
-    activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 4, opacity: 0.85 }).addTo(map);
-    map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
-
-    const act = activityList.find(a => String(a.activity_id) === String(activityId));
-    if (meta && act) {
-      const km = ((act.distance || 0) / 1000).toFixed(2);
-      const hr = act.average_hr ? ` · ${Math.round(act.average_hr)} bpm avg` : '';
-      meta.textContent = `${points.length} GPS points · ${km} km${hr}`;
-    }
+    activityTrackPoints = (data.points || []).filter(p => p.latitude != null && p.longitude != null);
+    activityTrackPoints.activityId = activityId;
+    renderActivityTrack();
   } catch (e) {
     console.error('Activity track load failed:', e);
+  }
+}
+
+function clearActivityTrackLayer(map) {
+  if (Array.isArray(activityTrackLayer)) {
+    activityTrackLayer.forEach(l => map.removeLayer(l));
+  } else if (activityTrackLayer) {
+    map.removeLayer(activityTrackLayer);
+  }
+  activityTrackLayer = null;
+}
+
+function renderActivityTrack() {
+  const map = ensureMap();
+  if (!map) return;
+  clearActivityTrackLayer(map);
+  const meta = document.getElementById('activity-map-meta');
+  const legend = document.getElementById('activity-map-legend');
+  const points = activityTrackPoints;
+  if (!points || !points.length) {
+    if (meta) meta.textContent = 'No GPS points for this activity';
+    if (legend) legend.style.display = 'none';
+    return;
+  }
+
+  const mode = activityColorMode;
+  // Mode -> (point accessor, hue, units, label)
+  const modeConfig = {
+    hr:        { val: p => p.heart_rate, hue: 0,   unit: ' bpm', label: 'Heart rate' },
+    elevation: { val: p => p.altitude,   hue: 140, unit: ' m',   label: 'Elevation' },
+  };
+  const cfg = modeConfig[mode];
+
+  if (!cfg) {
+    // Plain — single thick polyline
+    const latlngs = points.map(p => [p.latitude, p.longitude]);
+    activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 6, opacity: 0.9 }).addTo(map);
+    map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
+    if (legend) legend.style.display = 'none';
+  } else {
+    const vals = points.map(cfg.val).filter(v => typeof v === 'number' && Number.isFinite(v));
+    if (!vals.length) {
+      // Fall back to plain line if metric missing
+      const latlngs = points.map(p => [p.latitude, p.longitude]);
+      activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 6, opacity: 0.9 }).addTo(map);
+      map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
+      if (legend) legend.style.display = 'none';
+      if (meta) meta.textContent = `${points.length} GPS points · ${cfg.label} unavailable for this activity`;
+      return;
+    }
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const span = hi - lo || 1;
+    // Draw one short polyline per segment, colored by the segment's start-point value.
+    const segments = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      const v = cfg.val(a);
+      const t = (typeof v === 'number' && Number.isFinite(v)) ? (v - lo) / span : 0;
+      const seg = L.polyline(
+        [[a.latitude, a.longitude], [b.latitude, b.longitude]],
+        { color: gradientColor(t, cfg.hue), weight: 6, opacity: 0.95 },
+      ).addTo(map);
+      segments.push(seg);
+    }
+    activityTrackLayer = segments;
+    const bounds = L.latLngBounds(points.map(p => [p.latitude, p.longitude]));
+    map.fitBounds(bounds, { padding: [20, 20] });
+
+    if (legend) {
+      legend.style.display = '';
+      const fmt = mode === 'elevation' ? (v => Math.round(v)) : (v => Math.round(v));
+      document.getElementById('activity-map-legend-min').textContent = `${fmt(lo)}${cfg.unit}`;
+      document.getElementById('activity-map-legend-max').textContent = `${fmt(hi)}${cfg.unit}`;
+      document.getElementById('activity-map-legend-bar').style.background = gradientCssBar(cfg.hue);
+    }
+  }
+
+  const act = activityList.find(a => String(a.activity_id) === String(points.activityId || activityTrackPoints.activityId));
+  if (meta && act) {
+    const km = ((act.distance || 0) / 1000).toFixed(2);
+    const hr = act.average_hr ? ` · ${Math.round(act.average_hr)} bpm avg` : '';
+    meta.textContent = `${points.length} GPS points · ${km} km${hr}`;
   }
 }
 

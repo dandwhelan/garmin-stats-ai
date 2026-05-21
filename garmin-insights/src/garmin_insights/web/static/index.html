@@ -257,9 +257,19 @@
       </div>
       <div class="activity-map-controls">
         <select id="activity-map-picker" class="select-input"></select>
+        <select id="activity-map-color-mode" class="select-input" style="max-width: 180px;">
+          <option value="plain">Plain</option>
+          <option value="hr">Color by heart rate</option>
+          <option value="elevation">Color by elevation</option>
+        </select>
         <span id="activity-map-meta" class="chart-sub"></span>
       </div>
       <div id="activity-map" style="height: 420px; border-radius: 8px; background: #1a1d27;"></div>
+      <div id="activity-map-legend" class="activity-map-legend" style="display:none;">
+        <span class="legend-label" id="activity-map-legend-min"></span>
+        <div class="legend-gradient" id="activity-map-legend-bar"></div>
+        <span class="legend-label" id="activity-map-legend-max"></span>
+      </div>
     </section>
 
     <section class="chart-section" id="menstrual-section" style="display:none;">

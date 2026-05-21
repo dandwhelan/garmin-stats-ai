@@ -1217,3 +1217,19 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   min-width: 240px;
 }
 #activity-map .leaflet-tile { filter: brightness(0.85) contrast(1.05); }
+.activity-map-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--muted, #9ca3af);
+}
+.activity-map-legend .legend-gradient {
+  flex: 0 0 220px;
+  height: 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}
+.activity-map-legend .legend-label { min-width: 60px; }
+.activity-map-legend .legend-label:last-child { text-align: right; }
