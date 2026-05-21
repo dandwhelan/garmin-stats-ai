@@ -156,6 +156,8 @@ python -m garmin_grafana.garmin_fetch
 
 This creates `garmin.db` and populates it with your health history (up to 1 year back on first run). The fetcher loop then re-checks every 5 minutes for new watch syncs.
 
+On the first tick of each calendar day the fetcher also re-pulls the trailing 7 days, so late-logged lifestyle entries, sleep notes, or any other retroactive edits made in Garmin Connect for the past week get picked up — all upserts are idempotent on natural keys, so the daily re-pull doesn't duplicate anything. Override the window with `RESYNC_WINDOW_DAYS=N` (set to `0` to disable).
+
 ### Step 2 — Start the web interface
 
 ```bash
@@ -174,7 +176,8 @@ The web interface has three views:
 
 Recovery & Activity:
 - 14-day Trend (Sleep / RHR / HRV / Battery / Steps toggle), Sleep Architecture, Recovery Signals (normalized to 7-day baseline), Activity Intensity, Stress vs Body Battery
-- Intraday Heatmap — 24h × N-day matrix for Stress / Body Battery / Heart Rate
+- Intraday Heatmap — 24h × N-day matrix for Stress / Body Battery / Heart Rate / Steps. Stress and Body Battery use Garmin's published bands (Rest / Low / Medium / High for stress; Low → Very High for Body Battery) with a fixed 0–100 scale and a band legend whose swatches are taken directly from the cell palette, so a cell's colour tells you the band at a glance. Heart Rate and Steps use a winsorised p2–p98 gradient so a couple of outlier hours don't compress the colour scale.
+- Activity Map — GPS track viewer (Leaflet + OpenStreetMap). Pick any activity in the date range; the polyline auto-fits to the route. "Colour by" selector switches between Plain (deep orange line) / Heart rate (traffic-light green → amber → red, normalised per activity) / Elevation (green lightness ramp). Legend bar below the map matches the line.
 - Sleep Timeline (bedtime/waketime drift) and Anomaly Calendar (z-score vs 30-day baseline)
 - Behavior Impact (last 90 days, Sleep / HRV / RHR toggle) and Metric Correlation Matrix
 
@@ -260,7 +263,7 @@ Raw Garmin data           →  Daily summary cache    →  Statistical analysis 
 - **Multi-signal illness detector** — combines RHR + HRV + respiration z-scores against personal baseline (Quer 2021)
 - **Social jet lag detector** — compares weekday vs. weekend sleep duration variance
 
-**3. Claude AI agent** — Uses `claude-sonnet-4-6` by default (or `claude-opus-4-7` if `CLAUDE_MODEL` is set) with extended thinking. The agent has 17 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
+**3. Claude AI agent** — Uses `claude-sonnet-4-6` by default (or `claude-opus-4-7` if `CLAUDE_MODEL` is set) with extended thinking. The agent has 18 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
 
 ### What the agent can answer
 
@@ -273,7 +276,7 @@ Raw Garmin data           →  Daily summary cache    →  Statistical analysis 
 
 ## Medical Knowledge Base
 
-The agent has **37 evidence-backed insight rules** in `garmin-insights/src/garmin_insights/knowledge/medical.py`. Each rule includes a research citation, a plain-language summary of the finding, and the metric pattern it triggers on. The full knowledge base is injected into the AI's system prompt and cached, so every response is grounded in published research.
+The agent has **45 evidence-backed insight rules** in `garmin-insights/src/garmin_insights/knowledge/medical.py`. Each rule includes a research citation, a plain-language summary of the finding, and the metric pattern it triggers on. The full knowledge base is injected into the AI's system prompt and cached, so every response is grounded in published research.
 
 ### Studies referenced
 
@@ -298,14 +301,14 @@ The agent has **37 evidence-backed insight rules** in `garmin-insights/src/garmi
 | **Vigorous exercise before bed** | Stutz et al., 2019, *Sports Medicine* |
 | **Cold-water immersion and parasympathetic tone** | Mooventhan & Nivethitha, 2014, *North American Journal of Medical Sciences* |
 | **Morning sunlight and circadian rhythm** | Figueiro et al., 2017, *Sleep Health* |
-| **Allergic inflammation and HR/sleep** | Galli et al., 2008, *Nature* |
+| **Allergic inflammation and HR/sleep** | Shaaban et al., 2008, *European Respiratory Journal*; Togias, 2000, *Journal of Allergy and Clinical Immunology* |
 | **Migraine prodrome and HRV** | Miglis, 2018, *Current Pain & Headache Reports* |
 | **Stretching and HPA-axis activation** | Corey et al., 2012, *PM&R Journal* |
 | **Diet quality and energy/fatigue** | Haghighatdoost et al., 2012, *Public Health Nutrition* |
 | **Heavy meals and sleep architecture** | Crispim et al., 2011, *Journal of Clinical Sleep Medicine* |
 | **Late meals and circadian disruption** | Kinsey & Ormsbee, 2015, *Nutrients* |
 | **Intermittent fasting and metabolic flexibility** | de Cabo & Mattson, 2019, *New England Journal of Medicine* |
-| **Deep sleep and memory consolidation** | Walker, 2017, *Why We Sleep (UC Berkeley)* |
+| **Deep-sleep duration norms (13–23%)** | Ohayon et al., 2004, *Sleep* (normative meta-analysis); AASM Clinical Practice Guidelines |
 | **REM sleep decline and mortality risk** | Leary et al., 2020, *JAMA Neurology* |
 | **Social jet lag and metabolic health** | Wittmann et al., 2006, *Chronobiology International* |
 | **Sedentary behaviour and stress** | Choi et al., 2019, *JAMA Internal Medicine* |
@@ -313,22 +316,33 @@ The agent has **37 evidence-backed insight rules** in `garmin-insights/src/garmi
 | **Visceral fat and HRV** | Felber Dietrich et al., 2006, *European Heart Journal* |
 | **Hydration and resting heart rate** | Watso & Farquhar, 2019, *Nutrients* |
 | **Overnight SpO2 and sleep-disordered breathing** | Berry et al., 2017, *AASM Clinical Practice Guidelines* |
-| **Sleeping HR rises in luteal phase** | Shilaih et al., 2017, *Scientific Reports* |
-| **Temperature / HR / HRV across the menstrual cycle (Oura)** | Maijala et al., 2022, *International Journal of Women's Health* |
+| **Period-day RHR/HRV shift (luteal phase physiology)** | Nakagawa et al., 2020, *Journal of Clinical Medicine*; Brar et al., 2015, *Journal of Women's Health* |
+| **Sleeping HR rises in luteal phase** *(dashboard tooltip)* | Shilaih et al., 2017, *Scientific Reports* |
+| **Temperature / HR / HRV across the menstrual cycle (Oura)** *(dashboard tooltip)* | Maijala et al., 2022, *International Journal of Women's Health* |
 | **ML classification of cycle phase from HR** | Lyu et al., 2025, *Computers in Biology and Medicine* |
 | **Sleep loss as a cycle-phase confounder** | Ultrahuman, 2025, *bioRxiv* |
 | **Cycle phase × sleep architecture** | Baker & Driver, 2007, *Sleep Medicine Reviews* |
 | **Follicular-phase training window** | Janse de Jonge, 2019, *Sports Medicine* |
+| **DOMS — RHR/HRV signature mimics illness** | Cheung et al., 2003, *Sports Medicine*; Twist & Eston, 2005, *Journal of Sports Sciences* |
+| **Pet-in-bedroom sleep fragmentation** | Patel et al., 2017, *Mayo Clinic Proceedings* |
+| **Acute emotional stress and HRV suppression** | Thayer & Lane, 2009, *Neuroscience & Biobehavioral Reviews* |
+| **Travel / first-night effect on sleep** | Waterhouse et al., 2007, *Journal of Sleep Research* |
+| **Weekly activity guidelines (moderate / vigorous minutes)** | WHO Physical Activity Guidelines, 2020; Bull et al., 2020, *British Journal of Sports Medicine* |
+| **Fitness age from VO2 max (Garmin's age-sex normative model)** | Nes et al., 2013, *Medicine & Science in Sports & Exercise* |
+| **Alcohol — next-morning RHR elevation** | Sagawa et al., 2011, *Alcohol & Alcoholism* |
 
 ### What the rules cover
 
-- **Sleep** (8 rules) — caffeine timing, alcohol, screens, heavy/late meals, deep-sleep ratio, REM decline, fragmentation, SpO2
-- **Recovery** (5 rules) — HRV decline, multi-signal illness, respiration, overreaching, cardio reserve drift
-- **Stress** (3 rules) — cortisol patterns, body battery floor, sedentary stress
-- **Exercise & training** (5 rules) — exercise sleep benefit, late workouts, ACWR injury risk, grey-zone training, VO2 max plateau
-- **Lifestyle** (10 rules) — caffeine, cold exposure, sunlight, allergies, migraines, stretching, meal quality, fasting, hydration
+Auto-counted from `medical.py` — **45 rules total**, broken down by category as tagged on each `InsightRule`:
+
+- **Sleep** (13 rules) — caffeine timing, alcohol, screens, heavy/late meals, deep-sleep norms, REM decline, fragmentation, SpO2, sleep regularity, jet lag direction, OSA cardiovascular risk
+- **Lifestyle** (11 rules) — cold exposure, sunlight, allergies, migraines, stretching, meal quality, fasting, hydration, alcohol acute HR, period-day RHR/HRV, sedentary stress
+- **Exercise & training** (8 rules) — exercise sleep benefit, late workouts, ACWR injury risk, grey-zone training, VO2 max plateau, VO2 max longevity, weekly activity targets, follicular training window
+- **Recovery** (7 rules) — HRV decline (overtraining), multi-signal illness, respiration, overreaching, DOMS, cycle-vs-sleep-loss confound, PMS sleep architecture
+- **Stress** (5 rules) — cortisol patterns, body battery floor, autonomic HRV / cognition, allostatic load, sedentary stress
 - **Body composition** (1 rule) — visceral fat / HRV coupling
-- **Menstrual cycle** (3 rules) — follicular training window (Janse de Jonge 2019), cycle vs sleep-loss confound (Ultrahuman 2025), PMS sleep architecture (Baker 2007)
+
+Menstrual-cycle-aware rules are spread across the categories they affect (Recovery, Lifestyle, Exercise) rather than living in a separate bucket.
 
 ### Important disclaimers
 
@@ -342,8 +356,8 @@ The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUD
 
 - **Per-model thinking** — Opus uses `adaptive` thinking (Claude decides depth); Sonnet uses `enabled` with an 8,000-token budget. Both reason about health patterns before responding.
 - **Prompt caching** — the large medical knowledge system prompt (~2.6k tokens) is cached, reducing API costs by ~80% on repeat queries
-- **17 analysis tools** — query daily metrics, sleep, activity, body composition, training readiness, lifestyle behaviours; detect trends, anomalies, correlations; the multi-signal illness scanner; social-jet-lag detector; baselines; user profile / session memory
-- **34 medical rules** — full knowledge base injected into the system prompt
+- **18 analysis tools** — query daily metrics, sleep, activity, body composition, training readiness, lifestyle behaviours, menstrual cycle; detect trends, anomalies, correlations; the multi-signal illness scanner; social-jet-lag detector; baselines; user profile / session memory
+- **45 medical rules** — full knowledge base injected into the system prompt
 - **Per-session memory** — each browser tab has its own conversation history, separate from CLI sessions
 - **True token streaming** — the web chat uses Server-Sent Events to stream tokens as Claude generates them
 - **User identity in the header** — web UI shows a name badge (`DISPLAY_NAME` or name derived from the Garmin email) and a colour-coded last-sync badge that auto-refreshes every 30 s (green < 10 min, amber < 60 min, red otherwise). In multi-user mode a dropdown switches between configured users; the badge, AI agent, chat session, and dashboard all repoint to the selected user.
@@ -354,7 +368,7 @@ The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUD
 The dashboard's secondary charts are powered by two Python services that aggregate the SQLite tables in-process, alongside the AI agent:
 
 - **`web/visualizations.py` — `VisualizationService`**: intraday heatmap (stress/HR/body battery), sleep timeline, anomaly z-score calendar, metric correlation matrix, 90-day behavior-impact comparison
-- **`web/lifestyle_viz.py` — `LifestyleService`**: 15 research-backed analytics including Sleep Regularity Index (Windred 2024), social jet lag, illness radar (Quer 2021), inflammation index, recovery debt, stress resilience, body battery decay slope, behavior dose-response, caffeine cutoff comparison (Drake 2013), recovery cost, streak calendar, habit half-life, co-occurrence matrix, hour-of-day stress fingerprint, stress trigger leaderboard
+- **`web/lifestyle_viz.py` — `LifestyleService`**: 21 research-backed analytics including Sleep Regularity Index (Windred 2024), social jet lag (Wittmann 2006), illness radar (Quer 2021), inflammation index, recovery debt, stress resilience, body battery decay slope, behavior dose-response, caffeine cutoff comparison (Drake 2013), recovery cost, streak calendar, habit half-life, co-occurrence matrix, hour-of-day stress fingerprint, stress trigger leaderboard, step-count distribution, fitness-age delta, WHO weekly-intensity target tracking (Bull 2020), cycle-day HRV/RHR (Lyu 2025), per-cycle yearly view, plus a research-signal scorecard
 - **Three endpoints** — `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`. All accept `start`/`end` query params and fan out service calls via `asyncio.gather` for parallel loading.
 
 ## Privacy
