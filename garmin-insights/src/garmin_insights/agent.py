@@ -28,6 +28,7 @@ You have access to tools that query the user's health data, analyze \
 trends and correlations, and recall/save context from previous sessions.
 
 ## Communication Style
+- Do not use strikethrough (`~~text~~`) under any circumstance. If you need to correct an earlier value or statement, restate the correct figure plainly — never cross out the old one. Strikethrough is rendered as a literal crossed-out span in the UI and confuses the reader.
 - Be conversational but precise with numbers
 - Ask 1-3 brief follow-up questions when a metric is out-of-range (e.g., how they felt, what they ate/drank, stressors, travel, illness symptoms, late workouts)
 - Always cite the date range you analyzed
@@ -193,9 +194,6 @@ class HealthAgent:
         except Exception as e:
             logger.warning("Cache refresh failed: %s", e)
 
-    # Anthropic caches at 1024-token boundaries; ~4096 chars is a safe proxy.
-    _CACHE_THRESHOLD_CHARS = 4096
-
     def _dispatch_tool_call(self, tool_use_block) -> str:
         """Execute a tool call and return the result string."""
         name = tool_use_block.name
@@ -215,17 +213,16 @@ class HealthAgent:
             return json.dumps({"error": f"Tool {name} failed: {str(e)}"})
 
     def _build_tool_result(self, tool_id: str, result: str) -> dict:
-        """Wrap a tool result, adding cache_control for large payloads.
+        """Wrap a tool result.
 
-        Large results (e.g. 30-day daily metrics) are re-sent on every subsequent
-        round. Marking them ephemeral means Anthropic serves them from cache after
-        the first round, cutting repeat-round input costs by ~80% for those tokens.
+        We deliberately do NOT attach cache_control here. The Anthropic API caps
+        cache_control markers at 4 per request; the system prompt and tools list
+        already claim 2 of those, and a multi-tool-round conversation can easily
+        produce 3+ large tool results — which would push the total over 4 and
+        cause a 400. The static system + tools caches alone deliver most of the
+        cost saving; per-result caching is not worth the failure mode.
         """
-        if len(result) >= self._CACHE_THRESHOLD_CHARS:
-            content = [{"type": "text", "text": result, "cache_control": {"type": "ephemeral"}}]
-        else:
-            content = result
-        return {"type": "tool_result", "tool_use_id": tool_id, "content": content}
+        return {"type": "tool_result", "tool_use_id": tool_id, "content": result}
 
     # ------------------------------------------------------------------
     # Non-streaming chat (CLI / scan reports)

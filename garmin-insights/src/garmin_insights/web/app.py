@@ -158,7 +158,7 @@ def _resolve_user_identity(settings) -> dict[str, str]:
         name = explicit
     elif email:
         local = email.split("@", 1)[0]
-        # "helen.wadge" -> "Helen Wadge"
+        # "jane.doe" -> "Jane Doe"
         name = " ".join(p.capitalize() for p in local.replace("_", ".").split("."))
     else:
         name = "User"

@@ -2,6 +2,13 @@
    Garmin Health Insights — Frontend app
    ========================================================= */
 
+// Neutralise GFM strikethrough — the model occasionally emits `~~text~~`
+// when self-correcting, and a crossed-out span in the chat is confusing.
+// Render <del> tokens as plain text instead.
+if (typeof marked !== 'undefined' && typeof marked.use === 'function') {
+  marked.use({ renderer: { del(text) { return text; } } });
+}
+
 // ---- Active user ----
 const USER_KEY = 'garmin-active-user';
 let activeUser = localStorage.getItem(USER_KEY) || 'default';
@@ -1435,6 +1442,34 @@ const sendBtn = document.getElementById('send-btn');
 const resetBtn = document.getElementById('reset-btn');
 const historyBtn = document.getElementById('history-btn');
 
+// Welcome-message collapse toggle (persisted)
+const WELCOME_KEY = 'garmin-chat-welcome-collapsed';
+const welcomeEl = document.getElementById('chat-welcome');
+const welcomeToggle = document.getElementById('chat-welcome-toggle');
+function applyWelcomeState() {
+  if (!welcomeEl) return;
+  const collapsed = localStorage.getItem(WELCOME_KEY) === '1';
+  welcomeEl.classList.toggle('collapsed', collapsed);
+  if (welcomeToggle) welcomeToggle.textContent = collapsed ? '+' : '−';
+}
+if (welcomeToggle) {
+  welcomeToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const nowCollapsed = !welcomeEl.classList.contains('collapsed');
+    localStorage.setItem(WELCOME_KEY, nowCollapsed ? '1' : '0');
+    applyWelcomeState();
+  });
+}
+if (welcomeEl) {
+  welcomeEl.addEventListener('click', () => {
+    if (welcomeEl.classList.contains('collapsed')) {
+      localStorage.setItem(WELCOME_KEY, '0');
+      applyWelcomeState();
+    }
+  });
+}
+applyWelcomeState();
+
 // Per-browser session id, persisted in localStorage
 const SESSION_KEY = 'garmin-chat-session';
 let sessionId = localStorage.getItem(SESSION_KEY) || null;
@@ -1756,9 +1791,19 @@ function gradientColor(t, hue) {
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
-function gradientCssBar(hue) {
+// Traffic-light gradient: low=green (120°), mid=amber (45°), high=red (0°).
+// Hue ramps linearly within each half so the amber sits exactly at t=0.5.
+function trafficLightColor(t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const hue = clamped < 0.5
+    ? 120 - (120 - 45) * (clamped / 0.5)    // green 120 -> amber 45
+    : 45 - 45 * ((clamped - 0.5) / 0.5);    // amber 45 -> red 0
+  return `hsl(${hue}, 80%, 48%)`;
+}
+
+function gradientCssBar(generator) {
   const stops = [];
-  for (let i = 0; i <= 10; i++) stops.push(gradientColor(i / 10, hue));
+  for (let i = 0; i <= 10; i++) stops.push(generator(i / 10));
   return `linear-gradient(90deg, ${stops.join(', ')})`;
 }
 
@@ -1857,17 +1902,17 @@ function renderActivityTrack() {
   }
 
   const mode = activityColorMode;
-  // Mode -> (point accessor, hue, units, label)
+  // Mode -> (point accessor, colour generator t->css, units, label)
   const modeConfig = {
-    hr:        { val: p => p.heart_rate, hue: 285, unit: ' bpm', label: 'Heart rate' },
-    elevation: { val: p => p.altitude,   hue: 140, unit: ' m',   label: 'Elevation' },
+    hr:        { val: p => p.heart_rate, colorFn: trafficLightColor,             unit: ' bpm', label: 'Heart rate' },
+    elevation: { val: p => p.altitude,   colorFn: t => gradientColor(t, 140),    unit: ' m',   label: 'Elevation' },
   };
   const cfg = modeConfig[mode];
 
   if (!cfg) {
     // Plain — single thick polyline
     const latlngs = points.map(p => [p.latitude, p.longitude]);
-    activityTrackLayer = L.polyline(latlngs, { color: '#c084fc', weight: 6, opacity: 0.95 }).addTo(map);
+    activityTrackLayer = L.polyline(latlngs, { color: '#ea580c', weight: 6, opacity: 0.95 }).addTo(map);
     map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
     if (legend) legend.style.display = 'none';
   } else {
@@ -1875,7 +1920,7 @@ function renderActivityTrack() {
     if (!vals.length) {
       // Fall back to plain line if metric missing
       const latlngs = points.map(p => [p.latitude, p.longitude]);
-      activityTrackLayer = L.polyline(latlngs, { color: '#c084fc', weight: 6, opacity: 0.95 }).addTo(map);
+      activityTrackLayer = L.polyline(latlngs, { color: '#ea580c', weight: 6, opacity: 0.95 }).addTo(map);
       map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
       if (legend) legend.style.display = 'none';
       if (meta) meta.textContent = `${points.length} GPS points · ${cfg.label} unavailable for this activity`;
@@ -1892,7 +1937,7 @@ function renderActivityTrack() {
       const t = (typeof v === 'number' && Number.isFinite(v)) ? (v - lo) / span : 0;
       const seg = L.polyline(
         [[a.latitude, a.longitude], [b.latitude, b.longitude]],
-        { color: gradientColor(t, cfg.hue), weight: 6, opacity: 0.95 },
+        { color: cfg.colorFn(t), weight: 6, opacity: 0.95 },
       ).addTo(map);
       segments.push(seg);
     }
@@ -1905,7 +1950,7 @@ function renderActivityTrack() {
       const fmt = mode === 'elevation' ? (v => Math.round(v)) : (v => Math.round(v));
       document.getElementById('activity-map-legend-min').textContent = `${fmt(lo)}${cfg.unit}`;
       document.getElementById('activity-map-legend-max').textContent = `${fmt(hi)}${cfg.unit}`;
-      document.getElementById('activity-map-legend-bar').style.background = gradientCssBar(cfg.hue);
+      document.getElementById('activity-map-legend-bar').style.background = gradientCssBar(cfg.colorFn);
     }
   }
 

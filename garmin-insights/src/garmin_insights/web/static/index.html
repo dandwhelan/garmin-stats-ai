@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/style.css?v=20260521b" />
+  <link rel="stylesheet" href="/static/style.css?v=20260521c" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -629,8 +629,9 @@
   <main id="tab-chat" class="tab-panel">
     <div class="chat-container">
       <div class="chat-messages" id="chat-messages">
-        <div class="message assistant">
+        <div class="message assistant welcome" id="chat-welcome">
           <div class="message-bubble">
+            <button class="welcome-toggle" id="chat-welcome-toggle" title="Collapse welcome">−</button>
             <strong>Health Agent</strong>
             <p>Hello! I'm your personal health insights agent. I can analyse your Garmin data — ask me about your sleep, heart rate, HRV, activity history, lifestyle patterns, and more.</p>
             <p>Try: <em>"How has my sleep been this week?"</em> or <em>"Does alcohol affect my HRV?"</em></p>
@@ -650,6 +651,6 @@
     </div>
   </main>
 
-  <script src="/static/app.js?v=20260521b"></script>
+  <script src="/static/app.js?v=20260521c"></script>
 </body>
 </html>
