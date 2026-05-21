@@ -68,7 +68,9 @@ bash scripts/run-helen.sh      # helen.env: START_WEB=true, WEB_PORT=8081 → fe
 
 | File | Purpose |
 |------|---------|
-| `garmin-insights/src/garmin_insights/agent.py` | Core AI agent — tool-calling loop, prompt caching, streaming. `_identity_block()` injects the active user's name + biological sex; `_cycle_context_block()` adds today's menstrual phase + day for female users. |
+| `garmin-insights/src/garmin_insights/agent.py` | Core AI agent — tool-calling loop, prompt caching, streaming. Dynamic system blocks: `_identity_block()` (user name + biological sex), `_cycle_context_block()` (today's menstrual phase + day, framed as a confounder), and `_evidence_tier_block()` (tier-language output rules + wording substitutions so the agent never "diagnoses"). |
+| `garmin-insights/src/garmin_insights/knowledge/medical.py` | 48 evidence-tier-graded `InsightRule` entries (14 Tier A, 23 Tier B, 11 Tier C). Each rule carries `evidence_tier`, `claim_strength`, `measurement_confidence`, `confounders`, and `requires_user_context`. Includes meta-rule `multi_cause_recovery_strain`, `baseline_reliability_guard`, and `travel_circadian_disruption`. |
+| `garmin-insights/src/garmin_insights/insights/proactive.py` | `InsightScanner` — local anomaly + behaviour + trend detection. Findings carry tier metadata; `scan_composite_strain()` collapses concurrent RHR/HRV/respiration anomalies into a single ranked-contributor "illness-like recovery strain pattern" finding. |
 | `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (JSON schema) + handler methods — the surface the AI calls to read the DB. |
 | `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server. Routes: SSE chat, dashboard (auto-cache-refresh + date params + cycle-field enrichment), scans (`/api/scan`), `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`, `/api/menstrual`, `/api/users`, `/api/health`. |
 | `garmin-insights/src/garmin_insights/web/user_context.py` | Per-user agent pool — one `HealthAgent` / `VisualizationService` / `LifestyleService` per `users/<id>.env`, lazily constructed and cached for the server's lifetime. |
@@ -188,6 +190,43 @@ Key tables:
 - **Cycle dashboards** (auto-hidden when no cycle data): Vitals by Phase, Cycle-
   Day Curve, Cycle Calendar (60-day phase grid + flow markers), Sleep
   Architecture by Phase, Stress & Body Battery by Phase.
+
+## Evidence-Tier System (READ BEFORE EDITING RULES)
+
+The AI is a **deviation detector, not a diagnostician**. Garmin data is excellent at detecting deviations from personal baselines and very weak for absolute medical claims. The knowledge base reflects this by grading every rule:
+
+| Tier | Meaning | Examples |
+|---|---|---|
+| **A** | Meta-analysis / guideline / large wearable cohort | Caffeine timing (Drake 2013 + 2023 meta-analysis), alcohol RHR (PLOS Digital Health 2026 ~21k cohort), WHO activity guidelines, RHR mortality (Aune 2017 CMAJ), CRF mortality (Han 2024 BJSM overview, >20M observations), late vigorous exercise (Leota 2025 Nature Comms, ~4M nights), travel disruption (Lechat 2025 SLEEP) |
+| **B** | Wearable-validated, context-dependent | Illness-like recovery strain (Quer 2021, Radin 2020, Mishra 2022 Lancet Digital Health SR), HRV trends, social jet lag, sleep fragmentation, menstrual-cycle physiology (Shilaih 2017, Alzueta 2022, Symons Downs 2025 Sports Med SR) |
+| **C** | Plausible but mixed evidence — requires user-logged context | ACWR (Impellizzeri 2020 critique of Gabbett 2016 — "load-spike context signal", not injury prediction), overnight SpO2 (Kapur 2017 AASM diagnostic-testing guideline — screening only), migraine, allergies, cold exposure, pets, fasting |
+| **D** | Reserved (preprint / company source). No rules currently use D — Ultrahuman 2025 and medRxiv preprints were pruned in favour of peer-reviewed alternatives. |
+
+### Mandatory wording substitutions (enforced via `_evidence_tier_block`)
+
+| Forbidden phrase | Mandatory replacement |
+|---|---|
+| "diagnose" / "you are getting ill" | "Illness-like recovery strain pattern" |
+| Garmin "stress" as mental stress | "Physiological / autonomic strain" |
+| Absolute clinical deep/REM% ranges as a deficit | "Device-estimated" / "personal trend vs your own baseline" |
+| ACWR "injury prediction" | "Load-spike context signal" |
+| SpO2 "sleep apnoea" | "Screening signal worth discussing with a clinician" |
+
+### Multi-cause confounder layer
+
+When ≥2 of RHR / HRV / respiration deviate together, `InsightScanner.scan_composite_strain()` emits **one** ranked-contributor finding using the `multi_cause_recovery_strain` meta-rule. User-logged behaviours from the last 48h outrank generic confounders.
+
+### Baseline reliability guard
+
+When `baseline_days < 21`, findings are tagged `baseline_low_confidence=True` and the agent prepends "Low-confidence (sparse baseline):".
+
+### When adding or editing a rule
+
+1. Always set `evidence_tier` honestly. Preprints and company sources stay Tier D and the rule should be pruned, not promoted.
+2. Add `confounders` listing every plausible alternative cause the user might encounter.
+3. Set `requires_user_context=True` if the rule should only fire when the user has logged the relevant behaviour (e.g., DOMS, allergies, cold exposure, travel).
+4. Phrase `description_template` and `research_summary` as personal-baseline trends, never absolute diagnoses.
+5. Update the matching dashboard tooltip in `web/static/index.html` so the `[Tier X]` chip and wording stay in sync.
 
 ## Notes for Coding Agents
 

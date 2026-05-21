@@ -164,20 +164,58 @@ class HealthAgent:
             text = (
                 "## Current Menstrual Cycle Context\n"
                 f"User is in the **{phase}** phase ({day_txt}{len_txt}).\n"
-                "Apply cycle-aware reasoning: luteal phase normally elevates RHR by 2–5 bpm "
-                "and depresses HRV (Shilaih 2017; Brar 2015) — do NOT flag this as illness or "
-                "overtraining unless other clear symptoms are present. Also consider sleep "
-                "duration as a confounder before attributing changes to phase (Ultrahuman 2025)."
+                "Use cycle phase as a CONFOUNDER / CONTEXT LABEL, not a single cause. "
+                "Luteal-phase RHR↑/HRV↓ is normal physiology (Shilaih 2017; Brar 2015; "
+                "Alzueta 2022; Symons Downs 2025 SR) — do NOT flag this as illness or "
+                "overtraining unless other clear symptoms are present. Before attributing "
+                "any change to cycle phase, check sleep duration, alcohol, late training, "
+                "heat, and travel — these are often stronger same-day drivers."
             )
             return {"type": "text", "text": text}
         except Exception as e:
             logger.debug("Cycle context unavailable: %s", e)
             return None
 
+    def _evidence_tier_block(self) -> dict:
+        """Tier-aware output rules. Garmin data detects deviations from baseline;
+        it does not diagnose. This block tells the model how to phrase findings
+        based on the evidence tier of the rule it is citing, and forbids
+        single-cause claims for multi-signal deviations."""
+        text = (
+            "## Evidence-Tier Output Rules\n"
+            "When citing a rule from the Medical Evidence Knowledge Base, match "
+            "your language to its tier:\n"
+            "- Tier A → \"Well-established in research.\"\n"
+            "- Tier B → \"Observed in wearable studies; not diagnostic.\"\n"
+            "- Tier C → \"Plausible contributor — strongest if your own logs confirm it.\"\n"
+            "- Tier D → \"Experimental / preprint — treat as a personal tracking hypothesis.\"\n"
+            "\n"
+            "Never name a single cause for a multi-signal deviation "
+            "(e.g. RHR↑ + HRV↓ + respiration↑). Instead, list ranked plausible "
+            "contributors and prefer the one(s) the user logged in the prior 24-48h.\n"
+            "\n"
+            "If fewer than 21 days of baseline data are available, prepend "
+            "\"Low-confidence (sparse baseline):\" to any trend/deviation finding.\n"
+            "\n"
+            "Word substitutions (apply consistently):\n"
+            "- Never \"diagnose\". For multi-signal RHR↑/HRV↓/resp↑ patterns, say "
+            "\"illness-like recovery strain pattern\".\n"
+            "- For Garmin stress, say \"physiological / autonomic strain\", "
+            "not \"mental stress\".\n"
+            "- For Garmin deep/REM, say \"device-estimated\" or \"personal trend vs "
+            "your own baseline\" — never quote absolute clinical ranges as a deficit.\n"
+            "- For ACWR, say \"load-spike context signal\" — never \"injury "
+            "prediction\".\n"
+            "- For SpO2 patterns, say \"screening signal worth discussing with a "
+            "clinician\" — never \"sleep apnoea\".\n"
+        )
+        return {"type": "text", "text": text}
+
     def _system_for_call(self) -> list[dict]:
         """Build the system blocks for a single API call: cached prompt + dynamic context."""
         blocks = list(self._system)
         blocks.append(self._today_block())
+        blocks.append(self._evidence_tier_block())
         identity = self._identity_block()
         if identity is not None:
             blocks.append(identity)

@@ -21,6 +21,20 @@ class InsightRule:
     description_template: str  # Template with {placeholders}
     research_citation: str
     research_summary: str
+    # Evidence-tier metadata. Defaults keep existing call sites working.
+    # A = meta-analysis / guideline; B = wearable-validated, context-dependent;
+    # C = plausible but mixed evidence; D = reserved (experimental / preprint /
+    # company source — no rules currently use D; preprints have been pruned in
+    # favour of peer-reviewed alternatives).
+    evidence_tier: str = "B"
+    # causal | strong_association | weak_association | hypothesis
+    claim_strength: str = "strong_association"
+    # high | medium | low — how trustworthy is the Garmin signal itself
+    measurement_confidence: str = "high"
+    # Other plausible explanations the agent should consider before naming a cause.
+    confounders: list[str] = field(default_factory=list)
+    # True when rule only fires if user has logged the trigger behavior / context.
+    requires_user_context: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -39,12 +53,19 @@ INSIGHT_RULES: list[InsightRule] = [
             "On days with late caffeine, your sleep score averages {mean_with:.0f} "
             "vs {mean_without:.0f} without — a {difference:+.0f} point difference."
         ),
-        research_citation="Drake et al., 2013, Journal of Clinical Sleep Medicine",
+        research_citation=(
+            "Drake et al., 2013, J Clin Sleep Med; "
+            "Gardiner et al., 2023, Sleep Medicine Reviews (meta-analysis)"
+        ),
         research_summary=(
             "Caffeine has a half-life of 5-7 hours. Consuming caffeine within 6 hours "
             "of bedtime reduces total sleep time by approximately 1 hour and significantly "
-            "impairs sleep quality."
+            "impairs sleep quality. The 2023 meta-analysis confirms this across multiple "
+            "studies. Sensitivity varies — compare against the user's own baseline."
         ),
+        evidence_tier="A",
+        claim_strength="causal",
+        confounders=["alcohol", "stress", "screen_time"],
     ),
     InsightRule(
         name="morning_caffeine_dose",
@@ -61,8 +82,11 @@ INSIGHT_RULES: list[InsightRule] = [
         research_summary=(
             "Caffeine increases cortisol secretion in a dose-dependent manner. "
             "Regular consumers develop partial tolerance but still show elevated "
-            "cortisol response to caffeine."
+            "cortisol response to caffeine. Note that Garmin 'stress' is HRV-derived "
+            "autonomic strain, not a validated measure of mental stress."
         ),
+        evidence_tier="A",
+        confounders=["sleep_debt", "emotional_stress", "exercise"],
     ),
 
     # ===== SLEEP & ALCOHOL =====
@@ -77,12 +101,19 @@ INSIGHT_RULES: list[InsightRule] = [
             "Alcohol nights show {pct_change:+.0f}% REM sleep change "
             "(avg {mean_with:.0f}s vs {mean_without:.0f}s without alcohol)."
         ),
-        research_citation="Ebrahim et al., 2013, Alcoholism: Clinical & Experimental Research",
+        research_citation=(
+            "Ebrahim et al., 2013, Alcoholism: Clin & Exp Res; "
+            "PLOS Digital Health, 2026 (~21k-adult wearable cohort)"
+        ),
         research_summary=(
             "Alcohol suppresses REM sleep in the first half of the night and causes "
             "rebound sleep fragmentation in the second half. Even moderate consumption "
-            "(1-2 drinks) reduces REM by 9-17%."
+            "(1-2 drinks) reduces REM by 9-17%. The 2026 wearable cohort confirms "
+            "dose-dependent reductions in sleep duration and HRV with alcohol intake."
         ),
+        evidence_tier="A",
+        claim_strength="causal",
+        confounders=["illness", "heat", "late_exercise", "stress", "luteal_phase"],
     ),
 
     # ===== SCREENS & SLEEP =====
@@ -103,6 +134,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "delays circadian rhythm, and reduces subjective sleepiness. "
             "Effects persist even with night-mode filters."
         ),
+        confounders=["late_caffeine", "stress", "late_meals"],
     ),
 
     # ===== HRV TRENDS =====
@@ -119,10 +151,12 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Plews et al., 2013, International Journal of Sports Physiology & Performance",
         research_summary=(
-            "A declining HRV trend over 5+ days indicates accumulated physiological stress "
+            "A declining HRV trend over 5+ days indicates accumulated physiological strain "
             "and incomplete recovery. Athletes showing this pattern are at higher risk "
-            "of non-functional overreaching and illness."
+            "of non-functional overreaching and illness. Requires ≥21 days of HRV baseline "
+            "for the trend slope to be reliable; below that, treat as noise."
         ),
+        confounders=["alcohol", "illness", "luteal_phase", "travel", "poor_sleep", "heat"],
     ),
 
     # ===== RHR ELEVATION =====
@@ -137,12 +171,20 @@ INSIGHT_RULES: list[InsightRule] = [
             "Your resting heart rate ({value:.0f} bpm) is {z_score:.1f}σ above "
             "your 30-day baseline ({baseline_mean:.0f} bpm)."
         ),
-        research_citation="Radin et al., 2020, The Lancet Digital Health",
+        research_citation=(
+            "Radin et al., 2020, Lancet Digital Health; "
+            "Aune et al., 2017, CMAJ (dose-response meta-analysis on RHR and mortality)"
+        ),
         research_summary=(
             "Elevated resting heart rate (>5 bpm above personal baseline for 3+ days) "
-            "is an early indicator of infection, illness, or overtraining. "
-            "Wearable-detected RHR elevations preceded COVID-19 symptom onset by 1-4 days."
+            "is associated with infection, illness, or overtraining-like strain. "
+            "Wearable-detected RHR elevations preceded COVID-19 symptom onset by 1-4 days. "
+            "The 2017 CMAJ meta-analysis links higher RHR to all-cause and CV mortality. "
+            "Same-day causes also include alcohol, late training, heat, poor sleep, and "
+            "luteal-phase physiology — treat as a deviation signal, not a diagnosis."
         ),
+        evidence_tier="A",
+        confounders=["alcohol", "illness", "late_exercise", "heat", "poor_sleep", "luteal_phase", "stress"],
     ),
 
     # ===== STRESS =====
@@ -156,12 +198,19 @@ INSIGHT_RULES: list[InsightRule] = [
         description_template=(
             "High stress time at {value:.0f}% today — above your baseline of {baseline_mean:.0f}%."
         ),
-        research_citation="Adam et al., 2017, Psychoneuroendocrinology",
-        research_summary=(
-            "Chronic high cortisol (reflected in high stress duration) impairs sleep quality, "
-            "immune function, and cognitive performance. Days with >30% high stress show "
-            "significantly reduced overnight recovery."
+        research_citation=(
+            "Adam et al., 2017, Psychoneuroendocrinology; "
+            "Garmin HRV-based stress scoring documentation"
         ),
+        research_summary=(
+            "Garmin's stress score is HRV-derived physiological/autonomic strain, NOT a "
+            "validated measure of mental stress. Days with >30% high stress show reduced "
+            "overnight recovery, but the underlying cause can be alcohol, illness, heat, "
+            "pain, caffeine, late exercise, dehydration, or emotional stress. Chronic "
+            "high cortisol does impair sleep, immunity, and cognition — but link a high "
+            "score to context (logged behaviours, cycle phase) before naming a cause."
+        ),
+        confounders=["alcohol", "illness", "heat", "pain", "caffeine", "late_exercise", "emotional_stress", "dehydration"],
     ),
 
     # ===== EXERCISE =====
@@ -182,6 +231,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "and increases total sleep time. Effects are most pronounced with consistent "
             "exercise 4-6 hours before bedtime."
         ),
+        evidence_tier="A",
     ),
     InsightRule(
         name="late_exercise_sleep",
@@ -194,12 +244,19 @@ INSIGHT_RULES: list[InsightRule] = [
             "Vigorous exercise before bed nights show a {difference:+.0f} point "
             "sleep score change."
         ),
-        research_citation="Stutz et al., 2019, Sports Medicine",
-        research_summary=(
-            "Vigorous exercise completed less than 1 hour before bedtime can delay "
-            "sleep onset and reduce sleep quality due to elevated core body temperature "
-            "and sympathetic nervous system activation."
+        research_citation=(
+            "Stutz et al., 2019, Sports Medicine (review); "
+            "Leota et al., 2025, Nature Communications (~4M nights of wearable data)"
         ),
+        research_summary=(
+            "Vigorous exercise within 4 hours of bedtime is associated with delayed sleep "
+            "onset, shorter sleep, higher overnight RHR, and lower HRV (2025 large-scale "
+            "wearable cohort). Easy evening activity may be fine; the risk signal is "
+            "strongest for strenuous sessions close to bedtime. Mechanism: elevated core "
+            "body temperature and sympathetic activation."
+        ),
+        evidence_tier="A",
+        confounders=["alcohol", "caffeine", "heat", "stress"],
     ),
 
     # ===== COLD EXPOSURE =====
@@ -216,11 +273,16 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Mooventhan & Nivethitha, 2014, North American Journal of Medical Sciences",
         research_summary=(
-            "Cold water immersion (full immersion for 5+ minutes) activates the parasympathetic "
-            "nervous system, increases vagal tone, and has been shown to enhance post-exercise "
-            "recovery and improve HRV markers. Note: the evidence base is for full immersion; "
-            "brief cold showers show much weaker effects."
+            "Cold water immersion may activate the parasympathetic nervous system and "
+            "transiently raise vagal tone, but the evidence base is broad hydrotherapy "
+            "data — not enough to make strong personalised HRV claims. Individual "
+            "response varies widely. Brief cold showers show much weaker effects than "
+            "full 5+ minute immersion. Use as a personal tracking hypothesis, not a rule."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        requires_user_context=True,
+        confounders=["exercise", "stress", "sleep"],
     ),
 
     # ===== SUNLIGHT =====
@@ -239,8 +301,12 @@ INSIGHT_RULES: list[InsightRule] = [
         research_summary=(
             "Morning sunlight exposure (especially within 2 hours of waking) helps "
             "regulate the circadian rhythm, suppresses melatonin at the right time, "
-            "and normalizes cortisol patterns."
+            "and normalises cortisol patterns. The link to a Garmin 'stress' score "
+            "specifically is indirect; treat as a lifestyle hypothesis."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        requires_user_context=True,
     ),
 
     # ===== ALLERGIES =====
@@ -257,11 +323,15 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Shaaban et al., 2008, European Respiratory Journal; Togias, 2000, Journal of Allergy and Clinical Immunology",
         research_summary=(
-            "Allergic inflammation triggers a systemic immune response (IgE-mediated histamine "
-            "release and cytokine signalling) that elevates resting heart rate, increases "
-            "autonomic stress markers, and impairs sleep quality through histamine-mediated "
-            "arousal pathways and nasal congestion."
+            "Allergic inflammation can elevate RHR and impair sleep via histamine-mediated "
+            "arousal and nasal congestion. Garmin signals alone cannot distinguish allergy "
+            "from infection, poor sleep, alcohol, heat, or asthma — this rule should only "
+            "fire when the user has logged concurrent congestion / hay-fever symptoms."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        requires_user_context=True,
+        confounders=["illness", "poor_sleep", "alcohol", "heat", "asthma"],
     ),
 
     # ===== MIGRAINES =====
@@ -276,14 +346,17 @@ INSIGHT_RULES: list[InsightRule] = [
             "Migraine days show overnight HRV of {mean_with:.0f} ms "
             "vs {mean_without:.0f} ms on migraine-free days."
         ),
-        research_citation="Miglis, 2018, Current Pain & Headache Reports",
+        research_citation="Miglis, 2018, Current Pain & Headache Reports (review — autonomic findings in migraine are significant but conflicting)",
         research_summary=(
-            "Autonomic nervous system dysfunction often precedes migraines by 24-48 hours — "
-            "a drop in HRV and increase in resting stress in the day *before* migraine onset "
-            "can serve as an early warning signal. Note: comparing HRV on migraine days vs "
-            "migraine-free days shows a concurrent correlation; the more actionable signal is "
-            "HRV the day before a logged migraine."
+            "The migraine/autonomic literature is mixed: some studies find HRV drops 24-48h "
+            "before onset, others do not. Treat as a personal-pattern rule only — fires "
+            "when the user has logged ≥3 migraine episodes coinciding with this HRV/RHR "
+            "pattern. Do NOT use as a general migraine predictor."
         ),
+        evidence_tier="C",
+        claim_strength="hypothesis",
+        requires_user_context=True,
+        confounders=["sleep_loss", "stress", "alcohol", "luteal_phase", "dehydration"],
     ),
 
     # ===== STRETCHING =====
@@ -300,10 +373,14 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Corey et al., 2012, PM&R Journal",
         research_summary=(
-            "Regular stretching activates the parasympathetic nervous system, reduces "
-            "muscle tension and cortisol levels, and may improve sleep quality through "
-            "enhanced relaxation."
+            "Regular stretching may activate the parasympathetic nervous system and reduce "
+            "muscle tension, with possible knock-on effects on sleep and recovery. Effect "
+            "sizes on Garmin daily recovery markers are individual; treat as a lifestyle "
+            "hypothesis."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        requires_user_context=True,
     ),
 
     # ===== MEAL QUALITY =====
@@ -320,10 +397,11 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Haghighatdoost et al., 2012, Public Health Nutrition",
         research_summary=(
-            "Dietary quality significantly affects perceived energy and fatigue levels. "
-            "Diets high in processed food are associated with higher inflammation markers "
-            "and greater fatigue."
+            "Dietary quality affects perceived energy and fatigue levels. Diets high in "
+            "processed food are associated with higher inflammation markers and greater "
+            "fatigue. The link to a Garmin body-battery score is indirect."
         ),
+        requires_user_context=True,
     ),
     InsightRule(
         name="heavy_meals_sleep",
@@ -341,6 +419,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Eating large or high-fat meals close to bedtime increases gastric acid "
             "secretion, raises core body temperature, and impairs sleep architecture."
         ),
+        confounders=["alcohol", "late_caffeine", "stress"],
     ),
     InsightRule(
         name="late_meals_sleep",
@@ -357,8 +436,9 @@ INSIGHT_RULES: list[InsightRule] = [
         research_summary=(
             "Eating within 2 hours of bedtime disrupts circadian rhythm, raises "
             "overnight glucose, and reduces sleep quality. Late meals are associated "
-            "with 15-20% higher overnight stress levels."
+            "with 15-20% higher overnight autonomic-strain ('stress') readings."
         ),
+        confounders=["alcohol", "heavy_meals", "late_caffeine"],
     ),
 
     # ===== INTERMITTENT FASTING =====
@@ -375,11 +455,15 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="de Cabo & Mattson, 2019, New England Journal of Medicine",
         research_summary=(
-            "Intermittent fasting improves metabolic flexibility, enhances autophagy, "
-            "and is associated with improved autonomic recovery markers including HRV. "
-            "The primary mechanism is metabolic (reduced insulin resistance, lower overnight "
-            "glucose load) rather than simply reduced caloric intake."
+            "Intermittent fasting has strong metabolic-health evidence (improved metabolic "
+            "flexibility, autophagy, lower insulin resistance). The link to daily Garmin "
+            "recovery markers is indirect — sleep, exercise, and alcohol are far stronger "
+            "drivers of body battery on any given day. Use as lifestyle context, not a "
+            "direct recovery inference."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        requires_user_context=True,
     ),
 
     # ===== DEEP SLEEP =====
@@ -391,16 +475,24 @@ INSIGHT_RULES: list[InsightRule] = [
         comparison_metric="sleepScore",
         direction="lower_is_worse",
         description_template=(
-            "Your deep sleep percentage is {value:.0f}% — "
-            "{assessment} the recommended 13-23% range."
+            "Your device-estimated deep sleep is {value:.0f}% — "
+            "{assessment} your recent personal baseline."
         ),
-        research_citation="Ohayon et al., 2004, Sleep (normative meta-analysis); AASM Clinical Practice Guidelines",
+        research_citation=(
+            "Ohayon et al., 2004, Sleep (normative meta-analysis, polysomnography); "
+            "Chinoy et al., 2021, Sleep (consumer wearable vs PSG validation); "
+            "Schyvens et al., 2024 (Garmin sleep-stage validation)"
+        ),
         research_summary=(
-            "Deep (NREM stage 3) sleep is critical for memory consolidation, "
-            "immune function, and growth hormone release. Adults should aim for "
-            "13-23% of total sleep as deep sleep (normative range from large population studies). "
-            "Deficit impairs next-day cognition and immune response."
+            "Deep (NREM stage 3) sleep matters for memory consolidation, immune function, "
+            "and growth hormone release. BUT consumer-wearable sleep-stage estimates "
+            "differ meaningfully from polysomnography — Garmin in particular tends to "
+            "overestimate light sleep and underestimate deep sleep in some studies. "
+            "Treat as a PERSONAL TREND vs your own baseline, not a clinical staging "
+            "measurement. Do not flag the 13–23% population norm as a deficit."
         ),
+        measurement_confidence="medium",
+        confounders=["alcohol", "late_exercise", "stress", "heat", "illness"],
     ),
 
     # ===== MULTI-SIGNAL ILLNESS DETECTION =====
@@ -412,17 +504,26 @@ INSIGHT_RULES: list[InsightRule] = [
         comparison_metric="avgOvernightHrv",
         direction="higher_is_worse",
         description_template=(
-            "Multi-signal illness pattern detected: RHR elevated {rhr_z:+.1f}σ, "
-            "HRV depressed {hrv_z:+.1f}σ, respiration {resp_z:+.1f}σ from baseline."
+            "Illness-like recovery strain pattern: RHR {rhr_z:+.1f}σ, "
+            "HRV {hrv_z:+.1f}σ, respiration {resp_z:+.1f}σ vs your baseline. "
+            "Not diagnostic — consider plausible contributors below."
         ),
-        research_citation="Quer et al., 2021, Nature Medicine",
+        research_citation=(
+            "Quer et al., 2021, Nature Medicine; "
+            "Radin et al., 2020, Lancet Digital Health; "
+            "Natarajan et al., 2020, BMJ Open; "
+            "Mishra et al., 2022, Lancet Digital Health (systematic review)"
+        ),
         research_summary=(
-            "The combination of elevated RHR (>3 bpm above baseline), depressed HRV "
-            "(>10% below baseline), and elevated respiration rate (>1 br/min above) "
-            "for 2+ consecutive days is 80%+ specific for impending illness — including "
-            "respiratory infection — 1-3 days before symptom onset. Single-signal anomalies "
-            "are far less specific."
+            "The combination of elevated RHR, depressed HRV, and elevated respiration for "
+            "2+ consecutive days has been associated with impending illness 1-3 days before "
+            "symptom onset (Quer 2021, Radin 2020). The 2022 Lancet Digital Health "
+            "systematic review concluded wearable-based illness detection is promising but "
+            "performance varies widely — treat as an ILLNESS-LIKE RECOVERY STRAIN PATTERN, "
+            "not a diagnosis. Similar patterns can follow alcohol, heat, poor sleep, "
+            "heavy training, travel, emotional stress, or luteal-phase physiology."
         ),
+        confounders=["alcohol", "luteal_phase", "heat", "late_exercise", "travel", "poor_sleep", "emotional_stress", "doms"],
     ),
 
     # ===== RESPIRATION RATE AS EARLY WARNING =====
@@ -440,10 +541,12 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation="Natarajan et al., 2020, BMJ Open",
         research_summary=(
             "Resting respiration rate above 16 br/min, or >1 br/min above personal "
-            "baseline for 2+ nights, is a sensitive marker for systemic inflammation, "
-            "infection, or overtraining. It often rises before subjective symptoms appear "
-            "and tracks alongside HRV decline."
+            "baseline for 2+ nights, can be a marker for systemic inflammation, "
+            "infection, or overtraining strain. It often rises before subjective symptoms "
+            "and tracks alongside HRV decline. Also rises with altitude, heat, alcohol, "
+            "asthma, allergies, and sleep-disordered breathing — not a single-cause signal."
         ),
+        confounders=["alcohol", "altitude", "heat", "asthma", "allergies", "illness", "poor_sleep"],
     ),
 
     # ===== ACUTE:CHRONIC WORKLOAD RATIO =====
@@ -455,17 +558,26 @@ INSIGHT_RULES: list[InsightRule] = [
         comparison_metric=None,
         direction="higher_is_worse",
         description_template=(
-            "Your acute:chronic workload ratio is in the danger zone "
-            "(ACWR factor {value:.0f}%) — recent training load is outpacing "
-            "your fitness base."
+            "Recent training load has risen sharply vs your 28-day average "
+            "(ACWR factor {value:.0f}%) — load-spike context signal, not an injury "
+            "prediction."
         ),
-        research_citation="Gabbett, 2016, British Journal of Sports Medicine",
+        research_citation=(
+            "Gabbett, 2016, BJSM (original concept); "
+            "Impellizzeri et al., 2020, BJSM (critique of ACWR as injury predictor); "
+            "Wang et al., 2024, BJSM (training-load injury research limitations)"
+        ),
         research_summary=(
-            "Athletes whose 7-day training load exceeds 1.5× their 28-day average have "
-            "a 4-5× higher injury risk in the following 1-2 weeks. The 'sweet spot' is "
-            "an ACWR between 0.8 and 1.3. Garmin reports this as a percentage factor in "
-            "training readiness."
+            "Gabbett 2016 popularised the idea that a 7-day load >1.5× the 28-day load "
+            "raises injury risk. The 2020 Impellizzeri BJSM critique argued ACWR has "
+            "conceptual and methodological problems as a causal injury predictor, and "
+            "the 2024 BJSM review concluded training-load research has limitations that "
+            "make it unsuitable for prescriptive injury prevention. Treat ACWR as a "
+            "LOAD-SPIKE CONTEXT SIGNAL — never an injury prediction model."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        confounders=["sleep_loss", "illness", "stress", "poor_warmup"],
     ),
 
     # ===== OVERTRAINING SIGNATURE =====
@@ -483,10 +595,12 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation="Bellenger et al., 2016, Sports Medicine",
         research_summary=(
             "When training load is rising but HRV is dropping or flat over 7+ days, "
-            "the body is failing to absorb the training stimulus. Continuing in this state "
-            "leads to non-functional overreaching, performance decline, and elevated injury "
-            "risk. The fix is a 3-7 day deload, not more training."
+            "the body may be failing to absorb the training stimulus. This pattern is "
+            "associated with non-functional overreaching and performance decline. A 3-7 "
+            "day deload is the conservative response. Confounded by illness, alcohol, "
+            "poor sleep, heat, and luteal-phase physiology — verify before naming a cause."
         ),
+        confounders=["illness", "alcohol", "poor_sleep", "heat", "luteal_phase"],
     ),
 
     # ===== SOCIAL JET LAG =====
@@ -508,6 +622,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "reduced cognitive performance — independent of total sleep duration. "
             "Consistency of sleep timing matters as much as quantity."
         ),
+        confounders=["shift_work", "travel", "alcohol"],
     ),
 
     # ===== REM SLEEP DRIFT =====
@@ -519,17 +634,24 @@ INSIGHT_RULES: list[InsightRule] = [
         comparison_metric="sleepScore",
         direction="lower_is_worse",
         description_template=(
-            "REM sleep is trending down — averaging {pct_of_total:.0f}% of total "
-            "sleep vs the recommended 20-25%."
+            "Device-estimated REM sleep is trending down — averaging {pct_of_total:.0f}% "
+            "vs your recent personal baseline."
         ),
-        research_citation="Leary et al., 2020, JAMA Neurology",
+        research_citation=(
+            "Leary et al., 2020, JAMA Neurology (PSG cohort, older adults); "
+            "Chinoy et al., 2021, Sleep (wearable vs PSG validation); "
+            "Schyvens et al., 2024 (Garmin sleep-stage validation)"
+        ),
         research_summary=(
-            "REM sleep is essential for emotional processing, memory consolidation, and "
-            "cognitive performance. Chronic REM deficiency (sustained below 20% of total sleep) "
-            "is associated with increased long-term mortality risk and significantly impairs mood "
-            "and memory within days. Short-term dips are less serious but worth noting. "
-            "Common causes include alcohol, late meals, SSRIs, and inconsistent sleep timing."
+            "REM sleep matters for emotional processing and memory. Lower REM has been "
+            "associated with higher mortality in older PSG cohorts (Leary 2020). HOWEVER "
+            "Garmin's REM estimate is not a clinical PSG measurement — treat as a personal "
+            "trend vs your own baseline, not as a clinical sleep-stage measurement. "
+            "Common contributors to lower REM include alcohol, late meals, SSRIs, and "
+            "inconsistent sleep timing."
         ),
+        measurement_confidence="medium",
+        confounders=["alcohol", "late_meals", "medications", "stress", "luteal_phase"],
     ),
 
     # ===== STRESS RECOVERY (BODY BATTERY FLOOR) =====
@@ -547,10 +669,13 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation="McEwen, 2007, Physiological Reviews",
         research_summary=(
             "A persistently low body battery floor (lowest-of-day value below 20) "
-            "indicates allostatic load: cumulative stress that recovery sleep is failing "
-            "to clear. Sustained for 2+ weeks, this predicts burnout, immune suppression, "
-            "and HPA-axis dysregulation."
+            "is consistent with allostatic load: cumulative physiological strain that "
+            "recovery sleep is failing to clear. Sustained for 2+ weeks, this is "
+            "associated with burnout, immune suppression, and HPA-axis dysregulation. "
+            "Note Garmin body battery is HRV-derived; the same low floor can follow "
+            "alcohol, illness, late training, or sustained poor sleep."
         ),
+        confounders=["alcohol", "illness", "late_exercise", "poor_sleep", "emotional_stress"],
     ),
 
     # ===== AEROBIC TRAINING DISTRIBUTION =====
@@ -567,9 +692,10 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Seiler, 2010, International Journal of Sports Physiology",
         research_summary=(
-            "Polarized training (~80% easy/Z1-Z2, ~20% hard/Z4-Z5) consistently "
-            "outperforms 'grey zone' training (mostly Z3). Excessive Z3 produces fatigue "
-            "without optimal aerobic adaptation, plateauing VO2 max and increasing injury risk."
+            "Polarized training (~80% easy/Z1-Z2, ~20% hard/Z4-Z5) is generally "
+            "associated with better aerobic adaptation than 'grey zone' training "
+            "(mostly Z3). Excessive Z3 can produce fatigue without optimal adaptation, "
+            "plateauing VO2 max."
         ),
     ),
 
@@ -591,6 +717,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "by 3-5 bpm and reduces cardiovascular efficiency. Chronic underhydration "
             "is associated with elevated cortisol and lower HRV."
         ),
+        evidence_tier="A",
     ),
 
     # ===== VO2 MAX TRAJECTORY =====
@@ -605,13 +732,19 @@ INSIGHT_RULES: list[InsightRule] = [
             "VO2 max has been flat at {value:.1f} for {days_analyzed} days — "
             "your current training stimulus may have reached its ceiling."
         ),
-        research_citation="Bacon et al., 2013, PLOS ONE (meta-analysis)",
+        research_citation=(
+            "Bacon et al., 2013, PLOS ONE (training meta-analysis); "
+            "Han et al., 2024, BJSM (overview of meta-analyses, >20M observations, "
+            "199 cohorts on cardiorespiratory fitness and mortality)"
+        ),
         research_summary=(
             "VO2 max typically plateaus 3-4 months into a consistent training routine. "
             "Breaking through requires a new stimulus: structured intervals, increased "
-            "volume, or strength training. Continued same-stimulus training won't restart "
-            "adaptation."
+            "volume, or strength training. The 2024 BJSM overview confirms CRF is one of "
+            "the strongest predictors of all-cause mortality, so plateaus are worth "
+            "addressing even at recreational levels."
         ),
+        evidence_tier="A",
     ),
 
     # ===== STEPS-STRESS INVERSE COUPLING =====
@@ -628,9 +761,10 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Choi et al., 2019, JAMA Internal Medicine",
         research_summary=(
-            "Days with fewer than 5,000 steps show measurably higher physiological stress "
-            "markers — independent of formal exercise. The mechanism is reduced parasympathetic "
-            "tone from sedentary behavior; brief walking breaks every 1-2 hours partially restore it."
+            "Days with fewer than 5,000 steps tend to show higher physiological strain "
+            "markers — independent of formal exercise. Likely mechanism: reduced "
+            "parasympathetic tone from sedentary behaviour. Brief walking breaks every "
+            "1-2 hours partially restore it."
         ),
     ),
 
@@ -652,6 +786,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "normal HRV rebound that occurs in deep and REM sleep. Even with adequate total "
             "sleep duration, fragmented sleep produces next-day HRV 10-15% below intact sleep."
         ),
+        confounders=["alcohol", "pet_in_bedroom", "noise", "heat", "pain", "stress"],
     ),
 
     # ===== MORNING HR REBOUND =====
@@ -666,13 +801,18 @@ INSIGHT_RULES: list[InsightRule] = [
             "Resting HR has drifted up {bpm_change:+.0f} bpm over {days_analyzed} days "
             "while VO2 max is unchanged — possible cardiovascular reserve loss."
         ),
-        research_citation="Cooney et al., 2010, American Journal of Cardiology",
+        research_citation=(
+            "Cooney et al., 2010, American Journal of Cardiology; "
+            "Aune et al., 2017, CMAJ (dose-response meta-analysis)"
+        ),
         research_summary=(
             "An RHR drift upward of 3-5 bpm over weeks, without a matching VO2 max "
-            "change, is an early signal of reduced cardiovascular fitness, accumulated "
+            "change, is consistent with reduced cardiovascular fitness, accumulated "
             "fatigue, or systemic inflammation. RHR is one of the most prognostic vital "
-            "signs for all-cause mortality."
+            "signs for all-cause and CV mortality (Aune 2017 meta-analysis). Confounded "
+            "by chronic stress, illness, alcohol, dehydration, and detraining."
         ),
+        confounders=["chronic_stress", "illness", "alcohol", "dehydration", "detraining"],
     ),
 
     # ===== BODY COMPOSITION + HRV =====
@@ -689,11 +829,13 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Felber Dietrich et al., 2006, European Heart Journal",
         research_summary=(
-            "Visceral adipose tissue is metabolically active and directly suppresses "
+            "Visceral adipose tissue is metabolically active and may suppress "
             "parasympathetic (vagal) tone, lowering HRV. The relationship is dose-dependent "
-            "and reversible — every 1% reduction in visceral fat produces measurable HRV "
-            "improvements within 6-8 weeks."
+            "and reversible over months. Single-time-point correlations on consumer scales "
+            "can be noisy — interpret long-term trends, not day-to-day swings."
         ),
+        evidence_tier="C",
+        measurement_confidence="medium",
     ),
 
     # ===== MENSTRUAL CYCLE =====
@@ -708,15 +850,24 @@ INSIGHT_RULES: list[InsightRule] = [
             "Period/luteal phase days show RHR of {mean_with:.0f} bpm vs {mean_without:.0f} bpm "
             "and HRV of {hrv_with:.0f} ms vs {hrv_without:.0f} ms on other days."
         ),
-        research_citation="Nakagawa et al., 2020, Journal of Clinical Medicine; Brar et al., 2015, Journal of Women's Health",
-        research_summary=(
-            "During the luteal phase (post-ovulation through menstruation), progesterone "
-            "elevates resting heart rate by 2-5 bpm and can suppress overnight HRV. "
-            "This is a normal physiological response — NOT a sign of illness or overtraining. "
-            "CRITICAL: When Period Day is logged, do not flag elevated RHR or depressed HRV "
-            "as illness indicators unless other clear symptoms are also present. Body battery "
-            "and energy levels also typically decrease in the late luteal phase."
+        research_citation=(
+            "Shilaih et al., 2017, Scientific Reports (wrist wearable, cycle pulse rate); "
+            "Alzueta/de Zambotti/Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); "
+            "Symons Downs et al., 2025, Sports Medicine (systematic review, "
+            "wearable-derived HRV across reproductive life stages); "
+            "Nakagawa et al., 2020, J Clin Med; Brar et al., 2015, J Women's Health"
         ),
+        research_summary=(
+            "In the luteal phase (post-ovulation through menstruation), progesterone "
+            "elevates resting heart rate by 2-5 bpm and can suppress overnight HRV. "
+            "Most wearable studies report HRV higher earlier in the cycle and declining "
+            "toward late luteal/menses. This is a NORMAL PHYSIOLOGICAL RESPONSE — use "
+            "cycle phase as a CONFOUNDER/CONTEXT LABEL, not a single explanation. The "
+            "same pattern can resemble illness, alcohol, training strain, heat, or poor "
+            "sleep. CRITICAL: do not flag luteal RHR↑ / HRV↓ as illness or overtraining "
+            "unless other clear symptoms are present."
+        ),
+        confounders=["alcohol", "illness", "heat", "travel", "training_strain", "poor_sleep"],
     ),
 
     InsightRule(
@@ -732,15 +883,18 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation=(
             "Janse de Jonge 2019, Med Sci Sports Exerc; "
-            "J Appl Physiol systematic review 2025 (doi:10.1152/japplphysiol.00223.2025)"
+            "J Appl Physiol systematic review 2025 (doi:10.1152/japplphysiol.00223.2025); "
+            "Symons Downs et al., 2025, Sports Medicine (wearable HRV across cycle SR)"
         ),
         research_summary=(
             "Low-oestrogen follicular days (post-menses through ovulation) are commonly "
             "the preferred window for high-intensity strength and HIIT work — perceived "
-            "exertion is lower and recovery faster. Late luteal days favour lower-intensity "
-            "or skill work. Inter-individual variability is large; coach to the athlete's "
-            "OWN phase response, not population norms."
+            "exertion is lower and recovery faster for many athletes. Late luteal days "
+            "favour lower-intensity or skill work. Inter-individual variability is large; "
+            "coach to the athlete's OWN phase response, not population norms."
         ),
+        confounders=["sleep_loss", "alcohol", "stress", "training_load"],
+        requires_user_context=True,
     ),
     InsightRule(
         name="cycle_sleep_loss_confound",
@@ -753,13 +907,17 @@ INSIGHT_RULES: list[InsightRule] = [
             "Short-sleep luteal nights show RHR {mean_with:.0f} bpm vs {mean_without:.0f} bpm "
             "on well-rested luteal nights."
         ),
-        research_citation="Ultrahuman 2025, bioRxiv (doi:10.1101/2025.09.11.675620)",
+        research_citation=(
+            "Symons Downs et al., 2025, Sports Medicine "
+            "(systematic review — wearable HRV across reproductive life stages)"
+        ),
         research_summary=(
-            "A 10% drop in weekly sleep duration raises RHR ~1.2% INDEPENDENT of cycle phase. "
-            "CRITICAL: before attributing elevated RHR or depressed HRV to the luteal phase, "
-            "check sleep duration vs the user's baseline. If sleep is short, attribute the "
+            "Reduced sleep duration raises RHR INDEPENDENT of cycle phase. Before "
+            "attributing elevated RHR or depressed HRV to luteal physiology, check "
+            "sleep duration vs the user's baseline — if sleep is short, attribute the "
             "change to sleep debt first; cycle phase is an additive but separate driver."
         ),
+        confounders=["alcohol", "illness", "heat", "travel", "training_strain"],
     ),
     InsightRule(
         name="pms_sleep_architecture",
@@ -773,17 +931,19 @@ INSIGHT_RULES: list[InsightRule] = [
             "on follicular nights."
         ),
         research_citation=(
-            "Baker 2007 (PMC2266284); "
-            "PMS & sleep quality cross-sectional 2025 (PMC11842786); "
-            "Wearable HRV & PMD 2024 (medRxiv 2024.10.27.24316196)"
+            "Baker, 2007, Sleep Medicine Reviews (PMC2266284); "
+            "PMS & sleep quality cross-sectional, 2025 (PMC11842786)"
         ),
         research_summary=(
-            "Women with significant PMS show reduced deep and REM sleep, more awakenings, "
-            "and lower wearable HRV in the late luteal phase. If sleep score drops, deep "
-            "sleep falls, and HRV is suppressed during days 21–28, treat as a PMS sleep "
-            "signature rather than illness. Sleep hygiene and stress-reduction interventions "
-            "are first-line; only escalate if pattern persists into follicular phase."
+            "Women with significant PMS may show reduced deep and REM sleep, more "
+            "awakenings, and lower wearable HRV in the late luteal phase. Because "
+            "Garmin sleep-stage estimates differ from PSG, treat as a PERSONAL TREND "
+            "in days 21–28 rather than a clinical sleep-stage finding. Use as a "
+            "confounder/context label before attributing the same pattern to illness. "
+            "Sleep hygiene and stress-reduction interventions are first-line."
         ),
+        measurement_confidence="medium",
+        confounders=["sleep_loss", "alcohol", "stress", "illness", "heat"],
     ),
 
     # ===== DOMS =====
@@ -801,11 +961,13 @@ INSIGHT_RULES: list[InsightRule] = [
         research_summary=(
             "Delayed Onset Muscle Soreness (DOMS) from intense or novel exercise causes "
             "localised inflammation that can elevate resting heart rate by 3-8 bpm and "
-            "temporarily suppress HRV for 24-72 hours. This closely mimics the illness "
-            "signature (elevated RHR + low HRV). CRITICAL: When DOMS is logged, do not "
-            "interpret elevated RHR or suppressed HRV as illness — it is a normal "
-            "inflammatory recovery response. Body battery may also read lower than expected."
+            "temporarily suppress HRV for 24-72 hours. This closely mimics the "
+            "illness-like recovery strain pattern (elevated RHR + low HRV). CRITICAL: "
+            "when DOMS is logged, treat it as the most plausible contributor — not "
+            "illness — unless other symptoms are present. Body battery may also read "
+            "lower than expected."
         ),
+        requires_user_context=True,
     ),
 
     # ===== PET IN BEDROOM =====
@@ -822,11 +984,16 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Patel et al., 2017, Mayo Clinic Proceedings",
         research_summary=(
-            "Pets in the bedroom — especially on the bed — increase sleep fragmentation "
-            "through movement and noise. A Mayo Clinic study found pet owners who allowed "
-            "pets on the bed had measurably lower sleep efficiency scores. The effect is "
-            "worse for light sleepers and those with pets that move frequently overnight."
+            "The Mayo Clinic study found that having a dog IN THE BEDROOM did not "
+            "markedly compromise sleep for most people. Effects depend on whether the "
+            "pet is ON THE BED, the number of pets, and the animal's behaviour. "
+            "Light sleepers and people with restless pets may see fragmentation; "
+            "blanket 'pets fragment sleep' claims are not supported. Use as a "
+            "possible contributor when awakenings are high and a pet sleeps on the bed."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        requires_user_context=True,
     ),
 
     # ===== EMOTIONAL UPSET =====
@@ -843,12 +1010,15 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation="Thayer & Lane, 2009, Neuroscience & Biobehavioral Reviews",
         research_summary=(
-            "Acute psychological stress and emotional upset directly suppress vagal tone, "
-            "reducing overnight HRV by 10-20 ms. The effect persists into the following "
-            "night's sleep even if subjective mood has improved. Elevated daytime stress "
-            "percentage and reduced body battery on emotional upset days are expected — "
-            "do not conflate with illness unless RHR is also significantly elevated."
+            "Acute psychological stress and emotional upset can suppress vagal tone, "
+            "reducing overnight HRV. The effect may persist into the following night even "
+            "if subjective mood has improved. Elevated daytime autonomic-strain ('stress') "
+            "and reduced body battery on emotional upset days are expected — do not "
+            "conflate with illness unless RHR is also significantly elevated."
         ),
+        evidence_tier="C",
+        requires_user_context=True,
+        confounders=["alcohol", "poor_sleep", "caffeine"],
     ),
 
     # ===== TRAVELING =====
@@ -862,15 +1032,22 @@ INSIGHT_RULES: list[InsightRule] = [
         description_template=(
             "Travel days show sleep score of {mean_with:.0f} vs {mean_without:.0f} at home."
         ),
-        research_citation="Waterhouse et al., 2007, Journal of Sleep Research",
-        research_summary=(
-            "Travel — especially across time zones — disrupts circadian rhythm, sleep timing, "
-            "and sleep quality. Even without jet lag, sleeping in an unfamiliar environment "
-            "triggers the 'first-night effect': lighter sleep, more awakenings, and reduced "
-            "slow-wave sleep. HRV and body battery often read lower for 1-3 nights after "
-            "arriving somewhere new. This is expected and should not be compared against "
-            "at-home baselines without noting the travel context."
+        research_citation=(
+            "Waterhouse et al., 2007, J Sleep Research; "
+            "Lechat et al., 2025, SLEEP (Oura cohort, ~1.5M nights — sleep takes >1 week "
+            "to adjust after time-zone crossings)"
         ),
+        research_summary=(
+            "Travel — especially across time zones — disrupts circadian rhythm, sleep "
+            "timing, and sleep quality. Large 2025 wearable cohort confirms recovery "
+            "can take more than a week. The 'first-night effect' (lighter sleep, more "
+            "awakenings) applies even within the same time zone. HRV, RHR and body "
+            "battery often read worse for 1-3+ nights after arriving somewhere new — "
+            "this is expected and should not be compared against at-home baselines."
+        ),
+        evidence_tier="A",
+        requires_user_context=True,
+        confounders=["alcohol", "heat", "stress"],
     ),
 
     # ===== WHO EXERCISE GUIDELINES =====
@@ -894,6 +1071,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "Garmin's moderateIntensityMinutes and vigorousIntensityMinutes fields map directly "
             "to these categories and reset weekly."
         ),
+        evidence_tier="A",
+        claim_strength="causal",
     ),
 
     # ===== FITNESS AGE =====
@@ -908,14 +1087,19 @@ INSIGHT_RULES: list[InsightRule] = [
             "Fitness age: {fitness_age:.0f} vs chronological age {chronological_age:.0f} "
             "(achievable: {achievable_fitness_age:.0f})."
         ),
-        research_citation="Nes et al., 2013, Medicine & Science in Sports & Exercise",
+        research_citation=(
+            "Nes et al., 2013, Medicine & Science in Sports & Exercise; "
+            "Han et al., 2024, BJSM (overview of meta-analyses, >20M observations)"
+        ),
         research_summary=(
             "Garmin's fitness age is derived from VO2 max relative to age-sex norms. "
             "A fitness age below chronological age indicates above-average cardiovascular "
             "fitness; above indicates below-average. Each 1 ml/kg/min improvement in VO2 max "
-            "reduces all-cause mortality risk by ~4%. The achievable fitness age shows how "
-            "much improvement is possible with optimal training."
+            "is associated with ~4% lower all-cause mortality risk. The 2024 BJSM overview "
+            "of meta-analyses (199 cohorts, >20M observations) confirms cardiorespiratory "
+            "fitness is one of the strongest predictors of morbidity and mortality."
         ),
+        evidence_tier="A",
     ),
 
     # ===== ALCOHOL + NEXT-MORNING RHR =====
@@ -930,14 +1114,20 @@ INSIGHT_RULES: list[InsightRule] = [
             "The morning after alcohol nights your RHR averages {mean_with:.0f} bpm "
             "vs {mean_without:.0f} bpm on other mornings ({difference:+.0f} bpm)."
         ),
-        research_citation="Sagawa et al., 2011, Alcohol & Alcoholism",
-        research_summary=(
-            "Alcohol metabolism produces acetaldehyde, which directly elevates heart rate "
-            "during processing and into the following morning. Even 1-2 drinks can raise "
-            "next-morning RHR by 3-8 bpm and suppress HRV — effects are visible on Garmin "
-            "data the morning after drinking. This is one of the clearest alcohol signals "
-            "in wearable data and is separate from the same-night sleep quality impact."
+        research_citation=(
+            "Sagawa et al., 2011, Alcohol & Alcoholism; "
+            "PLOS Digital Health, 2026 (~21k-adult wearable cohort, dose-dependent)"
         ),
+        research_summary=(
+            "Alcohol metabolism produces acetaldehyde, which elevates heart rate during "
+            "processing and into the following morning. Even 1-2 drinks can raise "
+            "next-morning RHR by 3-8 bpm and suppress HRV — effects are clearly visible "
+            "in wearable data, with dose-response confirmed in a 2026 ~21k-adult cohort. "
+            "Separate from the same-night sleep-quality impact."
+        ),
+        evidence_tier="A",
+        claim_strength="causal",
+        confounders=["illness", "heat", "late_exercise", "stress", "luteal_phase"],
     ),
 
     # ===== SPO2 + SLEEP DISORDER =====
@@ -950,15 +1140,105 @@ INSIGHT_RULES: list[InsightRule] = [
         direction="lower_is_worse",
         description_template=(
             "Overnight SpO2 dropped to {value:.0f}% with {awake_count:.0f} awakenings — "
-            "consider screening for sleep-disordered breathing."
+            "screening-style signal worth discussing with a clinician."
         ),
-        research_citation="Berry et al., 2017, AASM Clinical Practice Guidelines",
+        research_citation=(
+            "Kapur et al., 2017, J Clin Sleep Med (AASM Clinical Practice Guideline "
+            "for Adult Obstructive Sleep Apnoea Diagnostic Testing)"
+        ),
         research_summary=(
             "Sustained overnight SpO2 below 92%, especially combined with frequent "
-            "awakenings, is suggestive of sleep apnea or other disordered breathing. "
-            "These patterns are strongly associated with daytime fatigue, hypertension, "
-            "and elevated cardiovascular risk if left unaddressed."
+            "awakenings, MAY be worth discussing with a clinician — particularly if "
+            "combined with snoring, daytime sleepiness, morning headaches, or "
+            "hypertension. Garmin SpO2 is NOT a diagnostic sleep study. The AASM "
+            "guideline positions diagnostic testing within a proper sleep evaluation, "
+            "not passive consumer-wearable inference alone."
         ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        measurement_confidence="medium",
+        confounders=["altitude", "cold_room", "sensor_drift", "side_sleeping"],
+    ),
+
+    # ===== BASELINE RELIABILITY GUARD =====
+    InsightRule(
+        name="baseline_reliability_guard",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="baseline_days_available",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "Only {baseline_days:.0f} days of baseline data — trend insights are "
+            "low confidence until ≥21 days are available."
+        ),
+        research_citation="Plews et al., 2013, Sports Medicine",
+        research_summary=(
+            "Stable HRV/RHR baselines require ~21-30 days of continuous data. Below "
+            "this threshold, day-to-day deviations may be measurement noise rather "
+            "than real change. When fewer than 21 days are available, suppress strong "
+            "trend language and prepend 'Low-confidence (sparse baseline):' to any "
+            "deviation finding."
+        ),
+        evidence_tier="A",
+        claim_strength="causal",
+        measurement_confidence="high",
+    ),
+
+    # ===== TRAVEL / CIRCADIAN DISRUPTION =====
+    InsightRule(
+        name="travel_circadian_disruption",
+        category="sleep",
+        trigger_behavior="Travel",
+        trigger_metric="sleepScore",
+        comparison_metric="restingHeartRate",
+        direction="higher_is_worse",
+        description_template=(
+            "Travel days correlate with sleep score {difference:+.0f} pts vs your "
+            "baseline; circadian readjustment after crossing time zones can take "
+            ">7 days."
+        ),
+        research_citation=(
+            "Lechat et al., 2025, SLEEP (Oura cohort, ~1.5M nights)"
+        ),
+        research_summary=(
+            "Large wearable cohort confirms multi-day disruption to sleep timing, "
+            "architecture, and overnight cardiovascular markers after time-zone "
+            "crossings. Recovery can take more than a week. Treat post-travel "
+            "deviations as expected, not as illness or overtraining."
+        ),
+        evidence_tier="A",
+        confounders=["alcohol", "heat", "stress", "altitude"],
+        requires_user_context=True,
+    ),
+
+    # ===== MULTI-CAUSE RECOVERY STRAIN (META-RULE) =====
+    InsightRule(
+        name="multi_cause_recovery_strain",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="composite_strain_pattern",
+        comparison_metric=None,
+        direction="correlation",
+        description_template=(
+            "RHR {rhr_delta:+.0f} bpm, HRV {hrv_delta:+.0f}%, respiration "
+            "{resp_delta:+.1f} bpm vs your baseline. Ranked plausible contributors: "
+            "{ranked_contributors}."
+        ),
+        research_citation="Composite — see individual contributor citations",
+        research_summary=(
+            "META-RULE. When multiple recovery markers deviate together, prefer a "
+            "RANKED-CONTRIBUTOR view over a single-cause claim. Order: (1) user-logged "
+            "behaviours in the last 24-48h (alcohol, late exercise, travel, DOMS), "
+            "(2) current cycle phase (luteal RHR↑/HRV↓ is normal), (3) tier-A "
+            "physiological pattern fits. Never name 'illness' as a single cause when "
+            "logged confounders are present."
+        ),
+        evidence_tier="B",
+        confounders=[
+            "alcohol", "illness", "late_exercise", "heat", "luteal_phase",
+            "travel", "poor_sleep", "caffeine", "doms", "emotional_stress",
+        ],
     ),
 ]
 
@@ -974,15 +1254,28 @@ def get_behavior_rules() -> list[InsightRule]:
 
 
 def get_rules_summary_for_llm() -> str:
-    """Format all rules as a concise text block for the LLM system prompt."""
+    """Format all rules as a concise text block for the LLM system prompt.
+
+    Each rule is emitted with its evidence tier, claim strength, measurement
+    confidence (when not 'high'), and confounder list so the agent can match
+    its output language to the strength of the evidence.
+    """
     lines = ["## Medical Evidence Knowledge Base\n"]
     current_cat = ""
     for rule in INSIGHT_RULES:
         if rule.category != current_cat:
             current_cat = rule.category
             lines.append(f"\n### {current_cat.title()}")
+        meta_parts = [f"Tier {rule.evidence_tier}", rule.claim_strength]
+        if rule.measurement_confidence != "high":
+            meta_parts.append(f"{rule.measurement_confidence}-confidence measurement")
+        if rule.requires_user_context:
+            meta_parts.append("requires user-logged context")
+        meta = ", ".join(meta_parts)
         lines.append(
-            f"- **{rule.name}**: {rule.research_summary} "
+            f"- **{rule.name}** [{meta}]: {rule.research_summary} "
             f"(Source: {rule.research_citation})"
         )
+        if rule.confounders:
+            lines.append(f"  Confounders: {', '.join(rule.confounders)}")
     return "\n".join(lines)
