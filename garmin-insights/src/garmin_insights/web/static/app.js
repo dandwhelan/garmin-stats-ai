@@ -1305,10 +1305,40 @@ function renderIntradayHeatmap(data) {
 
   const legend = document.getElementById('intraday-heatmap-legend');
   if (legend) {
+    // Garmin's published band thresholds for the metrics that have them.
+    // (Stress + Body Battery are 0–100 scores with official bands; heart_rate
+    // and steps don't, so we just show the colour-scale endpoints.)
+    const bandSets = {
+      stress: [
+        { label: 'Rest',   range: '0–25',    color: '#3b3f4d' },
+        { label: 'Low',    range: '26–50',   color: '#a88a1a' },
+        { label: 'Medium', range: '51–75',   color: '#e0a020' },
+        { label: 'High',   range: '76–100',  color: '#f87171' },
+      ],
+      body_battery: [
+        { label: 'Low',       range: '0–25',   color: '#3b3f4d' },
+        { label: 'Medium',    range: '26–50',  color: '#3b6fa8' },
+        { label: 'High',      range: '51–75',  color: '#4f9cf9' },
+        { label: 'Very High', range: '76–100', color: '#34d399' },
+      ],
+    };
+    const bands = bandSets[metric];
+    const bandsMarkup = bands
+      ? `<div class="heatmap-bands">${bands.map(b => `
+          <span class="heatmap-band">
+            <span class="heatmap-band-swatch" style="background:${b.color}"></span>
+            <span class="heatmap-band-text"><strong>${b.label}</strong> ${b.range}</span>
+          </span>`).join('')}
+          <span class="heatmap-band-note">Garmin reference bands · cell colour scaled to this window's p2–p98</span>
+        </div>`
+      : '';
     legend.innerHTML = `
-      <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
-      <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
-      <span><strong>${max.toFixed(0)}</strong></span>
+      <div class="heatmap-scale">
+        <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
+        <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
+        <span><strong>${max.toFixed(0)}</strong></span>
+      </div>
+      ${bandsMarkup}
     `;
   }
 }

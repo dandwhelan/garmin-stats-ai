@@ -424,17 +424,50 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .heatmap-date-label { text-align: right; padding-right: 6px; }
 .heatmap-legend {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 12px;
   font-size: 0.78rem;
   color: var(--muted);
+}
+.heatmap-scale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .heatmap-gradient {
   display: inline-block;
   width: 200px;
   height: 12px;
   border-radius: 6px;
+}
+.heatmap-bands {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.heatmap-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.heatmap-band-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.heatmap-band-text strong { color: var(--text); font-weight: 600; }
+.heatmap-band-note {
+  margin-left: auto;
+  font-style: italic;
+  opacity: 0.7;
 }
 
 /* ---- Anomaly calendar ---- */
