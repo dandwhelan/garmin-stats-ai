@@ -602,8 +602,9 @@ class LifestyleService:
     # Research citations surfaced in the UI tooltip:
     #   - Shilaih 2017 (Sci Rep) — sleeping HR rises in luteal phase
     #   - Maijala 2022 (Dovepress IJWH, Oura ring) — temp/HR/HRV across cycle
-    #   - Ultrahuman 2025 (bioRxiv) — sleep loss confounds cycle changes
-    #   - Lyu 2025 (Comput Biol Med) — ML phase classification from HR
+    #   - Alzueta/de Zambotti/Baker 2022 (Oura) — luteal HR↑, skin temp↑, RMSSD↓
+    #   - Symons Downs 2025 (Sports Medicine SR) — wearable HRV across cycle
+    #   - Masuda 2025 — ML phase classification from sleeping HR
     # ------------------------------------------------------------------
     def cycle_hrv(self, start: str, end: str) -> dict:
         # Pull the user's full menstrual_cycle window — we widen vs the

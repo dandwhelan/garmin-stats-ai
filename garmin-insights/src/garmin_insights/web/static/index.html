@@ -89,7 +89,7 @@
         <div class="metric-sub" id="sub-totalSteps"></div>
       </div>
       <div class="metric-card skeleton" id="card-stressPercentage">
-        <div class="metric-label">Stress % <span class="info-icon" tabindex="0">i<span class="info-tooltip">Percentage of the last complete day spent in a high-stress state, measured via Garmin's HRV-derived stress tracking.<br><br>≤20% calm · ≤35% moderate · &gt;35% high</span></span></div>
+        <div class="metric-label">Stress % <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Garmin "stress" is HRV-derived <em>physiological / autonomic strain</em>, not validated mental stress. A high score can follow alcohol, illness, heat, pain, caffeine, late exercise or emotional stress — interpret with context.<br><br>≤20% calm · ≤35% moderate · &gt;35% high</span></span></div>
         <div class="metric-value" id="val-stressPercentage">—</div>
         <div class="metric-sub" id="sub-stressPercentage"></div>
       </div>
@@ -114,7 +114,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2 id="sleep-chart-title">Sleep Architecture</h2>
+          <h2 id="sleep-chart-title">Sleep Architecture <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> Device-estimated deep, REM, light and awake minutes per night. Consumer wearables differ meaningfully from polysomnography (Chinoy 2021; Schyvens 2024 Garmin validation) — Garmin tends to overestimate light and underestimate deep in some studies. Read as a <em>personal trend vs your own baseline</em>, not clinical staging. Do not treat the 13–23% deep-sleep population norm as a clinical deficit.</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="sleep-architecture-chart"></canvas>
@@ -143,7 +143,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Stress vs Body Battery</h2>
+          <h2>Stress vs Body Battery <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Daily autonomic strain ("stress") plotted against Body Battery — both are HRV-derived, so this is two views of the same underlying signal. Not validated as <em>mental</em> stress. Confounders include alcohol, illness, heat, caffeine, late exercise, dehydration and luteal-phase physiology.</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="stress-chart"></canvas>
@@ -168,7 +168,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Training Load — Acute vs Chronic (ACWR) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Acute:Chronic Workload Ratio compares your 7-day training load (acute) against your 28-day average (chronic). The ratio indicates injury risk and readiness.<br><br>0.8–1.3 = safe zone · &gt;1.5 = elevated injury risk · &lt;0.8 = undertraining</span></span></h2>
+          <h2>Training Load — Acute vs Chronic (ACWR) <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier C]</b> <em>Load-spike context signal</em> — ACWR compares your 7-day load vs your 28-day average. Useful for flagging sudden ramp-ups, but Gabbett 2016 has been heavily critiqued (Impellizzeri 2020, BJSM; Wang 2024, BJSM): ACWR alone is <em>not</em> a validated injury predictor.<br><br>0.8–1.3 = typical · &gt;1.5 = recent spike — consider easing back</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="acwr-chart"></canvas>
@@ -274,7 +274,7 @@
 
     <section class="chart-section" id="menstrual-section" style="display:none;">
       <div class="chart-header">
-        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip">Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Cycle phase modulates HRV, RHR, sleep architecture and training response: luteal phase shows ~2–5 bpm higher RHR, lower rMSSD HRV, and PMS days are associated with reduced deep/REM sleep and more awakenings.<br><br>Sources: Shilaih 2017 (Sci Rep); Brar 2015 (J Women's Health); Baker 2007 (PMC2266284); Wearable HRV &amp; PMD 2024 (medRxiv).</span></span></h2>
+        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Luteal phase typically shows +2–5 bpm RHR and lower rMSSD HRV; late-luteal/PMS days are associated with reduced device-estimated deep/REM and more awakenings. <em>Use cycle phase as a confounder/context label, not a single cause</em> — the same pattern can resemble illness, alcohol, training strain or sleep debt.<br><br>Sources: Shilaih 2017 (Sci Rep); Brar 2015 (J Women's Health); Baker 2007; Alzueta 2022 (Oura); Symons Downs 2025 (Sports Med SR).</span></span></h2>
         <span class="chart-sub">Phase, day-of-cycle and flow (last 90 days)</span>
       </div>
       <div id="menstrual-summary" class="alert-list"></div>
@@ -294,7 +294,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Pre-symptom Illness Radar <span class="info-icon" tabindex="0">i<span class="info-tooltip">Early illness detection (Quer et al. 2021) using z-scores vs your 30-day baseline: elevated RHR, suppressed HRV, and elevated respiration rate. A composite z-score above 2 may be a pre-symptomatic illness signal — before you feel sick.</span></span></h2>
+        <h2>Pre-symptom Illness Radar <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> <em>Illness-like recovery strain pattern</em> — composite z-score of elevated RHR, suppressed HRV and elevated respiration vs your 30-day baseline. <em>Not diagnostic.</em> The same pattern can follow alcohol, heat, poor sleep, late training, travel, DOMS, emotional stress or luteal-phase physiology.<br><br>Sources: Quer 2021 (Nat Med); Radin 2020, Mishra 2022 (Lancet Digital Health systematic review — performance varies, treat as screening, not diagnosis).</span></span></h2>
         <span class="chart-sub">RHR + HRV-inverted + respiration z-scores (Quer 2021)</span>
       </div>
       <div class="chart-container">
@@ -306,7 +306,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Recovery Debt <span class="info-icon" tabindex="0">i<span class="info-tooltip">Tracks cumulative energy deficit when your morning Body Battery falls below your personal baseline. Persistent debt means your body isn't recovering fully between days — common during illness, overtraining, or high stress periods.</span></span></h2>
+          <h2>Recovery Debt <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Cumulative deficit when your morning Body Battery falls below your personal baseline. Persistent debt means recovery isn't keeping pace — context: illness-like strain, overreaching, alcohol load, or sustained poor sleep. Body Battery is HRV-derived, so the same caveats as Stress apply.</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="recovery-debt-chart"></canvas>
@@ -315,7 +315,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Inflammation Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">A composite z-score combining elevated RHR, elevated respiration rate, and reduced sleep efficiency. Higher values suggest systemic stress, illness, or heavy recovery demands on your body.</span></span></h2>
+          <h2>Inflammation Index <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier C]</b> Composite <em>physiological strain</em> z-score (RHR + respiration − sleep efficiency). This is <em>not</em> a measurement of inflammatory biomarkers — Garmin can't measure CRP, cytokines or white-cell counts. Use as a deviation-from-baseline trend, not a clinical inflammation reading.</span></span></h2>
           <span class="chart-sub">RHR + respiration − sleep efficiency, z-scored</span>
         </div>
         <div class="chart-container">
@@ -327,7 +327,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Sleep Regularity Index <span class="info-icon" tabindex="0">i<span class="info-tooltip">Measures how consistent your sleep timing is day-to-day (0–100). Calculated as the probability that you're asleep at any given minute today vs the same minute yesterday, averaged over 7 days (Windred 2024). High scores are linked to better metabolic and cardiovascular health — even independent of sleep duration.<br><br>≥87 regular · &lt;60 irregular</span></span></h2>
+          <h2>Sleep Regularity Index <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Measures how consistent your sleep timing is day-to-day (0–100). Calculated as the probability you're asleep at any given minute today vs the same minute yesterday, averaged over 7 days (Windred 2024, Nature). High scores are linked to better metabolic and cardiovascular health — even independent of sleep duration.<br><br>≥87 regular · &lt;60 irregular</span></span></h2>
           <span class="chart-sub">7-day rolling consistency of sleep midpoint (Windred 2024)</span>
         </div>
         <div class="chart-container">
@@ -338,7 +338,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Social Jet Lag <span class="info-icon" tabindex="0">i<span class="info-tooltip">Your internal body clock (circadian rhythm) is anchored by consistent sleep timing. "Social jet lag" is the difference in your sleep midpoint (halfway between bedtime and wake time) on weekdays vs weekends. If you sleep at different times on weekends, your body experiences something like weekly jet lag — without going anywhere. A gap &gt;1 hour is linked to metabolic dysfunction, mood issues, and cardiovascular risk.</span></span></h2>
+          <h2>Social Jet Lag <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Difference in your sleep midpoint (halfway between bedtime and wake) on weekdays vs weekends. A gap &gt;1 hour ("social jet lag") is associated with metabolic dysfunction, mood issues and cardiovascular risk, independent of total sleep duration. Wittmann 2006 (Chronobiol Int).</span></span></h2>
           <span class="chart-sub">Weekday vs weekend sleep midpoint</span>
         </div>
         <div id="social-jetlag" class="dual-clock"></div>
@@ -347,7 +347,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Stress Resilience Score <span class="info-icon" tabindex="0">i<span class="info-tooltip">How effectively your body recovers from daily stress, measured as your overnight body battery recovery rate relative to your 30-day stress baseline. Higher scores mean your autonomic nervous system is bouncing back efficiently. Chronic low scores suggest you're accumulating stress faster than you're recovering.</span></span></h2>
+        <h2>Stress Resilience Score <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overnight recovery relative to your 30-day baseline of HRV-derived autonomic strain. Higher = your autonomic nervous system is bouncing back efficiently. Chronic low scores mean strain is outpacing recovery. Note Garmin "stress" is autonomic, not mental — alcohol, heat, illness, late training, and luteal-phase physiology all push it up.</span></span></h2>
         <span class="chart-sub">Daily, normalised against your 30-day stress baseline</span>
       </div>
       <div class="chart-container">
@@ -357,7 +357,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Body Battery Decay Slope <span class="info-icon" tabindex="0">i<span class="info-tooltip">How fast your body battery depletes during waking hours, expressed as points per hour. A steep drop (large negative number) means your autonomic nervous system is draining quickly — usually from high stress, intense activity, or poor recovery. Flatter decay = more efficient energy management.</span></span></h2>
+        <h2>Body Battery Decay Slope <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> How fast Body Battery depletes during waking hours, in points/hour. A steep drop (large negative number) means autonomic strain is draining you faster than usual — from high physiological stress, intense activity, illness-like patterns, or poor sleep. Flatter decay = better-paced day.</span></span></h2>
         <span class="chart-sub">Points lost per hour over the day — steeper = faster autonomic drain</span>
       </div>
       <div class="chart-container">
@@ -367,7 +367,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Behavior Recovery Cost <span class="info-icon" tabindex="0">i<span class="info-tooltip">For each logged behavior, this shows the median number of days for your HRV to return within 0.5 standard deviations of your personal baseline. Longer bars = harder impact on your recovery. Helps you understand which behaviors cost the most recovery time.</span></span></h2>
+        <h2>Behavior Recovery Cost <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> For each logged behaviour, median days for your HRV to return within 0.5σ of your personal baseline. Longer bars = larger impact on <em>your</em> recovery. Personalised analytic — uses your own baseline, not population norms.</span></span></h2>
         <span class="chart-sub">Median days for HRV to return within 0.5σ of baseline after each behavior</span>
       </div>
       <div class="chart-container">
@@ -377,7 +377,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Behavior Dose-Response <span class="info-icon" tabindex="0">i<span class="info-tooltip">Shows how different quantities of a behavior correlate with sleep score, HRV, deep sleep, and RHR the following night. Only meaningful for behaviors logged with a numeric quantity (e.g. "Alcohol: 2 drinks" or "Caffeine: 3 cups"). Binary yes/no behaviors (e.g. Traveling, Exercise) have no quantity variation — all their dots pile up at x=0.</span></span></h2>
+        <h2>Behavior Dose-Response <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> How quantities of a behaviour correlate with next-night sleep, HRV, deep sleep and RHR. Only meaningful for numeric quantities (e.g. "Alcohol: 2 drinks"). Binary yes/no behaviours pile at x=0. Note: device-estimated deep sleep is a personal trend, not a clinical staging measurement.</span></span></h2>
         <span class="chart-sub">For behaviors logged with a numeric value (e.g. drinks, caffeine cups)</span>
         <div class="chart-controls" id="dose-controls"></div>
       </div>
@@ -422,8 +422,8 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Stress Trigger Leaderboard</h2>
-          <span class="chart-sub">Behaviors over-represented on top-quintile stress days</span>
+          <h2>Stress Trigger Leaderboard <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Behaviours over-represented on your top-quintile autonomic-strain days. Garmin "stress" is HRV-derived strain, not mental stress — read this as "behaviours that coincide with high physiological load". Correlational, not causal.</span></span></h2>
+          <span class="chart-sub">Behaviours over-represented on top-quintile autonomic-strain days</span>
         </div>
         <div id="stress-triggers" class="trigger-list"></div>
       </section>
@@ -432,7 +432,7 @@
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Step-Count Survival Curve <span class="info-icon" tabindex="0">i<span class="info-tooltip">Shows the distribution of your daily step counts. Read it as: "X% of my days I walked fewer than Y steps." Research shows 7,500 steps/day is associated with significant all-cause mortality reduction, and 10,000 steps shows further benefit — but gains plateau after that (Paluch 2022).</span></span></h2>
+          <h2>Step-Count Survival Curve <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Distribution of your daily step counts. Read as "X% of my days I walked fewer than Y steps." Paluch 2022 (Lancet Public Health) — ~7,500 steps/day is associated with significant all-cause mortality reduction, with further benefit up to ~10,000; gains plateau after.</span></span></h2>
           <span class="chart-sub">Reference lines: 7,500 (mortality benefit) / 10,000 (Paluch 2022)</span>
         </div>
         <div class="chart-container">
@@ -443,7 +443,7 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>WHO Activity Target <span class="info-icon" tabindex="0">i<span class="info-tooltip">WHO recommends ≥150 minutes per week of moderate-intensity activity, or ≥75 minutes of vigorous intensity (vigorous counts double). This chart stacks moderate + vigorous×2 minutes per week. The dashed line marks the 150-minute threshold. Consistent weeks above it are linked to reduced risk of heart disease, diabetes, and depression.</span></span></h2>
+          <h2>WHO Activity Target <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> WHO recommends ≥150 min/week moderate or ≥75 min vigorous (vigorous counts double). Bars stack moderate + vigorous×2 minutes per week; dashed line = 150-min threshold. Bull et al. 2020 (BJSM) — consistent weeks above target are associated with reduced risk of heart disease, diabetes and depression.</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="who-target-chart"></canvas>
@@ -453,8 +453,8 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Stress Hour-of-Day Fingerprint</h2>
-        <span class="chart-sub">Average stress level per hour, weekday vs weekend</span>
+        <h2>Stress Hour-of-Day Fingerprint <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Average HRV-derived autonomic strain by hour of day, weekday vs weekend. Garmin "stress" is autonomic, not mental — read the curve as physiological load. Useful for spotting consistent high-strain hours (post-coffee, post-commute, late evening).</span></span></h2>
+        <span class="chart-sub">Average autonomic strain per hour, weekday vs weekend</span>
       </div>
       <div class="chart-container">
         <canvas id="stress-fingerprint-chart"></canvas>
@@ -463,7 +463,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>VO2 Max / Fitness Age <span class="info-icon" tabindex="0">i<span class="info-tooltip">Garmin estimates your biological fitness age from VO2 max (your body's maximum oxygen uptake capacity). A fitness age below your real age means above-average aerobic capacity for your demographic. "Achievable fitness age" is Garmin's modelled target ceiling — if your current fitness age is already lower than it, you've surpassed the benchmark. This is a good thing.</span></span></h2>
+        <h2>VO2 Max / Fitness Age <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Garmin estimates biological fitness age from VO2 max (your body's maximum oxygen uptake). Below your real age = above-average aerobic capacity for your demographic. "Achievable fitness age" is Garmin's modelled ceiling — surpassing it is a good sign.<br><br>Han 2024 (BJSM overview of meta-analyses, &gt;20M observations) confirms cardiorespiratory fitness is one of the strongest predictors of all-cause mortality.</span></span></h2>
       </div>
       <div class="chart-container">
         <canvas id="fitness-age-chart"></canvas>
@@ -472,7 +472,7 @@
 
     <section class="chart-section" id="cycle-phase-section" style="display:none;">
       <div class="chart-header">
-        <h2>Vitals by Menstrual Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip">RHR, overnight HRV, sleep score and morning Body Battery averaged within each menstrual phase. Expected pattern: RHR is lowest in the follicular phase and rises 2–5 bpm in the luteal phase, with HRV typically dropping in late luteal — this is normal physiology, not illness or overtraining.<br><br>Sources: Shilaih 2017 (Sci Rep); Maijala 2022 (Dovepress IJWH, Oura ring); Nakagawa 2020 (J Clin Med).</span></span></h2>
+        <h2>Vitals by Menstrual Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> RHR, overnight HRV, sleep score and morning Body Battery averaged within each menstrual phase. Expected pattern: RHR lowest in follicular, rising 2–5 bpm in luteal; HRV typically drops in late luteal — <em>normal physiology, not illness or overtraining</em>.<br><br>Use phase as a confounder before attributing changes to a single cause.<br><br>Sources: Shilaih 2017 (Sci Rep); Maijala 2022 (Oura); Alzueta 2022; Symons Downs 2025 (Sports Med SR); Nakagawa 2020.</span></span></h2>
         <span class="chart-sub">Per-phase averages over the selected window (only phases with data shown)</span>
       </div>
       <div class="chart-container">
@@ -483,7 +483,7 @@
 
     <section class="chart-section" id="cycle-day-section" style="display:none;">
       <div class="chart-header">
-        <h2>Cycle-Day Curve (RHR &amp; HRV) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Your sleeping RHR and overnight HRV averaged at each day-of-cycle across the selected window. Look for the biphasic pattern: a follicular trough (days 6–13), an ovulatory inflection, and a luteal rise (days 18–28). ML models can classify cycle phase from sleeping HR alone.<br><br>Caveat: a 10% drop in weekly sleep raises RHR ~1.2% independent of phase — control for sleep duration before attributing changes to your cycle.<br><br>Sources: Shilaih 2017 (Sci Rep); Lyu 2025 (Comput Biol Med); Ultrahuman 2025 (bioRxiv).</span></span></h2>
+        <h2>Cycle-Day Curve (RHR &amp; HRV) <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Your sleeping RHR and overnight HRV averaged at each day-of-cycle. Look for the biphasic pattern: follicular trough (days 6–13), ovulatory inflection, luteal rise (days 18–28). ML models can classify cycle phase from sleeping HR alone.<br><br>Caveat: reduced sleep raises RHR independent of phase — control for sleep duration before attributing changes to your cycle.<br><br>Sources: Shilaih 2017 (Sci Rep); Symons Downs 2025 (Sports Med SR); Masuda 2025 (cycle-phase classification from sleeping HR).</span></span></h2>
         <span class="chart-sub">Averaged across recent cycles in window</span>
       </div>
       <div class="chart-container">
@@ -507,7 +507,7 @@
 
     <section class="chart-section" id="cycle-sleep-section" style="display:none;">
       <div class="chart-header">
-        <h2>Sleep Architecture by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip">Average minutes of deep, REM, light, and awake sleep within each menstrual phase. Late-luteal/PMS commonly shows reduced REM and more awake time; the follicular phase tends to have the most restorative sleep.<br><br>Sources: Baker 2007 (Sleep Med Rev); medRxiv 2024 (cycle × sleep architecture).</span></span></h2>
+        <h2>Sleep Architecture by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> Average minutes of device-estimated deep, REM, light, and awake sleep within each menstrual phase. Late-luteal/PMS commonly shows reduced REM and more awake time; follicular phase tends to have the most restorative sleep.<br><br>Consumer-wearable sleep-stage estimates differ meaningfully from polysomnography (Chinoy 2021; Schyvens 2024 Garmin validation) — read this as a <em>personal trend across phases</em>, not clinical staging.<br><br>Sources: Baker 2007 (Sleep Med Rev); PMS &amp; sleep quality cross-sectional, 2025 (PMC11842786).</span></span></h2>
         <span class="chart-sub">Per-phase sleep stage averages (minutes)</span>
       </div>
       <div class="chart-container">
@@ -517,7 +517,7 @@
 
     <section class="chart-section" id="cycle-stress-section" style="display:none;">
       <div class="chart-header">
-        <h2>Stress &amp; Body Battery by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip">Average daily stress %, high-stress %, lowest Body Battery, and Body Battery drained per day within each phase. Stress often elevates in late-luteal/PMS alongside lower Body Battery recovery.<br><br>Sources: Schmalenberger 2020 (Front Endocrinol — HRV across cycle); Ultrahuman 2025 (cycle × autonomic load).</span></span></h2>
+        <h2>Stress &amp; Body Battery by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Average daily autonomic-strain ("stress") %, high-strain %, lowest Body Battery and Body Battery drained per day within each phase. Autonomic strain often elevates in late-luteal/PMS alongside lower Body Battery recovery. Garmin "stress" is HRV-derived, not validated mental stress.<br><br>Sources: Schmalenberger 2020 (Front Endocrinol — HRV across cycle); Symons Downs 2025 (Sports Med SR — wearable HRV across reproductive life stages).</span></span></h2>
         <span class="chart-sub">Per-phase averages (only phases with data shown)</span>
       </div>
       <div class="chart-container">
