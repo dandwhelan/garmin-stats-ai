@@ -52,6 +52,7 @@ RATE_LIMIT_CALLS_SECONDS = int(os.getenv("RATE_LIMIT_CALLS_SECONDS", 5)) # optio
 MAX_CONSECUTIVE_500_ERRORS = int(os.getenv("MAX_CONSECUTIVE_500_ERRORS", 10)) # optional, maximum consecutive HTTP 500 errors before continuing without retrying
 GARMIN_DEVICENAME_AUTOMATIC = False if GARMIN_DEVICENAME != "Unknown" else True # optional
 UPDATE_INTERVAL_SECONDS = int(os.getenv("UPDATE_INTERVAL_SECONDS", 300)) # optional
+RESYNC_WINDOW_DAYS = int(os.getenv("RESYNC_WINDOW_DAYS", 7)) # optional, on every auto-fetch tick the start date is clamped to at least N days back so retroactive Garmin Connect edits (lifestyle, sleep notes) are picked up. Set to 0 to disable.
 FETCH_SELECTION = os.getenv("FETCH_SELECTION", "daily_avg,sleep,steps,heartrate,stress,breathing,hrv,fitness_age,vo2,activity,race_prediction,body_composition,lifestyle,menstrual") # additional available values are lactate_threshold,training_status,training_readiness,hill_score,endurance_score,blood_pressure,hydration,solar_intensity which you can add to the list seperated by , without any space
 LACTATE_THRESHOLD_SPORTS = os.getenv("LACTATE_THRESHOLD_SPORTS", "RUNNING").upper().split(",") # Garmin currently implements RUNNING, but has provisions for CYCLING, and SWIMMING
 KEEP_FIT_FILES = True if os.getenv("KEEP_FIT_FILES") in ['True', 'true', 'TRUE','t', 'T', 'yes', 'Yes', 'YES', '1'] else False # optional
@@ -1478,6 +1479,7 @@ if __name__ == "__main__":
             logging.warning(f"Unable to determine user's timezone - Defaulting to UTC. Consider providing TZ identifier with USER_TIMEZONE environment variable")
             local_timediff = timedelta(hours=0)
         
+        last_trailing_resync_day = ""  # forces a trailing-window pass on first iteration
         while True:
             last_watch_sync_time_UTC = datetime.fromtimestamp(int(garmin_obj.get_device_last_used().get('lastUsedDeviceUploadTime')/1000)).astimezone(pytz.timezone("UTC"))
             # Use today's local date as the end date rather than lastUsedDeviceUploadTime.
@@ -1486,6 +1488,17 @@ if __name__ == "__main__":
             # recent days. Fetching up to today is safe — empty dates simply return no records.
             today_local_str = datetime.today().strftime('%Y-%m-%d')
             start_local_str = (last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')
+            # Once per calendar day, widen the start back by RESYNC_WINDOW_DAYS
+            # so retroactive Garmin Connect edits (lifestyle entries, sleep
+            # notes, etc.) get picked up. All upserts are idempotent on natural
+            # keys, so re-fetching is safe; we gate it to once/day to avoid
+            # re-pulling N days every UPDATE_INTERVAL_SECONDS tick.
+            if RESYNC_WINDOW_DAYS > 0 and last_trailing_resync_day != today_local_str:
+                resync_floor_str = (datetime.today() - timedelta(days=RESYNC_WINDOW_DAYS)).strftime('%Y-%m-%d')
+                if resync_floor_str < start_local_str:
+                    logging.info(f"Trailing resync : widening start to {resync_floor_str} (was {start_local_str}) to catch retroactive edits over past {RESYNC_WINDOW_DAYS} days")
+                    start_local_str = resync_floor_str
+                last_trailing_resync_day = today_local_str
             if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC or start_local_str < today_local_str:
                 logging.info(f"Update found : fetching {start_local_str} → {today_local_str} (watch last upload: {last_watch_sync_time_UTC} UTC)")
                 fetch_write_bulk(start_local_str, today_local_str)
