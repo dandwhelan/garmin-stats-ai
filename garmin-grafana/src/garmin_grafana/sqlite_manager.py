@@ -574,6 +574,14 @@ class GarminDB:
                     }, ['time', 'device'])
 
                 elif measurement == 'ActivitySummary':
+                    # The fetcher emits two points per activity: a START row with
+                    # the real fields, and an END marker row carrying only
+                    # activityName="END" / activityType="No Activity". In the
+                    # original InfluxDB schema those are distinct time-series
+                    # points; here they share activity_id, so writing the END
+                    # marker would overwrite the real row via upsert.
+                    if fields.get('activityName') == 'END':
+                        continue
                     self._upsert(cursor, 'activity_summary', {
                         'activity_id': fields.get('Activity_ID'),
                         'time': timestamp,
