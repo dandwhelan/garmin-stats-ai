@@ -1233,44 +1233,61 @@ function renderIntradayHeatmap(data) {
     return;
   }
 
-  // Winsorised range — use 2nd–98th percentile so a handful of outlier hours
-  // don't compress the gradient for the bulk of the data. Cells outside the
-  // p2/p98 window saturate to the end-stop colour but the tooltip still shows
-  // their true value.
-  const flat = matrix.flat().filter(v => v != null && isFinite(v)).sort((a, b) => a - b);
-  let min, max;
-  if (flat.length < 5) {
-    min = flat[0] ?? 0;
-    max = flat[flat.length - 1] ?? 100;
-  } else {
-    const q = (p) => flat[Math.min(flat.length - 1, Math.max(0, Math.floor(flat.length * p)))];
-    min = q(0.02);
-    max = q(0.98);
-  }
-  if (min === max) { min = 0; max = (max || 0) + 1; }
-
-  // Color: stress (red high), body_battery (green high), heart_rate (orange high)
-  const palette = {
-    stress:        ['#1a1d27', '#fbbf24', '#f87171'],
-    body_battery:  ['#1a1d27', '#4f9cf9', '#34d399'],
-    heart_rate:    ['#1a1d27', '#7c6af7', '#f87171'],
-    steps:         ['#1a1d27', '#22d3ee', '#34d399'],
-  };
-  const stops = palette[metric] || palette.stress;
-
   function lerp(a, b, t) { return a + (b - a) * t; }
   function hexToRgb(h) {
     const x = h.replace('#', '');
     return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)];
   }
-  const c0 = hexToRgb(stops[0]), c1 = hexToRgb(stops[1]), c2 = hexToRgb(stops[2]);
+
+  // Stress and Body Battery are 0–100 scores with published Garmin bands.
+  // For those we lock the colour scale to 0–100 and use 4 distinct stops
+  // aligned to band centres, so a cell's colour directly tells you which
+  // band it falls in (and the band key below the legend matches the grid).
+  // Heart Rate and Steps have no published bands, so we keep the 3-stop
+  // winsorised gradient (clipped to p2–p98 so outliers don't compress it).
+  const BAND_PALETTES = {
+    stress:       ['#3b3f4d', '#34d399', '#fbbf24', '#f87171'],  // grey → green → amber → red
+    body_battery: ['#ef4444', '#fbbf24', '#34d399', '#22c55e'],  // red → amber → green → bright green
+  };
+  const GRADIENT_PALETTES = {
+    heart_rate:   ['#1a1d27', '#7c6af7', '#f87171'],
+    steps:        ['#1a1d27', '#22d3ee', '#34d399'],
+  };
+
+  const isBanded = metric in BAND_PALETTES;
+  let stops, min, max;
+  if (isBanded) {
+    stops = BAND_PALETTES[metric];
+    min = 0; max = 100;
+  } else {
+    stops = GRADIENT_PALETTES[metric] || GRADIENT_PALETTES.heart_rate;
+    // Winsorised p2–p98 so a handful of outlier hours don't compress the
+    // gradient. Cells outside the window saturate to the end-stop colour.
+    const flat = matrix.flat().filter(v => v != null && isFinite(v)).sort((a, b) => a - b);
+    if (flat.length < 5) {
+      min = flat[0] ?? 0;
+      max = flat[flat.length - 1] ?? 100;
+    } else {
+      const q = (p) => flat[Math.min(flat.length - 1, Math.max(0, Math.floor(flat.length * p)))];
+      min = q(0.02);
+      max = q(0.98);
+    }
+    if (min === max) { min = 0; max = (max || 0) + 1; }
+  }
+
+  const stopRgb = stops.map(hexToRgb);
   function colorFor(v) {
     if (v == null) return '#0f1117';
     const raw = (v - min) / (max - min);
     const t = Math.max(0, Math.min(1, raw));
-    const c = t < 0.5
-      ? c0.map((x, i) => lerp(x, c1[i], t * 2))
-      : c1.map((x, i) => lerp(x, c2[i], (t - 0.5) * 2));
+    // n stops divide [0,1] into n-1 equal-width intervals; find which interval
+    // we land in and lerp between the bounding stops.
+    const n = stopRgb.length;
+    const scaled = t * (n - 1);
+    const idx = Math.min(n - 2, Math.floor(scaled));
+    const localT = scaled - idx;
+    const a = stopRgb[idx], b = stopRgb[idx + 1];
+    const c = a.map((x, i) => lerp(x, b[i], localT));
     return `rgb(${c.map(Math.round).join(',')})`;
   }
 
@@ -1305,21 +1322,20 @@ function renderIntradayHeatmap(data) {
 
   const legend = document.getElementById('intraday-heatmap-legend');
   if (legend) {
-    // Garmin's published band thresholds for the metrics that have them.
-    // (Stress + Body Battery are 0–100 scores with official bands; heart_rate
-    // and steps don't, so we just show the colour-scale endpoints.)
+    // For banded metrics, swatch colours come from the cell palette so the
+    // legend and the grid use literally the same colours.
     const bandSets = {
       stress: [
-        { label: 'Rest',   range: '0–25',    color: '#3b3f4d' },
-        { label: 'Low',    range: '26–50',   color: '#a88a1a' },
-        { label: 'Medium', range: '51–75',   color: '#e0a020' },
-        { label: 'High',   range: '76–100',  color: '#f87171' },
+        { label: 'Rest',   range: '0–25',   color: stops[0] },
+        { label: 'Low',    range: '26–50',  color: stops[1] },
+        { label: 'Medium', range: '51–75',  color: stops[2] },
+        { label: 'High',   range: '76–100', color: stops[3] },
       ],
       body_battery: [
-        { label: 'Low',       range: '0–25',   color: '#3b3f4d' },
-        { label: 'Medium',    range: '26–50',  color: '#3b6fa8' },
-        { label: 'High',      range: '51–75',  color: '#4f9cf9' },
-        { label: 'Very High', range: '76–100', color: '#34d399' },
+        { label: 'Low',       range: '0–25',   color: stops[0] },
+        { label: 'Medium',    range: '26–50',  color: stops[1] },
+        { label: 'High',      range: '51–75',  color: stops[2] },
+        { label: 'Very High', range: '76–100', color: stops[3] },
       ],
     };
     const bands = bandSets[metric];
@@ -1329,13 +1345,15 @@ function renderIntradayHeatmap(data) {
             <span class="heatmap-band-swatch" style="background:${b.color}"></span>
             <span class="heatmap-band-text"><strong>${b.label}</strong> ${b.range}</span>
           </span>`).join('')}
-          <span class="heatmap-band-note">Garmin reference bands · cell colour scaled to this window's p2–p98</span>
+          <span class="heatmap-band-note">Garmin reference bands · cell colour matches band</span>
         </div>`
       : '';
+    const gradientCss = `linear-gradient(to right, ${stops.join(', ')})`;
+    const scaleNote = isBanded ? ' (Garmin 0–100)' : ' (p2–p98)';
     legend.innerHTML = `
       <div class="heatmap-scale">
-        <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
-        <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
+        <span>${metric}${scaleNote}: <strong>${min.toFixed(0)}</strong></span>
+        <span class="heatmap-gradient" style="background: ${gradientCss}"></span>
         <span><strong>${max.toFixed(0)}</strong></span>
       </div>
       ${bandsMarkup}
