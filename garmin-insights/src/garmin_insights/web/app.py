@@ -85,6 +85,14 @@ class ScanRequest(BaseModel):
     user: str = "default"
 
 
+class PromptRequest(BaseModel):
+    user: str = "default"
+    message: str | None = None
+    focus: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+
+
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -571,6 +579,42 @@ async def scan(body: ScanRequest):
         }
     except Exception as e:
         logger.error("Scan failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/prompt/generate")
+async def generate_prompt(body: PromptRequest):
+    """Build a self-contained text prompt the user can paste into a free LLM.
+
+    Includes the full system context plus a pre-fetched data snapshot, so the
+    receiving chat (Claude.ai, ChatGPT, Gemini, ...) has the same picture our
+    tool-calling agent would build for itself — no API tokens needed.
+    """
+    bundle = _require_user(body.user)
+    if not body.message and not body.focus:
+        raise HTTPException(status_code=400, detail="Provide either 'message' or 'focus'")
+    if body.focus:
+        valid_focus = {"general", "morning", "midday", "evening", "weekly"}
+        if body.focus not in valid_focus:
+            raise HTTPException(status_code=400, detail=f"focus must be one of {valid_focus}")
+    try:
+        loop = asyncio.get_event_loop()
+        prompt = await loop.run_in_executor(
+            None,
+            bundle.agent.build_portable_prompt,
+            body.message,
+            body.focus,
+            body.start_date,
+            body.end_date,
+        )
+        return {
+            "user": body.user,
+            "prompt": prompt,
+            "chars": len(prompt),
+            "approx_tokens": len(prompt) // 4,
+        }
+    except Exception as e:
+        logger.exception("Prompt generation failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
