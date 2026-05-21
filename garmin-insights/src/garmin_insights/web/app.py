@@ -158,7 +158,7 @@ def _resolve_user_identity(settings) -> dict[str, str]:
         name = explicit
     elif email:
         local = email.split("@", 1)[0]
-        # "helen.wadge" -> "Helen Wadge"
+        # "jane.doe" -> "Jane Doe"
         name = " ".join(p.capitalize() for p in local.replace("_", ".").split("."))
     else:
         name = "User"
@@ -432,7 +432,12 @@ async def activity_track(
             return {"activity_id": activity_id, "points": []}
         df = df.reset_index()
         df["time"] = df["time"].astype(str)
-        return {"activity_id": activity_id, "points": df.to_dict(orient="records")}
+        # FastAPI's JSON encoder rejects NaN/Inf as non-compliant — coerce them
+        # to None so the client gets a clean payload.
+        import numpy as np
+        clean = df.replace([np.inf, -np.inf], np.nan)
+        clean = clean.astype(object).where(clean.notna(), None)
+        return {"activity_id": activity_id, "points": clean.to_dict(orient="records")}
     except Exception as ex:
         logger.exception("Activity track query failed")
         raise HTTPException(status_code=500, detail=str(ex))

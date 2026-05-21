@@ -2,6 +2,13 @@
    Garmin Health Insights — Frontend app
    ========================================================= */
 
+// Neutralise GFM strikethrough — the model occasionally emits `~~text~~`
+// when self-correcting, and a crossed-out span in the chat is confusing.
+// Render <del> tokens as plain text instead.
+if (typeof marked !== 'undefined' && typeof marked.use === 'function') {
+  marked.use({ renderer: { del(text) { return text; } } });
+}
+
 // ---- Active user ----
 const USER_KEY = 'garmin-active-user';
 let activeUser = localStorage.getItem(USER_KEY) || 'default';
@@ -1226,12 +1233,21 @@ function renderIntradayHeatmap(data) {
     return;
   }
 
-  // Determine value range for the metric
-  let min = Infinity, max = -Infinity;
-  matrix.forEach(row => row.forEach(v => {
-    if (v != null) { if (v < min) min = v; if (v > max) max = v; }
-  }));
-  if (!isFinite(min) || !isFinite(max) || min === max) { min = 0; max = 100; }
+  // Winsorised range — use 2nd–98th percentile so a handful of outlier hours
+  // don't compress the gradient for the bulk of the data. Cells outside the
+  // p2/p98 window saturate to the end-stop colour but the tooltip still shows
+  // their true value.
+  const flat = matrix.flat().filter(v => v != null && isFinite(v)).sort((a, b) => a - b);
+  let min, max;
+  if (flat.length < 5) {
+    min = flat[0] ?? 0;
+    max = flat[flat.length - 1] ?? 100;
+  } else {
+    const q = (p) => flat[Math.min(flat.length - 1, Math.max(0, Math.floor(flat.length * p)))];
+    min = q(0.02);
+    max = q(0.98);
+  }
+  if (min === max) { min = 0; max = (max || 0) + 1; }
 
   // Color: stress (red high), body_battery (green high), heart_rate (orange high)
   const palette = {
@@ -1250,7 +1266,8 @@ function renderIntradayHeatmap(data) {
   const c0 = hexToRgb(stops[0]), c1 = hexToRgb(stops[1]), c2 = hexToRgb(stops[2]);
   function colorFor(v) {
     if (v == null) return '#0f1117';
-    const t = (v - min) / (max - min);
+    const raw = (v - min) / (max - min);
+    const t = Math.max(0, Math.min(1, raw));
     const c = t < 0.5
       ? c0.map((x, i) => lerp(x, c1[i], t * 2))
       : c1.map((x, i) => lerp(x, c2[i], (t - 0.5) * 2));
@@ -1288,10 +1305,40 @@ function renderIntradayHeatmap(data) {
 
   const legend = document.getElementById('intraday-heatmap-legend');
   if (legend) {
+    // Garmin's published band thresholds for the metrics that have them.
+    // (Stress + Body Battery are 0–100 scores with official bands; heart_rate
+    // and steps don't, so we just show the colour-scale endpoints.)
+    const bandSets = {
+      stress: [
+        { label: 'Rest',   range: '0–25',    color: '#3b3f4d' },
+        { label: 'Low',    range: '26–50',   color: '#a88a1a' },
+        { label: 'Medium', range: '51–75',   color: '#e0a020' },
+        { label: 'High',   range: '76–100',  color: '#f87171' },
+      ],
+      body_battery: [
+        { label: 'Low',       range: '0–25',   color: '#3b3f4d' },
+        { label: 'Medium',    range: '26–50',  color: '#3b6fa8' },
+        { label: 'High',      range: '51–75',  color: '#4f9cf9' },
+        { label: 'Very High', range: '76–100', color: '#34d399' },
+      ],
+    };
+    const bands = bandSets[metric];
+    const bandsMarkup = bands
+      ? `<div class="heatmap-bands">${bands.map(b => `
+          <span class="heatmap-band">
+            <span class="heatmap-band-swatch" style="background:${b.color}"></span>
+            <span class="heatmap-band-text"><strong>${b.label}</strong> ${b.range}</span>
+          </span>`).join('')}
+          <span class="heatmap-band-note">Garmin reference bands · cell colour scaled to this window's p2–p98</span>
+        </div>`
+      : '';
     legend.innerHTML = `
-      <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
-      <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
-      <span><strong>${max.toFixed(0)}</strong></span>
+      <div class="heatmap-scale">
+        <span>${metric}: <strong>${min.toFixed(0)}</strong></span>
+        <span class="heatmap-gradient" style="background: linear-gradient(to right, ${stops[0]}, ${stops[1]}, ${stops[2]})"></span>
+        <span><strong>${max.toFixed(0)}</strong></span>
+      </div>
+      ${bandsMarkup}
     `;
   }
 }
@@ -1434,6 +1481,34 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const resetBtn = document.getElementById('reset-btn');
 const historyBtn = document.getElementById('history-btn');
+
+// Welcome-message collapse toggle (persisted)
+const WELCOME_KEY = 'garmin-chat-welcome-collapsed';
+const welcomeEl = document.getElementById('chat-welcome');
+const welcomeToggle = document.getElementById('chat-welcome-toggle');
+function applyWelcomeState() {
+  if (!welcomeEl) return;
+  const collapsed = localStorage.getItem(WELCOME_KEY) === '1';
+  welcomeEl.classList.toggle('collapsed', collapsed);
+  if (welcomeToggle) welcomeToggle.textContent = collapsed ? '+' : '−';
+}
+if (welcomeToggle) {
+  welcomeToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const nowCollapsed = !welcomeEl.classList.contains('collapsed');
+    localStorage.setItem(WELCOME_KEY, nowCollapsed ? '1' : '0');
+    applyWelcomeState();
+  });
+}
+if (welcomeEl) {
+  welcomeEl.addEventListener('click', () => {
+    if (welcomeEl.classList.contains('collapsed')) {
+      localStorage.setItem(WELCOME_KEY, '0');
+      applyWelcomeState();
+    }
+  });
+}
+applyWelcomeState();
 
 // Per-browser session id, persisted in localStorage
 const SESSION_KEY = 'garmin-chat-session';
@@ -1744,6 +1819,33 @@ function renderMenstrual(entries) {
 let activityMap = null;
 let activityTrackLayer = null;
 let activityList = [];
+let activityTrackPoints = [];  // cached for re-rendering when color mode changes
+let activityColorMode = 'plain';
+
+// Map a normalized value [0..1] to a brightness-graded HSL color.
+// Higher value -> brighter (higher lightness, same hue). Returns a CSS color.
+function gradientColor(t, hue) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const lightness = 25 + clamped * 50;  // 25% (dark) -> 75% (bright)
+  const saturation = 85;
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+}
+
+// Traffic-light gradient: low=green (120°), mid=amber (45°), high=red (0°).
+// Hue ramps linearly within each half so the amber sits exactly at t=0.5.
+function trafficLightColor(t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const hue = clamped < 0.5
+    ? 120 - (120 - 45) * (clamped / 0.5)    // green 120 -> amber 45
+    : 45 - 45 * ((clamped - 0.5) / 0.5);    // amber 45 -> red 0
+  return `hsl(${hue}, 80%, 48%)`;
+}
+
+function gradientCssBar(generator) {
+  const stops = [];
+  for (let i = 0; i <= 10; i++) stops.push(generator(i / 10));
+  return `linear-gradient(90deg, ${stops.join(', ')})`;
+}
 
 async function loadActivityMap(start, end) {
   const section = document.getElementById('activity-map-section');
@@ -1771,6 +1873,14 @@ async function loadActivityMap(start, end) {
     if (!picker.dataset.bound) {
       picker.addEventListener('change', () => showActivityTrack(picker.value));
       picker.dataset.bound = '1';
+    }
+    const modeSel = document.getElementById('activity-map-color-mode');
+    if (modeSel && !modeSel.dataset.bound) {
+      modeSel.addEventListener('change', () => {
+        activityColorMode = modeSel.value;
+        renderActivityTrack();
+      });
+      modeSel.dataset.bound = '1';
     }
     showActivityTrack(picker.value);
   } catch (e) {
@@ -1801,28 +1911,94 @@ async function showActivityTrack(activityId) {
     const res = await fetch(`/api/activities/${activityId}/track?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const points = (data.points || []).filter(p => p.latitude != null && p.longitude != null);
-    if (activityTrackLayer) {
-      map.removeLayer(activityTrackLayer);
-      activityTrackLayer = null;
-    }
-    const meta = document.getElementById('activity-map-meta');
-    if (!points.length) {
-      if (meta) meta.textContent = 'No GPS points for this activity';
-      return;
-    }
-    const latlngs = points.map(p => [p.latitude, p.longitude]);
-    activityTrackLayer = L.polyline(latlngs, { color: '#f87171', weight: 4, opacity: 0.85 }).addTo(map);
-    map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
-
-    const act = activityList.find(a => String(a.activity_id) === String(activityId));
-    if (meta && act) {
-      const km = ((act.distance || 0) / 1000).toFixed(2);
-      const hr = act.average_hr ? ` · ${Math.round(act.average_hr)} bpm avg` : '';
-      meta.textContent = `${points.length} GPS points · ${km} km${hr}`;
-    }
+    activityTrackPoints = (data.points || []).filter(p => p.latitude != null && p.longitude != null);
+    activityTrackPoints.activityId = activityId;
+    renderActivityTrack();
   } catch (e) {
     console.error('Activity track load failed:', e);
+  }
+}
+
+function clearActivityTrackLayer(map) {
+  if (Array.isArray(activityTrackLayer)) {
+    activityTrackLayer.forEach(l => map.removeLayer(l));
+  } else if (activityTrackLayer) {
+    map.removeLayer(activityTrackLayer);
+  }
+  activityTrackLayer = null;
+}
+
+function renderActivityTrack() {
+  const map = ensureMap();
+  if (!map) return;
+  clearActivityTrackLayer(map);
+  const meta = document.getElementById('activity-map-meta');
+  const legend = document.getElementById('activity-map-legend');
+  const points = activityTrackPoints;
+  if (!points || !points.length) {
+    if (meta) meta.textContent = 'No GPS points for this activity';
+    if (legend) legend.style.display = 'none';
+    return;
+  }
+
+  const mode = activityColorMode;
+  // Mode -> (point accessor, colour generator t->css, units, label)
+  const modeConfig = {
+    hr:        { val: p => p.heart_rate, colorFn: trafficLightColor,             unit: ' bpm', label: 'Heart rate' },
+    elevation: { val: p => p.altitude,   colorFn: t => gradientColor(t, 140),    unit: ' m',   label: 'Elevation' },
+  };
+  const cfg = modeConfig[mode];
+
+  if (!cfg) {
+    // Plain — single thick polyline
+    const latlngs = points.map(p => [p.latitude, p.longitude]);
+    activityTrackLayer = L.polyline(latlngs, { color: '#ea580c', weight: 6, opacity: 0.95 }).addTo(map);
+    map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
+    if (legend) legend.style.display = 'none';
+  } else {
+    const vals = points.map(cfg.val).filter(v => typeof v === 'number' && Number.isFinite(v));
+    if (!vals.length) {
+      // Fall back to plain line if metric missing
+      const latlngs = points.map(p => [p.latitude, p.longitude]);
+      activityTrackLayer = L.polyline(latlngs, { color: '#ea580c', weight: 6, opacity: 0.95 }).addTo(map);
+      map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
+      if (legend) legend.style.display = 'none';
+      if (meta) meta.textContent = `${points.length} GPS points · ${cfg.label} unavailable for this activity`;
+      return;
+    }
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const span = hi - lo || 1;
+    // Draw one short polyline per segment, colored by the segment's start-point value.
+    const segments = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      const v = cfg.val(a);
+      const t = (typeof v === 'number' && Number.isFinite(v)) ? (v - lo) / span : 0;
+      const seg = L.polyline(
+        [[a.latitude, a.longitude], [b.latitude, b.longitude]],
+        { color: cfg.colorFn(t), weight: 6, opacity: 0.95 },
+      ).addTo(map);
+      segments.push(seg);
+    }
+    activityTrackLayer = segments;
+    const bounds = L.latLngBounds(points.map(p => [p.latitude, p.longitude]));
+    map.fitBounds(bounds, { padding: [20, 20] });
+
+    if (legend) {
+      legend.style.display = '';
+      const fmt = mode === 'elevation' ? (v => Math.round(v)) : (v => Math.round(v));
+      document.getElementById('activity-map-legend-min').textContent = `${fmt(lo)}${cfg.unit}`;
+      document.getElementById('activity-map-legend-max').textContent = `${fmt(hi)}${cfg.unit}`;
+      document.getElementById('activity-map-legend-bar').style.background = gradientCssBar(cfg.colorFn);
+    }
+  }
+
+  const act = activityList.find(a => String(a.activity_id) === String(points.activityId || activityTrackPoints.activityId));
+  if (meta && act) {
+    const km = ((act.distance || 0) / 1000).toFixed(2);
+    const hr = act.average_hr ? ` · ${Math.round(act.average_hr)} bpm avg` : '';
+    meta.textContent = `${points.length} GPS points · ${km} km${hr}`;
   }
 }
 

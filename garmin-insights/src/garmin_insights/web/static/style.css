@@ -424,17 +424,50 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .heatmap-date-label { text-align: right; padding-right: 6px; }
 .heatmap-legend {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 12px;
   font-size: 0.78rem;
   color: var(--muted);
+}
+.heatmap-scale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .heatmap-gradient {
   display: inline-block;
   width: 200px;
   height: 12px;
   border-radius: 6px;
+}
+.heatmap-bands {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.heatmap-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.heatmap-band-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.heatmap-band-text strong { color: var(--text); font-weight: 600; }
+.heatmap-band-note {
+  margin-left: auto;
+  font-style: italic;
+  opacity: 0.7;
 }
 
 /* ---- Anomaly calendar ---- */
@@ -922,8 +955,32 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   padding: 20px 0;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;  /* anchor messages to the bottom near the input */
   gap: 16px;
 }
+
+/* Collapsed welcome bubble — show only a one-line summary and a chevron */
+.message.welcome.collapsed .message-bubble > *:not(.welcome-toggle) { display: none; }
+.message.welcome.collapsed .message-bubble {
+  padding: 8px 14px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.message.welcome.collapsed .message-bubble::before {
+  content: "▸ Welcome message (click to expand)";
+  font-size: 0.9rem;
+}
+.welcome-toggle {
+  float: right;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0 0 8px;
+}
+.welcome-toggle:hover { color: var(--text); }
 
 .message { display: flex; }
 .message.user { justify-content: flex-end; }
@@ -1217,3 +1274,19 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   min-width: 240px;
 }
 #activity-map .leaflet-tile { filter: brightness(0.85) contrast(1.05); }
+.activity-map-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--muted, #9ca3af);
+}
+.activity-map-legend .legend-gradient {
+  flex: 0 0 220px;
+  height: 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}
+.activity-map-legend .legend-label { min-width: 60px; }
+.activity-map-legend .legend-label:last-child { text-align: right; }
