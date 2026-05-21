@@ -59,6 +59,44 @@ trends and correlations, and recall/save context from previous sessions.
 """
 
 
+_SCAN_PROMPTS = {
+    "morning": (
+        "Generate a morning health briefing. Check last night's sleep quality, "
+        "overnight HRV, body battery at wake, and training readiness. "
+        "Compare to baselines and flag anything noteworthy. "
+        "If any lifestyle behaviors were logged yesterday, analyze their impact. "
+        "Fetch at most 3 days of raw data — use get_my_baselines for context."
+    ),
+    "midday": (
+        "Generate a midday check-in. Look at today's stress trend so far, "
+        "current body battery drain rate vs normal, and step count pace. "
+        "Flag any emerging patterns. "
+        "Fetch at most 7 days of raw data — use get_my_baselines for context."
+    ),
+    "evening": (
+        "Generate an evening activity review. Summarize today's exercise "
+        "(if any), daily stress accumulation, and project tonight's sleep quality "
+        "based on today's patterns. Compare today's metrics to baselines. "
+        "Fetch at most 3 days of raw data — use get_my_baselines for context."
+    ),
+    "general": (
+        "Run a comprehensive health scan. Check all baselines for anomalies, "
+        "analyze recent trends (7-day) for all key metrics, and identify "
+        "the top 3 most noteworthy findings. Prioritize actionable insights. "
+        "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
+    ),
+    "weekly": (
+        "Generate a weekly health summary. Analyze the last 7 days: "
+        "1) Overall trends in sleep, stress, HRV, and body battery. "
+        "2) Impact of each logged lifestyle behavior on key metrics. "
+        "3) Training load and recovery balance. "
+        "4) Top 3 actionable recommendations for next week. "
+        "Compare this week to the 30-day baseline. "
+        "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
+    ),
+}
+
+
 class HealthAgent:
     """Conversational health insights agent powered by Claude.
 
@@ -374,6 +412,120 @@ class HealthAgent:
         yield {"type": "text", "text": "\n\n_Maximum tool-calling rounds reached._"}
 
     # ------------------------------------------------------------------
+    # Portable prompt (copy/paste into a free LLM chat)
+    # ------------------------------------------------------------------
+    def build_portable_prompt(
+        self,
+        message: str | None = None,
+        focus: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        snapshot_days: int = 30,
+    ) -> str:
+        """Build a single self-contained text prompt the user can paste into
+        any LLM chat (Claude.ai, ChatGPT, Gemini, ...). Combines the full
+        system context plus a pre-fetched data snapshot so the receiving
+        model has the same picture our tool-calling agent would build for
+        itself — but as plain inline data, since a chat window has no tools.
+
+        Either `message` or `focus` must be provided. When `focus` is set the
+        matching scan prompt is used as the user message.
+        """
+        if not message and not focus:
+            raise ValueError("build_portable_prompt requires a message or focus")
+
+        user_text = message
+        if focus:
+            scan = _SCAN_PROMPTS.get(focus, _SCAN_PROMPTS["general"])
+            if start_date and end_date:
+                scan = (
+                    f"IMPORTANT: Restrict your analysis to the date range "
+                    f"{start_date} → {end_date}.\n\n" + scan
+                )
+            user_text = scan if not message else f"{scan}\n\nAdditional notes: {message}"
+
+        # Resolve snapshot window (default last 30 days; respect explicit bounds)
+        today = datetime.utcnow().date()
+        end = end_date or today.isoformat()
+        try:
+            end_d = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            end_d = today
+            end = end_d.isoformat()
+        start = start_date or (end_d - timedelta(days=snapshot_days)).isoformat()
+
+        # Pull data the agent would normally fetch via tools
+        try:
+            summaries = self._memory.get_daily_summaries_range(start, end)
+        except Exception as e:
+            summaries = []
+            logger.warning("Portable prompt: summaries fetch failed: %s", e)
+        try:
+            baselines = self._memory.get_baselines()
+        except Exception as e:
+            baselines = {}
+            logger.warning("Portable prompt: baselines fetch failed: %s", e)
+
+        cycle_rows: list[dict] = []
+        try:
+            df = self._repo.query_menstrual_cycle(start, end)
+            if df is not None and not df.empty:
+                cycle_rows = df.to_dict(orient="records")
+        except Exception:
+            pass
+
+        # Concatenate every system block we'd send to the live API
+        system_text_parts: list[str] = []
+        for block in self._system_for_call():
+            text = block.get("text") if isinstance(block, dict) else None
+            if text:
+                system_text_parts.append(text)
+        system_text = "\n\n".join(system_text_parts)
+
+        sep = "═" * 60
+        header_note = (
+            "You are about to be given the full system prompt and a snapshot of "
+            "the user's Garmin health data that a tool-calling agent would normally "
+            "fetch on demand. Since this is a plain chat window you have NO tools — "
+            "use only the inline data below. If a question can't be answered from "
+            "the snapshot, say so honestly instead of guessing."
+        )
+
+        cycle_section = ""
+        if cycle_rows:
+            cycle_section = (
+                f"\n## Menstrual cycle ({start} → {end}, {len(cycle_rows)} rows)\n"
+                "```json\n"
+                f"{json.dumps(cycle_rows, indent=2, default=str)}\n"
+                "```\n"
+            )
+
+        return (
+            f"{header_note}\n\n"
+            f"{sep}\n"
+            f"SYSTEM CONTEXT\n"
+            f"{sep}\n\n"
+            f"{system_text}\n\n"
+            f"{sep}\n"
+            f"DATA SNAPSHOT (pre-fetched — treat as your tool results)\n"
+            f"{sep}\n\n"
+            f"## Date range: {start} → {end}\n\n"
+            f"## Baselines ({len(baselines)} metrics)\n"
+            "```json\n"
+            f"{json.dumps(baselines, indent=2, default=str)}\n"
+            "```\n\n"
+            f"## Daily summaries ({len(summaries)} days)\n"
+            "```json\n"
+            f"{json.dumps(summaries, indent=2, default=str)}\n"
+            "```\n"
+            f"{cycle_section}\n"
+            f"{sep}\n"
+            f"USER QUESTION\n"
+            f"{sep}\n\n"
+            f"{user_text}\n"
+        )
+
+    # ------------------------------------------------------------------
     # Scan reports & session save
     # ------------------------------------------------------------------
     def generate_scan_report(
@@ -384,44 +536,7 @@ class HealthAgent:
         end_date: str | None = None,
     ) -> str:
         """Generate a proactive insight report without user prompting."""
-        scan_prompts = {
-            "morning": (
-                "Generate a morning health briefing. Check last night's sleep quality, "
-                "overnight HRV, body battery at wake, and training readiness. "
-                "Compare to baselines and flag anything noteworthy. "
-                "If any lifestyle behaviors were logged yesterday, analyze their impact. "
-                "Fetch at most 3 days of raw data — use get_my_baselines for context."
-            ),
-            "midday": (
-                "Generate a midday check-in. Look at today's stress trend so far, "
-                "current body battery drain rate vs normal, and step count pace. "
-                "Flag any emerging patterns. "
-                "Fetch at most 7 days of raw data — use get_my_baselines for context."
-            ),
-            "evening": (
-                "Generate an evening activity review. Summarize today's exercise "
-                "(if any), daily stress accumulation, and project tonight's sleep quality "
-                "based on today's patterns. Compare today's metrics to baselines. "
-                "Fetch at most 3 days of raw data — use get_my_baselines for context."
-            ),
-            "general": (
-                "Run a comprehensive health scan. Check all baselines for anomalies, "
-                "analyze recent trends (7-day) for all key metrics, and identify "
-                "the top 3 most noteworthy findings. Prioritize actionable insights. "
-                "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
-            ),
-            "weekly": (
-                "Generate a weekly health summary. Analyze the last 7 days: "
-                "1) Overall trends in sleep, stress, HRV, and body battery. "
-                "2) Impact of each logged lifestyle behavior on key metrics. "
-                "3) Training load and recovery balance. "
-                "4) Top 3 actionable recommendations for next week. "
-                "Compare this week to the 30-day baseline. "
-                "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
-            ),
-        }
-
-        base_prompt = scan_prompts.get(focus, scan_prompts["general"])
+        base_prompt = _SCAN_PROMPTS.get(focus, _SCAN_PROMPTS["general"])
 
         if start_date and end_date:
             date_context = (

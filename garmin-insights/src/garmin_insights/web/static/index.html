@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/style.css?v=20260521f" />
+  <link rel="stylesheet" href="/static/style.css?v=20260521g" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -572,6 +572,12 @@
         <button class="scan-btn" data-focus="morning">Morning Brief</button>
         <button class="scan-btn" data-focus="weekly">Weekly Summary</button>
       </div>
+      <div class="scan-copy-row">
+        <span class="scan-copy-label">Don't want to spend API tokens? Copy the prompt and paste it into your own LLM chat (Claude.ai, ChatGPT, Gemini…):</span>
+        <button class="copy-prompt-btn" data-focus="general" title="Copy General Scan prompt">📋 General</button>
+        <button class="copy-prompt-btn" data-focus="morning" title="Copy Morning Brief prompt">📋 Morning</button>
+        <button class="copy-prompt-btn" data-focus="weekly" title="Copy Weekly Summary prompt">📋 Weekly</button>
+      </div>
       <div id="scan-output" class="scan-output hidden"></div>
     </section>
   </main>
@@ -646,11 +652,12 @@
           placeholder="Ask about your health data..."
           rows="1"
         ></textarea>
+        <button id="copy-prompt-btn" class="reset-btn" title="Copy prompt to paste into another LLM (no API tokens used)">📋</button>
         <button id="send-btn" class="send-btn">Send</button>
       </div>
     </div>
   </main>
 
-  <script src="/static/app.js?v=20260521f"></script>
+  <script src="/static/app.js?v=20260521g"></script>
 </body>
 </html>

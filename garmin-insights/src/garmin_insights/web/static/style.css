@@ -902,6 +902,54 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .scan-btn:hover { border-color: var(--accent); color: var(--accent); }
 .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.scan-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+}
+.scan-copy-label { color: var(--muted); margin-right: 4px; flex: 1 1 240px; }
+.copy-prompt-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: all 0.15s;
+}
+.copy-prompt-btn:hover { border-color: var(--accent); color: var(--accent); }
+.copy-prompt-btn:disabled { opacity: 0.5; cursor: progress; }
+
+.copy-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1d27;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  z-index: 1000;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+  pointer-events: none;
+  max-width: 80vw;
+  text-align: center;
+}
+.copy-toast.show { opacity: 1; }
+.copy-toast.error { border-color: var(--red, #f87171); }
+
 .scan-output {
   background: var(--surface2);
   border: 1px solid var(--border);
