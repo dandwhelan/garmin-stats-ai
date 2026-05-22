@@ -6,6 +6,13 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 
 <img width="945" height="778" alt="image" src="https://github.com/user-attachments/assets/fe935c7f-1c88-457a-884a-430ef55922d9" />
 
+<img width="945" height="1000" alt="image" src="https://github.com/user-attachments/assets/50cda121-86cb-479b-b2c2-0c273b8eee6a" />
+
+<img width="945" height="896" alt="image" src="https://github.com/user-attachments/assets/5b95c920-3ad4-4a77-826c-2290397633b1" />
+
+<img width="945" height="732" alt="image" src="https://github.com/user-attachments/assets/efb548fd-b488-48b1-b398-8da72de4457f" />
+
+
 > **⚠️ Not medical advice.** This tool detects deviations from your own personal
 > baselines — it does not diagnose. The agent will never say "you are ill" or
 > "you have sleep apnoea". If a pattern persists, talk to a clinician. See
@@ -13,6 +20,8 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 >
 > **⚠️ Self-hosted, no built-in authentication.** This server holds extremely
 > sensitive health data. See [Security](#security) before exposing it to anything.
+
+<img width="945" height="700" alt="image" src="https://github.com/user-attachments/assets/f5d01215-fad7-4803-8857-1e6c9f586e58" />
 
 ## Project Structure
 
