@@ -1,6 +1,8 @@
 # Garmin Stats AI
 
-A privacy-first health analytics platform: fetches data from Garmin Connect, stores it locally in SQLite, and uses Claude AI to provide actionable health insights via a web dashboard and chat interface.
+A privacy-first health analytics platform: fetches data from Garmin Connect, stores it locally in SQLite, and uses Claude AI to provide actionable health insights via a web dashboard and chat interface. The chat interface can require a LLM Token to directly speak within the web interface. Lately a new feature has been added to avoid spending API Tokens so you can click 'Copy' > <img width="33" height="35" alt="image" src="https://github.com/user-attachments/assets/7846f8e4-2e21-4636-9405-b5bb8995fe7e" />
+ to paste into a LLM Chat of your choice for 'free'. 
+
 
 <img width="945" height="778" alt="image" src="https://github.com/user-attachments/assets/fe935c7f-1c88-457a-884a-430ef55922d9" />
 
