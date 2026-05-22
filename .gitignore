@@ -13,8 +13,10 @@ venv/
 
 # Database
 *.db
+*.db.bak*
 garmin.db
 *.sqlite
+*.sqlite-journal
 
 # Logs
 *.log

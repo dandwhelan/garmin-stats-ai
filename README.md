@@ -6,6 +6,13 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 
 <img width="945" height="778" alt="image" src="https://github.com/user-attachments/assets/fe935c7f-1c88-457a-884a-430ef55922d9" />
 
+> **⚠️ Not medical advice.** This tool detects deviations from your own personal
+> baselines — it does not diagnose. The agent will never say "you are ill" or
+> "you have sleep apnoea". If a pattern persists, talk to a clinician. See
+> [Important disclaimers](#important-disclaimers) for the full version.
+>
+> **⚠️ Self-hosted, no built-in authentication.** This server holds extremely
+> sensitive health data. See [Security](#security) before exposing it to anything.
 
 ## Project Structure
 
@@ -393,6 +400,46 @@ The dashboard's secondary charts are powered by two Python services that aggrega
 - **`web/lifestyle_viz.py` — `LifestyleService`**: 21 research-backed analytics including Sleep Regularity Index (Windred 2024 — Tier A), social jet lag (Wittmann 2006 — Tier B), illness-like recovery strain pattern (Quer 2021 + Mishra 2022 *Lancet Digital Health* SR — Tier B, non-diagnostic), inflammation index (Tier C — composite physiological-strain z-score, not a measurement of inflammatory biomarkers), recovery debt, stress resilience, body battery decay slope, behavior dose-response, caffeine cutoff comparison (Drake 2013 + 2023 meta-analysis — Tier A), recovery cost, streak calendar, habit half-life, co-occurrence matrix, hour-of-day stress fingerprint, stress trigger leaderboard, step-count distribution (Paluch 2022 — Tier A), fitness-age delta (Nes 2013 + Han 2024 BJSM overview — Tier A), WHO weekly-intensity target tracking (Bull 2020 — Tier A), cycle-day HRV/RHR (Symons Downs 2025 *Sports Med* SR; Masuda 2025), per-cycle yearly view, plus a research-signal scorecard
 - **Three endpoints** — `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`. All accept `start`/`end` query params and fan out service calls via `asyncio.gather` for parallel loading.
 
+## Security
+
+This app has **no authentication layer**. Anyone who can reach the web port can
+read your full health history and chat with the agent as you. Treat it like a
+local-only tool.
+
+**Safe defaults:**
+- Bind to `127.0.0.1` (`WEB_HOST=127.0.0.1`) if you only use it from the same
+  machine. The default `0.0.0.0` exposes it to your whole LAN.
+- For remote access, put it behind **Tailscale**, a WireGuard VPN, or an SSH
+  tunnel — *not* a public reverse proxy.
+- Never expose the port directly to the internet. Your `.env` file contains
+  your Garmin password and an Anthropic API key; the database contains years
+  of biometric data.
+- Anthropic API key: scope it to this project and set a monthly budget cap in
+  the Anthropic console so a runaway loop or leaked key can't drain your account.
+
+## Cost
+
+You pay for Anthropic API usage. There is no subscription to this project.
+
+Rough costs at typical usage (Sonnet 4.6, the default model):
+- **Chat**: a handful of cents per long conversation thanks to prompt caching
+  (the ~12k-char medical knowledge base is cached, cutting ~80% of system-prompt
+  tokens on repeat queries).
+- **Daily AI health scan**: a few cents per run.
+- **Opus** (`CLAUDE_MODEL=claude-opus-4-7`): roughly 5× more per call. Worth it
+  for deep weekly reports; overkill for everyday chat.
+- Set a monthly spend cap in the [Anthropic console](https://console.anthropic.com).
+
+### Free alternative: bring-your-own LLM
+
+If you don't want to pay for the API at all, the dashboard has a **"Copy
+prompt"** button that serialises your full health context (system prompt + last
+90 days of data, minified and rounded) into a single block. Paste it into any
+free LLM — Claude.ai free tier, ChatGPT, Gemini, a local model — and you get
+the same analytical depth without an API key. You lose live tool-calling (the
+LLM can't pull more data on demand), but for one-off "what does my week look
+like" questions it works well.
+
 ## Privacy
 
 All data stays local. Nothing is sent to external servers except:
@@ -411,9 +458,36 @@ All data stays local. Nothing is sent to external servers except:
 
 See [CLAUDE.md](CLAUDE.md) for architecture details, file map, and instructions for extending the agent.
 
-## Feature Requests
+## Garmin Connect — unofficial API
 
-If you have a interested feature for this evolving project, please submit it or fork the project and make it yourself :D 
+This project uses the community [`garminconnect`](https://github.com/cyberjunky/python-garminconnect)
+library, which scrapes Garmin Connect's web endpoints. Garmin does not publish
+a public API for personal data, so:
+
+- **Use at your own risk.** Garmin's terms of service permit personal data
+  access through their official apps. Automated scraping is in a grey area.
+  Excessive polling could in theory get your account rate-limited or locked.
+- The default fetcher runs every 5 minutes, which has been fine in practice
+  for the maintainers, but Garmin can change their endpoints or anti-bot
+  measures at any time.
+- If Garmin Connect updates break things, expect a delay before the upstream
+  `garminconnect` library catches up.
+- **MFA / 2FA**: if your Garmin account has MFA enabled, you'll be prompted
+  once during the initial login to cache an OAuth token; subsequent fetches
+  use the token.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: it's a hobby project, I
+can't promise fixes or reviews, but well-scoped bug reports and small PRs are
+welcome.
+
+## License
+
+[MIT](LICENSE) © 2026 Dan Whelan.
+
+The bundled `garmin-grafana/` module retains its upstream BSD-3-Clause license
+(see `garmin-grafana/LICENSE`).
 
 ## Credits
 
