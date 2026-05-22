@@ -284,6 +284,38 @@
       </div>
     </section>
 
+    <h2 class="section-divider">Environmental Context</h2>
+    <section class="chart-section" id="environment-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Weather &amp; Air Quality <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Daily temperature, precipitation, European AQI and pollen at your configured home location (HOME_LAT/HOME_LON), via the free <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> API. Heat (apparent T &gt; ~28&nbsp;°C overnight), high PM2.5 / O&#8323;, and high pollen counts can each elevate RHR, suppress HRV, and disrupt sleep — treat as confounders when interpreting recovery deviations, not as a primary cause.<br><br>Sources: Buguet 2007 (Sleep Med Rev, heat &amp; sleep); Liu 2018 (Environ Int, PM2.5 &amp; HRV meta-analysis); Hadjipanayis 2021 (allergic rhinitis &amp; sleep).</span></span></h2>
+        <span class="chart-sub">Temperature, AQI and pollen for the selected window</span>
+      </div>
+      <div id="environment-summary" class="alert-list"></div>
+      <div class="chart-container">
+        <canvas id="environment-temp-chart"></canvas>
+      </div>
+    </section>
+    <div class="charts-row" id="environment-extra-row" style="display:none;">
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Air Quality (European AQI &amp; PM2.5)</h2>
+          <span class="chart-sub">EU AQI thresholds: &lt;20 good · 20–40 fair · 40–60 moderate · 60–80 poor · &gt;80 very poor</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="environment-aqi-chart"></canvas>
+        </div>
+      </section>
+      <section class="chart-section">
+        <div class="chart-header">
+          <h2>Pollen (grains/m&#179;)</h2>
+          <span class="chart-sub">Grass, birch, ragweed and other tracked species (Europe only)</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="environment-pollen-chart"></canvas>
+        </div>
+      </section>
+    </div>
+
     <h2 class="section-divider">Lifestyle &amp; Health Insights</h2>
     <section class="chart-section">
       <div class="chart-header">

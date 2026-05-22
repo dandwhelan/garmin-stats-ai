@@ -68,7 +68,8 @@ garmin-insights status        # check DB + API connectivity
 |------|---------|
 | `garmin-insights/src/garmin_insights/agent.py` | Core Claude agent — tool-calling loop, prompt caching, streaming, per-model thinking config. Dynamic system blocks (`_identity_block`, `_cycle_context_block`, `_evidence_tier_block`) inject the active user's name + biological sex, current cycle phase (for menstruating users), and the evidence-tier output rules that govern how confidently the model phrases findings. |
 | `garmin-insights/src/garmin_insights/tools/query_tools.py` | 17 tool definitions (Anthropic JSON schema) + handler methods. Token-efficiency helpers: `_round_floats` (1 d.p.), `_clean_records` (strips nulls + rounds), `_strip_zero_lifestyle` (drops zero-status entries, compacts to `["Behavior: N"]` strings). `get_daily_metrics` returns a date-keyed dict `{"YYYY-MM-DD": {...}}` (not an array) to remove repeated `"date"` fields. `get_my_baselines` strips null sub-fields. |
-| `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard (auto cache-refresh + date params + cycle-field enrichment), scan endpoints (with optional date range), user/sync identity, `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`, `/api/menstrual`, `/api/activities/{id}/export` |
+| `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server — SSE chat, dashboard (auto cache-refresh + date params + cycle-field enrichment), scan endpoints (with optional date range), user/sync identity, `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`, `/api/menstrual`, `/api/environment`, `/api/activities/{id}/export` |
+| `garmin-grafana/src/garmin_grafana/environment_fetch.py` | Open-Meteo daily pipeline — pulls weather (temp / precip / humidity / UV), air quality (PM2.5/PM10/O₃/NO₂ + European AQI), and pollen (alder/birch/grass/mugwort/olive/ragweed) for the user's `HOME_LAT`/`HOME_LON`. Idempotent upsert into `environment_daily`. Runs at the end of each `fetch_write_bulk` cycle when `environment` is in `FETCH_SELECTION`. No-ops silently when lat/lon are not set. |
 | `garmin-insights/src/garmin_insights/web/user_context.py` | Per-user agent + viz pool — one `HealthAgent` / `VisualizationService` / `LifestyleService` per `users/<id>.env`, lazily constructed |
 | `garmin-insights/src/garmin_insights/web/visualizations.py` | `VisualizationService` — intraday heatmap, sleep timeline, anomaly z-score calendar, correlation matrix, 90-day behavior impact |
 | `garmin-insights/src/garmin_insights/web/lifestyle_viz.py` | `LifestyleService` — 15 research-backed lifestyle analytics (SRI, social jet lag, illness-like recovery strain pattern, recovery debt, etc.) |
@@ -101,6 +102,11 @@ SQLITE_DB_PATH=/path/to/garmin.db   # must match fetcher
 DISPLAY_NAME=Alice                  # shown in header badge; derived from email if omitted
 BIOLOGICAL_SEX=Female               # Male / Female — applied to AI prompt for sex-specific
                                     # reference ranges; controls menstrual cycle context
+
+# Environmental context (optional — leave unset to skip Open-Meteo fetches)
+HOME_LAT=51.5074                    # latitude for daily weather / air quality / pollen
+HOME_LON=-0.1278                    # longitude
+ENVIRONMENT_PAST_DAYS=92            # Open-Meteo lookback window per fetch (default 92, max 92)
 
 # Model (optional)
 CLAUDE_MODEL=claude-sonnet-4-6      # default; set claude-opus-4-7 for Opus
@@ -156,6 +162,7 @@ All data lives in a single `garmin.db`. Key tables:
 - `body_composition` — weight, body fat, BMI
 - `training_readiness` — Garmin training readiness score + factors
 - `menstrual_cycle` — per-day cycle phase, day-of-cycle, predicted/observed cycle length, flow intensity, symptoms (only populated for users who track cycles in Garmin Connect)
+- `environment_daily` — per-day weather + air quality + pollen for the user's home location (Open-Meteo). Columns: `temp_min/mean/max_c`, `apparent_temp_max_c`, `precipitation_mm`, `wind_max_kmh`, `humidity_mean`, `uv_index_max`, `pm25`, `pm10`, `o3`, `no2`, `european_aqi`, `pollen_alder/birch/grass/mugwort/olive/ragweed`. Empty when `HOME_LAT`/`HOME_LON` not configured.
 - `daily_summaries` — pre-computed cache used by the LLM (faster than raw queries)
 - `baselines` — 7-day and 30-day rolling averages per metric
 - `sessions` — conversation summaries for cross-session continuity
@@ -187,6 +194,7 @@ All data lives in a single `garmin.db`. Key tables:
 | `GET /api/lifestyle?start=&end=` | 15 lifestyle analytics: SRI, social jet lag, illness radar, recovery debt, inflammation index, resilience, BB decay, recovery cost, dose-response, caffeine cutoff, streak calendar, habit half-life, co-occurrence, fingerprint, trigger leaderboard | last 90 days |
 | `GET /api/intraday/heatmap?metric=&days=` | 24h × N-day matrix for `stress` / `body_battery` / `heart_rate` | 14 days |
 | `GET /api/menstrual?start=&end=` | Raw `menstrual_cycle` rows for the window — phase, day-of-cycle, flow, predicted length | last 30 days |
+| `GET /api/environment?start=&end=` | Daily weather + air quality + pollen rows from `environment_daily`. Returns `available: false` when the user has no home location configured. | last 30 days |
 | `GET /api/activities/gps?start=&end=` | Activities with GPS tracks in the window (summary + point count) | last 30 days |
 | `GET /api/activities/{id}/track` | GPS polyline for one activity (lat, lon, alt, HR, speed, cadence, power, temp) | — |
 | `GET /api/activities/{id}/export` | Formatted markdown stats block for one activity — all metrics except GPS coordinates. Used by the "Copy stats" clipboard button. | — |

@@ -404,6 +404,34 @@ class GarminDB:
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS environment_daily (
+                date TEXT PRIMARY KEY,
+                latitude REAL,
+                longitude REAL,
+                temp_max_c REAL,
+                temp_min_c REAL,
+                temp_mean_c REAL,
+                apparent_temp_max_c REAL,
+                precipitation_mm REAL,
+                wind_max_kmh REAL,
+                humidity_mean REAL,
+                uv_index_max REAL,
+                pm25 REAL,
+                pm10 REAL,
+                o3 REAL,
+                no2 REAL,
+                european_aqi REAL,
+                pollen_alder REAL,
+                pollen_birch REAL,
+                pollen_grass REAL,
+                pollen_mugwort REAL,
+                pollen_olive REAL,
+                pollen_ragweed REAL,
+                fetched_at TEXT
+            )
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS menstrual_cycle (
                 date TEXT PRIMARY KEY,
                 time TEXT,

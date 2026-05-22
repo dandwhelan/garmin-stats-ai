@@ -531,6 +531,7 @@ async function loadDashboard() {
     loadIntradayHeatmap(activeHeatmapMetric);
     loadLifestyle(date_range.start, date_range.end);
     loadMenstrual(date_range.start, date_range.end);
+    loadEnvironment(date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
@@ -3256,3 +3257,134 @@ function initChartCustomization() {
 }
 
 initChartCustomization();
+
+// ---- Environmental context (Open-Meteo weather + air quality + pollen) ----
+let envTempChart = null;
+let envAqiChart = null;
+let envPollenChart = null;
+
+async function loadEnvironment(start, end) {
+  const section = document.getElementById('environment-section');
+  const extraRow = document.getElementById('environment-extra-row');
+  if (!section) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/environment?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.available || !data.entries?.length) {
+      section.style.display = 'none';
+      if (extraRow) extraRow.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    if (extraRow) extraRow.style.display = '';
+    renderEnvironment(data.entries);
+  } catch (e) {
+    console.error('Environment load failed:', e);
+    section.style.display = 'none';
+    if (extraRow) extraRow.style.display = 'none';
+  }
+}
+
+function renderEnvironment(entries) {
+  const latest = entries[entries.length - 1];
+  const summaryEl = document.getElementById('environment-summary');
+  if (summaryEl && latest) {
+    const t = latest.temp_max_c != null ? `${latest.temp_max_c.toFixed(1)} °C max` : '—';
+    const aqi = latest.european_aqi != null ? `AQI ${Math.round(latest.european_aqi)}` : '';
+    const pm = latest.pm25 != null ? `PM2.5 ${latest.pm25.toFixed(1)} µg/m³` : '';
+    const pollenVals = [latest.pollen_grass, latest.pollen_birch, latest.pollen_ragweed]
+      .filter(v => typeof v === 'number');
+    const maxPollen = pollenVals.length ? Math.max(...pollenVals) : null;
+    const pollen = maxPollen != null ? `Pollen peak ${maxPollen.toFixed(0)} grains/m³` : '';
+    const parts = [t, aqi, pm, pollen].filter(Boolean).join(' · ');
+    summaryEl.innerHTML = `<div class="alert">${parts}</div>`;
+  }
+
+  const labels = entries.map(e => (e.date || '').slice(5));
+
+  // ---- Temperature + precipitation ----
+  const tempCtx = document.getElementById('environment-temp-chart');
+  if (tempCtx) {
+    if (envTempChart) envTempChart.destroy();
+    envTempChart = new Chart(tempCtx, {
+      data: {
+        labels,
+        datasets: [
+          { type: 'line', label: 'Max °C', data: entries.map(e => e.temp_max_c), borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.15)', tension: 0.3, yAxisID: 'y' },
+          { type: 'line', label: 'Min °C', data: entries.map(e => e.temp_min_c), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.15)', tension: 0.3, yAxisID: 'y' },
+          { type: 'line', label: 'Apparent max °C', data: entries.map(e => e.apparent_temp_max_c), borderColor: '#ef4444', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+          { type: 'bar',  label: 'Precip (mm)', data: entries.map(e => e.precipitation_mm), backgroundColor: 'rgba(56,189,248,0.5)', yAxisID: 'y1' },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y:  { title: { display: true, text: 'Temperature (°C)' } },
+          y1: { position: 'right', title: { display: true, text: 'Precipitation (mm)' }, grid: { drawOnChartArea: false }, beginAtZero: true },
+        },
+      },
+    });
+  }
+
+  // ---- AQI + PM2.5 ----
+  const aqiCtx = document.getElementById('environment-aqi-chart');
+  if (aqiCtx) {
+    if (envAqiChart) envAqiChart.destroy();
+    envAqiChart = new Chart(aqiCtx, {
+      data: {
+        labels,
+        datasets: [
+          { type: 'line', label: 'European AQI (max)', data: entries.map(e => e.european_aqi), borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.15)', tension: 0.3, yAxisID: 'y' },
+          { type: 'line', label: 'PM2.5 (µg/m³)',      data: entries.map(e => e.pm25),         borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)', tension: 0.3, yAxisID: 'y1' },
+          { type: 'line', label: 'O₃ (µg/m³)',         data: entries.map(e => e.o3),           borderColor: '#22d3ee', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y:  { title: { display: true, text: 'AQI' }, beginAtZero: true },
+          y1: { position: 'right', title: { display: true, text: 'µg/m³' }, grid: { drawOnChartArea: false }, beginAtZero: true },
+        },
+      },
+    });
+  }
+
+  // ---- Pollen stack ----
+  const pollenCtx = document.getElementById('environment-pollen-chart');
+  if (pollenCtx) {
+    if (envPollenChart) envPollenChart.destroy();
+    const species = [
+      { key: 'pollen_grass',   label: 'Grass',   color: '#22c55e' },
+      { key: 'pollen_birch',   label: 'Birch',   color: '#84cc16' },
+      { key: 'pollen_alder',   label: 'Alder',   color: '#10b981' },
+      { key: 'pollen_olive',   label: 'Olive',   color: '#14b8a6' },
+      { key: 'pollen_mugwort', label: 'Mugwort', color: '#eab308' },
+      { key: 'pollen_ragweed', label: 'Ragweed', color: '#ef4444' },
+    ];
+    const datasets = species.map(s => ({
+      type: 'bar',
+      label: s.label,
+      data: entries.map(e => e[s.key]),
+      backgroundColor: s.color,
+      stack: 'pollen',
+    }));
+    envPollenChart = new Chart(pollenCtx, {
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, title: { display: true, text: 'grains/m³' }, beginAtZero: true },
+        },
+      },
+    });
+  }
+}
