@@ -265,6 +265,24 @@ class SqliteRepo:
 
         return {"summary": row, "gps": gps}
 
+    def query_environment(self, start: str, end: str) -> pd.DataFrame:
+        """Daily weather + air-quality + pollen rows from environment_daily.
+
+        Returns an empty DataFrame (no rows, no error) when the table is
+        missing or the user hasn't configured HOME_LAT/HOME_LON. Callers can
+        check df.empty without try/except.
+        """
+        try:
+            q = (
+                "SELECT * FROM environment_daily "
+                f"WHERE date >= '{start}' AND date <= '{end}' "
+                "ORDER BY date"
+            )
+            return self._query(q)
+        except Exception as exc:
+            logger.debug("environment_daily query failed (table may not exist): %s", exc)
+            return pd.DataFrame()
+
     def query_menstrual_cycle(self, start: str, end: str) -> pd.DataFrame:
         q = (
             "SELECT date, cycle_start_date, current_day_of_cycle, current_cycle_phase, "

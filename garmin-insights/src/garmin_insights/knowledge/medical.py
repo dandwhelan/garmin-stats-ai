@@ -1238,7 +1238,93 @@ INSIGHT_RULES: list[InsightRule] = [
         confounders=[
             "alcohol", "illness", "late_exercise", "heat", "luteal_phase",
             "travel", "poor_sleep", "caffeine", "doms", "emotional_stress",
+            "high_pm25_air_quality", "high_pollen",
         ],
+    ),
+
+    # ===== ENVIRONMENTAL CONTEXT (Open-Meteo weather / AQ / pollen) =====
+    InsightRule(
+        name="heat_recovery_confounder",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "Daytime max apparent temperature was {temp_max_c:.1f}°C — heat can "
+            "elevate overnight RHR and suppress HRV regardless of training load."
+        ),
+        research_citation=(
+            "Buguet 2007, Sleep Med Rev; Okamoto-Mizuno 2012, J Physiol Anthropol; "
+            "Lan 2017, Energy & Buildings (thermal environment & sleep)"
+        ),
+        research_summary=(
+            "Ambient heat — especially overnight bedroom temperature above ~24°C and "
+            "daytime apparent T above ~28°C — increases sweat-loss, dehydration risk, "
+            "and sympathetic tone, raising RHR and reducing HRV the following night. "
+            "Treat as a confounder for recovery deviations: when a heat day precedes "
+            "a strain finding, rank heat alongside training load and alcohol."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["dehydration", "alcohol", "training_load"],
+    ),
+    InsightRule(
+        name="air_quality_recovery_confounder",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="averageRespirationValue",
+        comparison_metric="avgOvernightHrv",
+        direction="higher_is_worse",
+        description_template=(
+            "European AQI peaked at {european_aqi:.0f} (PM2.5 {pm25:.1f} µg/m³) — "
+            "poor air quality can elevate respiration and lower HRV."
+        ),
+        research_citation=(
+            "Liu 2018, Environ Int (PM2.5 & HRV meta-analysis); "
+            "Pope 2004, Circulation; "
+            "Wu 2024, JAMA Network Open (short-term PM2.5 & sleep)"
+        ),
+        research_summary=(
+            "Short-term exposure to elevated PM2.5 and ozone is associated with "
+            "lower heart-rate variability, elevated nocturnal respiration rate, "
+            "and worse self-reported sleep quality. Effects appear at concentrations "
+            "below WHO 24-hour guideline values. Use as a confounder — not a primary "
+            "cause — when respiration ↑ and HRV ↓ coincide with an AQI spike."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["heat", "training_load", "allergy_season"],
+    ),
+    InsightRule(
+        name="high_pollen_sleep_confounder",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="sleepScore",
+        comparison_metric="awakeCount",
+        direction="higher_is_worse",
+        description_template=(
+            "Pollen peaked at {pollen_peak:.0f} grains/m³ (grass/birch/ragweed) — "
+            "allergic rhinitis can fragment sleep and reduce REM."
+        ),
+        research_citation=(
+            "Hadjipanayis 2021, Allergol Immunopathol (allergic rhinitis & sleep SR); "
+            "Léger 2017, Allergy"
+        ),
+        research_summary=(
+            "Symptomatic allergic rhinitis during high-pollen days is associated with "
+            "more awakenings, reduced device-estimated REM, and lower next-day energy "
+            "in susceptible users. The effect requires the user actually to be allergic, "
+            "so treat high-pollen days as a candidate explanation only when the user has "
+            "logged allergy symptoms or reports seasonal sensitivity."
+        ),
+        evidence_tier="B",
+        claim_strength="weak_association",
+        measurement_confidence="medium",
+        requires_user_context=True,
+        confounders=["heat", "open_window_noise", "air_quality"],
     ),
 ]
 

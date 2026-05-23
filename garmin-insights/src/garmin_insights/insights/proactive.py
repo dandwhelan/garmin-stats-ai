@@ -19,6 +19,14 @@ from garmin_insights.db.memory import MemoryStore
 from garmin_insights.knowledge.medical import INSIGHT_RULES, get_behavior_rules
 from garmin_insights.tools.analysis_tools import AnalysisEngine, AnomalyResult, ComparisonResult
 
+# Thresholds above which environmental factors warrant inclusion as ranked
+# confounders. These are deliberately conservative — they err on the side
+# of NOT crowding the contributors list with mild weather days.
+_ENV_HEAT_APPARENT_C    = 28.0   # apparent max — physiological-load threshold
+_ENV_AQI_EUROPEAN       = 60.0   # >60 = "poor" on EU scale
+_ENV_PM25_UG_M3         = 25.0   # WHO 24-hour guideline
+_ENV_POLLEN_GRAINS_M3   = 50.0   # generic "high" threshold for grass/ragweed
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,10 +90,16 @@ class InsightScanner:
 
         # Rank plausible contributors: user-logged behaviours in the last 48h
         # outrank generic confounders, because the user has positive evidence.
+        # Environmental extremes (heat / poor AQ / high pollen) sit between
+        # logged behaviours and generic confounders — they're positive evidence
+        # from Open-Meteo but not user-confirmed, so they outrank generic
+        # confounders but are subordinate to logged behaviours.
         ranked: list[str] = []
         recent_behaviors = self._recent_logged_behaviors(hours=48)
         for behavior in recent_behaviors:
             ranked.append(f"logged: {behavior}")
+        for env_factor in self._recent_environmental_extremes(days=2):
+            ranked.append(f"environment: {env_factor}")
         # Append generic confounders from the rule, dedup against ranked list.
         for c in composite_rule.confounders:
             if not any(c in r for r in ranked):
@@ -120,6 +134,66 @@ class InsightScanner:
             return sorted({str(v) for v in df["behavior"].dropna().tolist()})
         except Exception:
             return []
+
+    def _recent_environmental_extremes(self, days: int = 2) -> list[str]:
+        """Return descriptive labels for environmental confounders that exceed
+        the configured thresholds in the most recent N days.
+
+        Pulls from the optional `environment_daily` table written by the
+        Open-Meteo pipeline. Returns [] silently when no env data is available,
+        so this is a no-op for users who haven't configured HOME_LAT/HOME_LON.
+        """
+        import sqlite3
+        try:
+            db_path = self._memory.db_path
+        except AttributeError:
+            return []
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        rows: list[tuple] = []
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                cur = conn.execute(
+                    "SELECT apparent_temp_max_c, european_aqi, pm25, "
+                    "pollen_grass, pollen_birch, pollen_ragweed "
+                    "FROM environment_daily "
+                    "WHERE date >= ? AND date <= ?",
+                    (start, end),
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+        except sqlite3.OperationalError:
+            # Table doesn't exist for this DB yet — first run before fetcher
+            # has populated environment_daily.
+            return []
+        except Exception as exc:
+            logger.debug("environment lookup failed: %s", exc)
+            return []
+        if not rows:
+            return []
+
+        def _peak(idx: int) -> float | None:
+            vals = [r[idx] for r in rows if r[idx] is not None]
+            return max(vals) if vals else None
+
+        labels: list[str] = []
+        peak_apparent = _peak(0)
+        if peak_apparent is not None and peak_apparent >= _ENV_HEAT_APPARENT_C:
+            labels.append(f"heat (apparent {peak_apparent:.1f}°C)")
+        peak_aqi = _peak(1)
+        if peak_aqi is not None and peak_aqi >= _ENV_AQI_EUROPEAN:
+            labels.append(f"poor air quality (EU AQI {peak_aqi:.0f})")
+        peak_pm25 = _peak(2)
+        if peak_pm25 is not None and peak_pm25 >= _ENV_PM25_UG_M3:
+            labels.append(f"high PM2.5 ({peak_pm25:.1f} µg/m³)")
+        pollen_peak = max(
+            [v for v in (_peak(3), _peak(4), _peak(5)) if v is not None] or [0.0]
+        )
+        if pollen_peak >= _ENV_POLLEN_GRAINS_M3:
+            labels.append(f"high pollen ({pollen_peak:.0f} grains/m³)")
+        return labels
 
     def _available_baseline_days(self) -> int | None:
         """Best-effort count of consecutive days of baseline data available.

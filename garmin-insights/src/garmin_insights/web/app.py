@@ -554,6 +554,38 @@ async def activity_export(
     return JSONResponse({"text": text, "activity_id": activity_id, "name": name})
 
 
+@app.get("/api/environment")
+async def environment(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Open-Meteo weather + air quality + pollen for the requested window.
+
+    Returns `available: false` when the user has no environment_daily rows
+    (i.e. HOME_LAT/HOME_LON not configured) so the frontend can hide the
+    section gracefully.
+    """
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=30)
+    loop = asyncio.get_event_loop()
+    try:
+        df = await loop.run_in_executor(None, bundle.agent._repo.query_environment, s, e)
+        if df is None or df.empty:
+            return {"start": s, "end": e, "available": False, "entries": []}
+        # _query() sets a time index when a "time" column exists; environment
+        # has only "date" so the default integer index is fine. Just convert.
+        return {
+            "start": s,
+            "end": e,
+            "available": True,
+            "entries": df.to_dict(orient="records"),
+        }
+    except Exception as ex:
+        logger.exception("Environment query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
 @app.get("/api/menstrual")
 async def menstrual(
     user: str = Query(default="default"),

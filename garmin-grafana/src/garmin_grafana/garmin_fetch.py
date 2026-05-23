@@ -53,7 +53,7 @@ MAX_CONSECUTIVE_500_ERRORS = int(os.getenv("MAX_CONSECUTIVE_500_ERRORS", 10)) # 
 GARMIN_DEVICENAME_AUTOMATIC = False if GARMIN_DEVICENAME != "Unknown" else True # optional
 UPDATE_INTERVAL_SECONDS = int(os.getenv("UPDATE_INTERVAL_SECONDS", 300)) # optional
 RESYNC_WINDOW_DAYS = int(os.getenv("RESYNC_WINDOW_DAYS", 7)) # optional, on every auto-fetch tick the start date is clamped to at least N days back so retroactive Garmin Connect edits (lifestyle, sleep notes) are picked up. Set to 0 to disable.
-FETCH_SELECTION = os.getenv("FETCH_SELECTION", "daily_avg,sleep,steps,heartrate,stress,breathing,hrv,fitness_age,vo2,activity,race_prediction,body_composition,lifestyle,menstrual") # additional available values are lactate_threshold,training_status,training_readiness,hill_score,endurance_score,blood_pressure,hydration,solar_intensity which you can add to the list seperated by , without any space
+FETCH_SELECTION = os.getenv("FETCH_SELECTION", "daily_avg,sleep,steps,heartrate,stress,breathing,hrv,fitness_age,vo2,activity,race_prediction,body_composition,lifestyle,menstrual,environment") # additional available values are lactate_threshold,training_status,training_readiness,hill_score,endurance_score,blood_pressure,hydration,solar_intensity which you can add to the list seperated by , without any space. The `environment` key pulls Open-Meteo weather + air-quality + pollen once per cycle when HOME_LAT/HOME_LON are set.
 LACTATE_THRESHOLD_SPORTS = os.getenv("LACTATE_THRESHOLD_SPORTS", "RUNNING").upper().split(",") # Garmin currently implements RUNNING, but has provisions for CYCLING, and SWIMMING
 KEEP_FIT_FILES = True if os.getenv("KEEP_FIT_FILES") in ['True', 'true', 'TRUE','t', 'T', 'yes', 'Yes', 'YES', '1'] else False # optional
 FIT_FILE_STORAGE_LOCATION = os.getenv("FIT_FILE_STORAGE_LOCATION", os.path.join(os.path.expanduser("~"), "fit_filestore"))
@@ -1438,6 +1438,15 @@ def fetch_write_bulk(start_date_str, end_date_str):
                     repeat_loop = False
                 else:
                     raise err
+
+    # Pull weather / air-quality / pollen context once per bulk cycle.
+    # No-op when HOME_LAT / HOME_LON are not set; failures are non-fatal.
+    if "environment" in FETCH_SELECTION:
+        try:
+            from garmin_grafana.environment_fetch import fetch_from_env
+            fetch_from_env()
+        except Exception as env_err:
+            logging.warning(f"environment_daily fetch failed (non-fatal): {env_err}")
 
 
 if __name__ == "__main__":
