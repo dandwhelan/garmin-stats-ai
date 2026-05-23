@@ -185,6 +185,26 @@
       </section>
     </div>
 
+    <section class="chart-section" id="ha-bedroom-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Bedroom Temperature</h2>
+        <span class="chart-sub">Overnight mean (10 PM–8 AM) from Home Assistant · optimal sleep range 16–19 °C (Okamoto-Mizuno 2012)</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="ha-bedroom-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2>Sleep Window</h2>
+        <span class="chart-sub">Actual bedtime → wake time per night · colour = sleep score (green ≥80 · amber 60–79 · red &lt;60)</span>
+      </div>
+      <div class="chart-container chart-container-tall">
+        <canvas id="sleep-window-chart"></canvas>
+      </div>
+    </section>
+
     <div class="charts-row">
       <section class="chart-section">
         <div class="chart-header">
@@ -308,7 +328,8 @@
       <section class="chart-section">
         <div class="chart-header">
           <h2>Pollen (grains/m&#179;)</h2>
-          <span class="chart-sub">Grass, birch, ragweed and other tracked species (Europe only)</span>
+          <span class="chart-sub">Past 3 days + 5-day forecast · Grass, birch, ragweed and other tracked species (Europe only)</span>
+          <div id="pollen-status" style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 6px;font-size:0.78em;"></div>
         </div>
         <div class="chart-container">
           <canvas id="environment-pollen-chart"></canvas>

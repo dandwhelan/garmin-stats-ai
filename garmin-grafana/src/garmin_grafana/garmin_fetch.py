@@ -261,14 +261,18 @@ def get_sleep_data(date_str):
     all_sleep_data = garmin_obj.get_sleep_data(date_str)
     sleep_json = all_sleep_data.get("dailySleepDTO", None)
     if sleep_json["sleepEndTimestampGMT"]:
+        _end_ts   = sleep_json["sleepEndTimestampGMT"]
+        _start_ts = sleep_json.get("sleepStartTimestampGMT")
         points_list.append({
         "measurement":  "SleepSummary",
-        "time": datetime.fromtimestamp(sleep_json["sleepEndTimestampGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
+        "time": datetime.fromtimestamp(_end_ts/1000, tz=pytz.timezone("UTC")).isoformat(),
         "tags": {
             "Device": GARMIN_DEVICENAME,
             "Database_Name": "GarminDB"
             },
         "fields": {
+            "sleepStartTime": datetime.fromtimestamp(_start_ts/1000, tz=pytz.timezone("UTC")).isoformat() if _start_ts else None,
+            "sleepEndTime":   datetime.fromtimestamp(_end_ts/1000,   tz=pytz.timezone("UTC")).isoformat(),
             "sleepTimeSeconds": sleep_json.get("sleepTimeSeconds"),
             "deepSleepSeconds": sleep_json.get("deepSleepSeconds"),
             "lightSleepSeconds": sleep_json.get("lightSleepSeconds"),
@@ -1447,6 +1451,13 @@ def fetch_write_bulk(start_date_str, end_date_str):
             fetch_from_env()
         except Exception as env_err:
             logging.warning(f"environment_daily fetch failed (non-fatal): {env_err}")
+
+    # No-op when HA_URL / HA_TOKEN / HA_ENTITIES are not set; failures are non-fatal.
+    try:
+        from garmin_grafana.ha_fetch import fetch_from_env as ha_fetch_from_env
+        ha_fetch_from_env()
+    except Exception as ha_err:
+        logging.warning(f"ha_sensor fetch failed (non-fatal): {ha_err}")
 
 
 if __name__ == "__main__":

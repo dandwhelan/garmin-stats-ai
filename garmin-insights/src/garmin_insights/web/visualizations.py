@@ -255,7 +255,7 @@ class VisualizationService:
     # ------------------------------------------------------------------
     def sleep_timeline(self, start: str, end: str) -> list[dict]:
         sql = """
-            SELECT date, time, sleep_time_seconds
+            SELECT date, time, sleep_start, sleep_end, sleep_time_seconds, sleep_score
             FROM sleep_summary
             WHERE date >= ? AND date <= ?
             ORDER BY date
@@ -264,13 +264,23 @@ class VisualizationService:
             df = pd.read_sql_query(sql, conn, params=(start, end))
         out: list[dict] = []
         for _, r in df.iterrows():
-            t = r["time"]
             secs = r["sleep_time_seconds"]
-            if not t or not secs:
-                continue
             try:
-                wake_dt = datetime.fromisoformat(str(t).replace("Z", "").split(".")[0])
-                bed_dt = wake_dt - timedelta(seconds=int(secs))
+                # Prefer stored timestamps; fall back to deriving from wake - duration.
+                if r.get("sleep_end") and not str(r["sleep_end"]) in ("", "None", "nan"):
+                    wake_dt = datetime.fromisoformat(str(r["sleep_end"]).replace("Z", "").split(".")[0])
+                else:
+                    t = r["time"]
+                    if not t or not secs:
+                        continue
+                    wake_dt = datetime.fromisoformat(str(t).replace("Z", "").split(".")[0])
+
+                if r.get("sleep_start") and not str(r["sleep_start"]) in ("", "None", "nan"):
+                    bed_dt = datetime.fromisoformat(str(r["sleep_start"]).replace("Z", "").split(".")[0])
+                elif secs:
+                    bed_dt = wake_dt - timedelta(seconds=int(secs))
+                else:
+                    continue
             except Exception:
                 continue
             bed_h = bed_dt.hour + bed_dt.minute / 60
@@ -284,12 +294,14 @@ class VisualizationService:
                 dow = datetime.fromisoformat(r["date"]).weekday()
             except Exception:
                 dow = None
+            score = r.get("sleep_score")
             out.append({
                 "date": r["date"],
                 "dow": dow,
                 "bedtime": round(bed_h, 2),
                 "waketime": round(wake_h, 2),
                 "duration_h": round(int(secs) / 3600, 2),
+                "score": int(score) if score is not None and not (isinstance(score, float) and score != score) else None,
             })
         return out
 

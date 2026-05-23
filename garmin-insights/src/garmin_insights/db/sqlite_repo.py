@@ -283,6 +283,19 @@ class SqliteRepo:
             logger.debug("environment_daily query failed (table may not exist): %s", exc)
             return pd.DataFrame()
 
+    def query_ha_sensors(self, start: str, end: str) -> pd.DataFrame:
+        """Daily HA sensor aggregates from ha_sensor_daily."""
+        try:
+            q = (
+                "SELECT date, entity_id, mean_value, min_value, max_value, "
+                "overnight_mean, unit FROM ha_sensor_daily "
+                f"WHERE date >= '{start}' AND date <= '{end}' ORDER BY date, entity_id"
+            )
+            return self._query(q)
+        except Exception as exc:
+            logger.debug("ha_sensor_daily query failed (table may not exist): %s", exc)
+            return pd.DataFrame()
+
     def query_menstrual_cycle(self, start: str, end: str) -> pd.DataFrame:
         q = (
             "SELECT date, cycle_start_date, current_day_of_cycle, current_cycle_phase, "
