@@ -1255,12 +1255,15 @@ INSIGHT_RULES: list[InsightRule] = [
             "elevate overnight RHR and suppress HRV regardless of training load."
         ),
         research_citation=(
-            "Buguet 2007, Sleep Med Rev; Okamoto-Mizuno 2012, J Physiol Anthropol; "
-            "Lan 2017, Energy & Buildings (thermal environment & sleep)"
+            "Baniak 2023, Sci Total Environ (n=50 older adults, in-home sensors); "
+            "Minor 2025, SLEEP (n=317,758 wearable cohort); "
+            "Buguet 2007, Sleep Med Rev; Okamoto-Mizuno 2012, J Physiol Anthropol"
         ),
         research_summary=(
-            "Ambient heat — especially overnight bedroom temperature above ~24°C and "
-            "daytime apparent T above ~28°C — increases sweat-loss, dehydration risk, "
+            "Bedroom nighttime temperature outside ~20-25°C is associated with "
+            "a clinically relevant 5-10% drop in sleep efficiency; a 317k-person "
+            "wearable cohort confirms dose-response sleep loss as outdoor T rises. "
+            "Daytime apparent T above ~28°C increases sweat-loss, dehydration risk, "
             "and sympathetic tone, raising RHR and reducing HRV the following night. "
             "Treat as a confounder for recovery deviations: when a heat day precedes "
             "a strain finding, rank heat alongside training load and alcohol."
@@ -1282,16 +1285,18 @@ INSIGHT_RULES: list[InsightRule] = [
             "poor air quality can elevate respiration and lower HRV."
         ),
         research_citation=(
-            "Liu 2018, Environ Int (PM2.5 & HRV meta-analysis); "
-            "Pope 2004, Circulation; "
-            "Wu 2024, JAMA Network Open (short-term PM2.5 & sleep)"
+            "Niu 2020, Environ Pollut (PM2.5 & HRV meta-analysis, panel studies); "
+            "Lin 2022, Biosensors (wearable environmental-exposure review, 24 studies); "
+            "Pope 2004, Circulation; Wu 2024, JAMA Network Open (short-term PM2.5 & sleep)"
         ),
         research_summary=(
-            "Short-term exposure to elevated PM2.5 and ozone is associated with "
-            "lower heart-rate variability, elevated nocturnal respiration rate, "
-            "and worse self-reported sleep quality. Effects appear at concentrations "
-            "below WHO 24-hour guideline values. Use as a confounder — not a primary "
-            "cause — when respiration ↑ and HRV ↓ coincide with an AQI spike."
+            "A 10 µg/m³ increase in short-term PM2.5 exposure is associated with "
+            "approximately a 0.9% reduction in SDNN and 1.5% reduction in rMSSD HRV "
+            "(Niu 2020 meta-analysis), with elevated nocturnal respiration and worse "
+            "self-reported sleep. Effects appear below WHO 24-hour guideline values "
+            "and present as a lagged HRV suppression hours after exposure (Lin 2022). "
+            "Use as a confounder — not a primary cause — when respiration ↑ and HRV ↓ "
+            "coincide with an AQI / PM2.5 spike."
         ),
         evidence_tier="B",
         claim_strength="strong_association",
@@ -1325,6 +1330,70 @@ INSIGHT_RULES: list[InsightRule] = [
         measurement_confidence="medium",
         requires_user_context=True,
         confounders=["heat", "open_window_noise", "air_quality"],
+    ),
+    InsightRule(
+        name="allergy_next_day_rhr_systemic",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate",
+        comparison_metric=None,
+        direction="higher_is_worse",
+        description_template=(
+            "RHR is elevated and pollen peaked at {pollen_peak:.0f} grains/m³ "
+            "yesterday — allergic rhinitis exerts a measurable systemic next-day "
+            "load, not just nasal symptoms."
+        ),
+        research_citation=(
+            "Buekers 2023, Clin Transl Allergy (n=72 adults, 2,497 person-days, "
+            "wearable telemonitoring of allergic rhinitis)"
+        ),
+        research_summary=(
+            "In a prospective wearable cohort of 72 adults with allergic rhinitis "
+            "across 2,497 person-days, a one-point increase in symptom score was "
+            "associated with a +0.08 bpm next-day resting heart-rate increase, "
+            "demonstrating that pollen-driven allergy has measurable systemic "
+            "autonomic effects beyond the respiratory tract. The effect is small "
+            "per symptom-point but cumulative on heavy-symptom days. Requires the "
+            "user to actually be allergic — treat as a candidate confounder only "
+            "when the user has logged allergy/hay-fever sensitivity."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="high",
+        requires_user_context=True,
+        confounders=["heat", "poor_sleep", "alcohol", "training_load", "illness"],
+    ),
+    InsightRule(
+        name="asthma_environmental_hr_marker",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate",
+        comparison_metric="averageRespirationValue",
+        direction="higher_is_worse",
+        description_template=(
+            "RHR + respiration are elevated alongside an air-quality / pollen "
+            "spike — heart-rate fluctuations are a research-validated digital "
+            "marker preceding asthma exacerbations."
+        ),
+        research_citation=(
+            "Cokorudy 2024, ERJ Open Res (systematic review of 23 studies on "
+            "digital markers of asthma exacerbations)"
+        ),
+        research_summary=(
+            "A 2024 systematic review of 23 studies on digital markers of asthma "
+            "exacerbations found that heart-rate fluctuations and cough were "
+            "positively associated with exacerbations in every reported study, "
+            "and frequently preceded symptom onset — suggesting wearables can "
+            "act as individual-level early-warning signals when environmental "
+            "triggers (PM2.5, ozone, pollen, smoke) are elevated. Requires the "
+            "user to have asthma — treat as a context cue only when the user has "
+            "logged an asthma diagnosis or inhaler use."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        requires_user_context=True,
+        confounders=["illness", "training_load", "alcohol", "stress"],
     ),
 ]
 

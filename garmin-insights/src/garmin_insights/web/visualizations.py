@@ -343,3 +343,138 @@ class VisualizationService:
             ]
             matrix.append(trimmed)
         return {"dates": dates, "keys": keys, "matrix": matrix}
+
+    # ------------------------------------------------------------------
+    # 9. Environment ↔ recovery overlay & correlations
+    # ------------------------------------------------------------------
+    def environment_recovery(self, start: str, end: str) -> dict:
+        """Join environment_daily with daily_summaries on date and return
+        date-aligned arrays for the overlay chart plus Pearson correlations
+        between environmental drivers and physiological recovery markers.
+
+        Returns `available: false` when the user has no environment_daily
+        rows (HOME_LAT/HOME_LON unset) so the frontend can hide the section.
+        """
+        with self._conn() as conn:
+            try:
+                env = pd.read_sql_query(
+                    "SELECT date, apparent_temp_max_c, temp_max_c, european_aqi, "
+                    "pm25, o3, pollen_grass, pollen_birch, pollen_ragweed, "
+                    "pollen_alder, pollen_olive, pollen_mugwort "
+                    "FROM environment_daily "
+                    "WHERE date >= ? AND date <= ? ORDER BY date",
+                    conn, params=(start, end),
+                )
+            except Exception as exc:
+                logger.debug("environment_recovery: env query failed: %s", exc)
+                return {"available": False, "dates": [], "entries": []}
+            if env.empty:
+                return {"available": False, "dates": [], "entries": []}
+            summaries = pd.read_sql_query(
+                "SELECT date, metric_json FROM daily_summaries "
+                "WHERE date >= ? AND date <= ? ORDER BY date",
+                conn, params=(start, end),
+            )
+
+        # Extract physiological markers from metric_json
+        recovery_keys = (
+            "restingHeartRate", "avgOvernightHrv",
+            "averageRespirationValue", "sleepScore",
+        )
+        recovery_rows = []
+        for _, r in summaries.iterrows():
+            try:
+                m = json.loads(r["metric_json"]) if r["metric_json"] else {}
+            except Exception:
+                m = {}
+            recovery_rows.append({"date": r["date"], **{k: m.get(k) for k in recovery_keys}})
+        rec_df = pd.DataFrame(recovery_rows) if recovery_rows else pd.DataFrame(columns=("date", *recovery_keys))
+
+        # Compose per-species pollen peak per row (max over species, ignoring None)
+        pollen_cols = ["pollen_grass", "pollen_birch", "pollen_ragweed",
+                       "pollen_alder", "pollen_olive", "pollen_mugwort"]
+        env = env.copy()
+        env["pollen_peak"] = env[pollen_cols].max(axis=1, skipna=True)
+
+        merged = env.merge(rec_df, on="date", how="left")
+
+        # Buekers 2023: pollen impacts RHR the *following* day.
+        # Add a pollen_peak_lag1 column = previous day's pollen peak.
+        merged = merged.sort_values("date").reset_index(drop=True)
+        merged["pollen_peak_lag1"] = merged["pollen_peak"].shift(1)
+
+        # Build per-date entries for the chart
+        def _f(v):
+            if v is None:
+                return None
+            try:
+                if pd.isna(v):
+                    return None
+            except (TypeError, ValueError):
+                pass
+            try:
+                return round(float(v), 2)
+            except (TypeError, ValueError):
+                return None
+
+        entries = []
+        for _, r in merged.iterrows():
+            entries.append({
+                "date": r["date"],
+                "apparent_temp_max_c": _f(r.get("apparent_temp_max_c")),
+                "temp_max_c": _f(r.get("temp_max_c")),
+                "european_aqi": _f(r.get("european_aqi")),
+                "pm25": _f(r.get("pm25")),
+                "o3": _f(r.get("o3")),
+                "pollen_peak": _f(r.get("pollen_peak")),
+                "restingHeartRate": _f(r.get("restingHeartRate")),
+                "avgOvernightHrv": _f(r.get("avgOvernightHrv")),
+                "averageRespirationValue": _f(r.get("averageRespirationValue")),
+                "sleepScore": _f(r.get("sleepScore")),
+            })
+
+        # Pearson correlations between env drivers and recovery markers.
+        # Same-day for heat / AQ / PM2.5, next-day (lag-1) for pollen
+        # (Buekers 2023: allergy load → next-day RHR).
+        env_drivers = [
+            ("apparent_temp_max_c", "same-day"),
+            ("european_aqi",        "same-day"),
+            ("pm25",                "same-day"),
+            ("pollen_peak_lag1",    "next-day"),
+        ]
+        recovery_markers = list(recovery_keys)
+        correlations: list[dict] = []
+        for driver, lag_label in env_drivers:
+            for marker in recovery_markers:
+                if driver not in merged.columns or marker not in merged.columns:
+                    continue
+                pair = merged[[driver, marker]].apply(pd.to_numeric, errors="coerce").dropna()
+                if len(pair) < 7:
+                    correlations.append({
+                        "driver": driver, "marker": marker, "lag": lag_label,
+                        "n": int(len(pair)), "r": None,
+                    })
+                    continue
+                try:
+                    r = float(pair[driver].corr(pair[marker]))
+                except Exception:
+                    r = None
+                correlations.append({
+                    "driver": driver, "marker": marker, "lag": lag_label,
+                    "n": int(len(pair)),
+                    "r": None if r is None or np.isnan(r) else round(r, 2),
+                })
+
+        return {
+            "available": True,
+            "start": start,
+            "end": end,
+            "entries": entries,
+            "correlations": correlations,
+            "notes": (
+                "Pollen↔RHR uses next-day lag per Buekers 2023 (n=72, 2,497 days). "
+                "Heat/AQ/PM2.5↔HRV use same-day per Niu 2020 meta-analysis. "
+                "r values are Pearson; treat |r|<0.2 as noise, 0.2-0.4 as weak, "
+                ">0.4 as moderate."
+            ),
+        }

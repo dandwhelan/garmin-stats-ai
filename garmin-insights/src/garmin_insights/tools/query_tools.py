@@ -179,6 +179,39 @@ class QueryToolHandler:
             return json.dumps({"message": "No menstrual cycle data tracked for this window"})
         return _df_to_clean_json(df)
 
+    def get_environment_data(self, start_date: str, end_date: str) -> str:
+        """Daily weather + air quality + pollen for the user's home location.
+
+        Returns an `available: false` envelope when the user has no
+        environment_daily rows (HOME_LAT / HOME_LON not configured).
+        Otherwise returns a date-keyed dict — each value has temperature,
+        precipitation, humidity, UV, AQI, PM2.5, PM10, ozone, NO2 and the
+        per-species pollen counts. Use this to explain RHR / HRV /
+        respiration / sleep deviations as environmentally driven when
+        heat (>28°C apparent), poor air quality (EU AQI >60 or PM2.5
+        >25 µg/m³), or high pollen (>50 grains/m³) coincide with them —
+        see the `*_environmental_*`, `heat_recovery_confounder`,
+        `air_quality_recovery_confounder` and `allergy_next_day_rhr_systemic`
+        rules in the knowledge base.
+        """
+        df = self._repo.query_environment(start_date, end_date)
+        if df is None or df.empty:
+            return json.dumps({
+                "available": False,
+                "message": "No environment data — HOME_LAT/HOME_LON not configured for this user",
+            })
+        # _query() may set a time index; reset so we serialise cleanly.
+        if df.index.name is not None:
+            df = df.reset_index()
+        records = json.loads(df.to_json(orient="records"))
+        cleaned = _clean_records(records)
+        by_date = {
+            r["date"]: {k: v for k, v in r.items()
+                        if k not in ("date", "latitude", "longitude", "fetched_at")}
+            for r in cleaned if "date" in r
+        }
+        return json.dumps({"available": True, "entries": by_date}, default=str)
+
     # ------------------------------------------------------------------
     # Analysis tools
     # ------------------------------------------------------------------
@@ -354,6 +387,33 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 "ovulation/luteal), day of cycle, flow level, symptoms, mood, and cycle length. "
                 "Useful for correlating cycle phase with sleep, HRV, energy and training response. "
                 "Returns 'No menstrual cycle data tracked' if the user doesn't use this feature."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        },
+        {
+            "name": "get_environment_data",
+            "description": (
+                "Query daily weather, air quality and pollen at the user's home "
+                "location (Open-Meteo) for a date range. Returns date-keyed dict "
+                "with temp_max/min/mean_c, apparent_temp_max_c, precipitation_mm, "
+                "humidity_mean, uv_index_max, european_aqi, pm25, pm10, o3, no2, "
+                "and per-species pollen (alder/birch/grass/mugwort/olive/ragweed). "
+                "Returns `available: false` if the user has not configured "
+                "HOME_LAT/HOME_LON. "
+                "Call this when investigating recovery deviations — heat (>28°C "
+                "apparent), poor air quality (EU AQI >60 or PM2.5 >25 µg/m³), and "
+                "high pollen (>50 grains/m³) are research-validated confounders "
+                "for RHR↑, HRV↓, respiration↑ and sleep fragmentation. See the "
+                "`heat_recovery_confounder`, `air_quality_recovery_confounder`, "
+                "`high_pollen_sleep_confounder`, `allergy_next_day_rhr_systemic` "
+                "and `asthma_environmental_hr_marker` rules in the knowledge base."
             ),
             "input_schema": {
                 "type": "object",
