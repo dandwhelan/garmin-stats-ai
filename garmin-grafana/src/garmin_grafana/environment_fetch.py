@@ -71,7 +71,7 @@ def _fetch_weather(lat: float, lon: float, past_days: int) -> dict[str, Any]:
         "daily": ",".join(_WEATHER_DAILY_FIELDS),
         "hourly": "relative_humidity_2m",
         "past_days": past_days,
-        "forecast_days": 1,
+        "forecast_days": 5,
         "timezone": "auto",
     }
     r = requests.get(WEATHER_URL, params=params, timeout=30)
@@ -85,7 +85,7 @@ def _fetch_air_quality(lat: float, lon: float, past_days: int) -> dict[str, Any]
         "longitude": lon,
         "hourly": ",".join(_AQ_DAILY_FIELDS + _AQ_HOURLY_POLLEN),
         "past_days": past_days,
-        "forecast_days": 1,
+        "forecast_days": 5,
         "timezone": "auto",
     }
     r = requests.get(AIR_QUALITY_URL, params=params, timeout=30)

@@ -573,16 +573,33 @@ async def environment(
         df = await loop.run_in_executor(None, bundle.agent._repo.query_environment, s, e)
         if df is None or df.empty:
             return {"start": s, "end": e, "available": False, "entries": []}
-        # _query() sets a time index when a "time" column exists; environment
-        # has only "date" so the default integer index is fine. Just convert.
-        return {
-            "start": s,
-            "end": e,
-            "available": True,
-            "entries": df.to_dict(orient="records"),
-        }
+        # pandas float columns store NaN for missing values; json.dumps rejects
+        # out-of-range floats. df.to_json serialises NaN→null correctly.
+        entries = json.loads(df.to_json(orient="records"))
+        return {"start": s, "end": e, "available": True, "entries": entries}
     except Exception as ex:
         logger.exception("Environment query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/ha_sensors")
+async def ha_sensors(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Home Assistant sensor daily aggregates from ha_sensor_daily."""
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=30)
+    loop = asyncio.get_event_loop()
+    try:
+        df = await loop.run_in_executor(None, bundle.agent._repo.query_ha_sensors, s, e)
+        if df is None or df.empty:
+            return {"start": s, "end": e, "available": False, "entries": []}
+        entries = json.loads(df.to_json(orient="records"))
+        return {"start": s, "end": e, "available": True, "entries": entries}
+    except Exception as ex:
+        logger.exception("HA sensors query failed")
         raise HTTPException(status_code=500, detail=str(ex))
 
 

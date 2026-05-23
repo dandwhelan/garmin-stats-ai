@@ -533,6 +533,7 @@ async function loadDashboard() {
     loadMenstrual(date_range.start, date_range.end);
     loadEnvironment(date_range.start, date_range.end);
     loadEnvironmentRecovery(date_range.start, date_range.end);
+    loadHABedroom(date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
@@ -755,6 +756,7 @@ async function loadVisualizations(start, end) {
     safeRender('acwr', () => renderAcwrChart(vizData.training));
     safeRender('readiness', () => renderReadinessChart(vizData.training));
     safeRender('sleepTimeline', () => renderSleepTimeline(vizData.sleep_timeline));
+    safeRender('sleepWindow',   () => renderSleepWindow(vizData.sleep_timeline));
     safeRender('bodyComp', () => renderBodyComposition(vizData.body_composition));
     safeRender('behaviorImpact', () => renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric));
     safeRender('anomalyCalendar', () => renderAnomalyCalendar(vizData.anomaly_calendar));
@@ -936,6 +938,94 @@ function renderSleepTimeline(timeline) {
           },
         },
       }),
+    },
+  });
+}
+
+function renderSleepWindow(timeline) {
+  destroyAux('sleepWindow');
+  const ctx = document.getElementById('sleep-window-chart');
+  if (!ctx || !timeline?.length) return;
+
+  // Newest night at top — reverse so Chart.js (top→bottom) shows most recent first.
+  const rows = [...timeline].reverse().slice(0, 30);
+  const labels = rows.map(r => r.date.slice(5));
+
+  const fmtH = h => {
+    const hh = Math.floor(((h % 24) + 24) % 24);
+    const mm = String(Math.round((h % 1) * 60)).padStart(2, '0');
+    return hh < 12 ? `${hh || 12}:${mm} AM` : `${hh === 12 ? 12 : hh - 12}:${mm} PM`;
+  };
+
+  const barData  = rows.map(r => {
+    const bed  = r.bedtime;                              // e.g. 23.2
+    const wake = r.waketime < 12 ? r.waketime + 24 : r.waketime; // e.g. 7.3 → 31.3
+    return [bed, wake];
+  });
+
+  const scoreColor = s => {
+    if (s == null) return 'rgba(120,130,150,0.55)';
+    if (s >= 80)   return 'rgba(34,197,94,0.65)';
+    if (s >= 60)   return 'rgba(234,179,8,0.65)';
+    return             'rgba(239,68,68,0.65)';
+  };
+  const colors = rows.map(r => scoreColor(r.score));
+
+  auxCharts.sleepWindow = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Sleep window',
+        data: barData,
+        backgroundColor: colors,
+        borderColor: colors.map(c => c.replace('0.65', '0.9')),
+        borderWidth: 1,
+        borderSkipped: false,
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          min: 19, max: 33,
+          ticks: {
+            stepSize: 1,
+            color: '#8892a4',
+            callback: v => {
+              const h = ((v % 24) + 24) % 24;
+              if (h === 0)  return 'Midnight';
+              if (h === 12) return 'Noon';
+              return h < 12 ? `${h}am` : `${h - 12}pm`;
+            },
+          },
+          grid: { color: 'rgba(255,255,255,0.06)' },
+        },
+        y: { ticks: { color: '#8892a4', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#22263a',
+          borderColor: '#2e3350',
+          borderWidth: 1,
+          titleColor: '#e2e8f0',
+          bodyColor: '#8892a4',
+          callbacks: {
+            title: items => items[0].label,
+            label: item => {
+              const [b, w] = item.raw;
+              const score  = rows[item.dataIndex]?.score;
+              const parts  = [`Bed: ${fmtH(b)}  →  Wake: ${fmtH(w)}`, `Duration: ${(w - b).toFixed(1)} h`];
+              if (score != null) parts.push(`Sleep score: ${score}`);
+              return parts;
+            },
+          },
+        },
+      },
     },
   });
 }
@@ -3357,37 +3447,273 @@ function renderEnvironment(entries) {
     });
   }
 
-  // ---- Pollen stack ----
-  const pollenCtx = document.getElementById('environment-pollen-chart');
-  if (pollenCtx) {
-    if (envPollenChart) envPollenChart.destroy();
-    const species = [
-      { key: 'pollen_grass',   label: 'Grass',   color: '#22c55e' },
-      { key: 'pollen_birch',   label: 'Birch',   color: '#84cc16' },
-      { key: 'pollen_alder',   label: 'Alder',   color: '#10b981' },
-      { key: 'pollen_olive',   label: 'Olive',   color: '#14b8a6' },
-      { key: 'pollen_mugwort', label: 'Mugwort', color: '#eab308' },
-      { key: 'pollen_ragweed', label: 'Ragweed', color: '#ef4444' },
-    ];
-    const datasets = species.map(s => ({
-      type: 'bar',
-      label: s.label,
-      data: entries.map(e => e[s.key]),
-      backgroundColor: s.color,
-      stack: 'pollen',
-    }));
-    envPollenChart = new Chart(pollenCtx, {
-      data: { labels, datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          x: { stacked: true },
-          y: { stacked: true, title: { display: true, text: 'grains/m³' }, beginAtZero: true },
+  // Pollen chart uses its own ±day window — delegate to loadPollenChart().
+  loadPollenChart();
+}
+
+let haBedroomChart = null;
+
+async function loadHABedroom(start, end) {
+  const section = document.getElementById('ha-bedroom-section');
+  if (!section) return;
+  const params = new URLSearchParams();
+  if (start) params.set('start', start);
+  if (end)   params.set('end', end);
+  addUserParam(params);
+  try {
+    const res = await fetch(`/api/ha_sensors?${params.toString()}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const entries = (data.entries || []).filter(e => e.entity_id === 'sensor.bedroom_temp_xi_temperature');
+    if (!data.available || !entries.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    renderHABedroom(entries);
+  } catch (e) {
+    console.error('HA bedroom load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderHABedroom(entries) {
+  const ctx = document.getElementById('ha-bedroom-chart');
+  if (!ctx) return;
+  if (haBedroomChart) haBedroomChart.destroy();
+
+  const labels   = entries.map(e => (e.date || '').slice(5));
+  const overnight = entries.map(e => e.overnight_mean);
+  const minVals  = entries.map(e => e.min_value);
+  const maxVals  = entries.map(e => e.max_value);
+  const unit     = entries[0]?.unit || '°C';
+
+  // Reference band plugin: 16–19 °C optimal sleep temperature.
+  const optimalBand = {
+    id: 'bedroomOptimal',
+    beforeDraw(chart) {
+      const { ctx: c, scales: { x, y }, chartArea } = chart;
+      const y1 = y.getPixelForValue(19);
+      const y2 = y.getPixelForValue(16);
+      c.save();
+      c.fillStyle = 'rgba(34,197,94,0.08)';
+      c.fillRect(chartArea.left, Math.min(y1, y2), chartArea.width, Math.abs(y2 - y1));
+      // label
+      c.fillStyle = 'rgba(34,197,94,0.5)';
+      c.font = '11px sans-serif';
+      c.fillText('Optimal 16–19 °C', chartArea.left + 6, Math.min(y1, y2) - 4);
+      c.restore();
+    },
+  };
+
+  haBedroomChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: `Daily min (${unit})`,
+          data: minVals,
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.08)',
+          borderDash: [3, 3],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: `Overnight mean (${unit})`,
+          data: overnight,
+          borderColor: '#a78bfa',
+          backgroundColor: 'rgba(167,139,250,0.15)',
+          borderWidth: 2,
+          pointRadius: 3,
+          fill: true,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: `Daily max (${unit})`,
+          data: maxVals,
+          borderColor: '#fb923c',
+          backgroundColor: 'rgba(251,146,60,0.08)',
+          borderDash: [3, 3],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' } },
+        y: {
+          title: { display: true, text: unit, color: '#8892a4' },
+          grid: { color: 'rgba(255,255,255,0.06)' },
+          ticks: { color: '#8892a4' },
         },
       },
-    });
+      plugins: {
+        legend: { display: true, labels: { color: '#8892a4' } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    },
+    plugins: [optimalBand],
+  });
+}
+
+async function loadPollenChart() {
+  const ctx = document.getElementById('environment-pollen-chart');
+  if (!ctx) return;
+  const today = new Date();
+  const pad = d => d.toISOString().slice(0, 10);
+  const s = new Date(today); s.setDate(today.getDate() - 3);
+  const e = new Date(today); e.setDate(today.getDate() + 5);
+  const params = new URLSearchParams({ start: pad(s), end: pad(e) });
+  addUserParam(params);
+  try {
+    const res = await fetch(`/api/environment?${params.toString()}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.available || !data.entries?.length) return;
+    renderPollenChart(data.entries);
+  } catch (err) {
+    console.error('Pollen chart load failed:', err);
   }
+}
+
+function renderPollenChart(entries) {
+  const ctx = document.getElementById('environment-pollen-chart');
+  if (!ctx) return;
+  if (envPollenChart) envPollenChart.destroy();
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const labels = entries.map(e => (e.date || '').slice(5));
+  const todayLabel = todayStr.slice(5);
+  const todayIdx = labels.indexOf(todayLabel);
+
+  const species = [
+    { key: 'pollen_grass',   label: 'Grass',   color: '#4ade80' },
+    { key: 'pollen_birch',   label: 'Birch',   color: '#38bdf8' },
+    { key: 'pollen_alder',   label: 'Alder',   color: '#fb923c' },
+    { key: 'pollen_olive',   label: 'Olive',   color: '#c084fc' },
+    { key: 'pollen_mugwort', label: 'Mugwort', color: '#fbbf24' },
+    { key: 'pollen_ragweed', label: 'Ragweed', color: '#f43f5e' },
+  ];
+
+  // Only render species that have at least one non-zero reading.
+  const active = species.filter(s => entries.some(e => e[s.key] != null && e[s.key] > 0));
+
+  const datasets = active.map(s => ({
+    label: s.label,
+    data: entries.map(e => e[s.key] ?? null),
+    borderColor: s.color,
+    backgroundColor: s.color + '28',
+    fill: true,
+    tension: 0.35,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    borderWidth: 2,
+  }));
+
+  // Traffic-light background bands (CAMS daily-mean thresholds for grass pollen,
+  // broadly applicable across species for relative comparison).
+  // Low < 10, Moderate 10–50, High > 50 grains/m³.
+  const BANDS = [
+    { lo: 50,  hi: Infinity, color: 'rgba(239,68,68,0.10)',   label: 'High',     badge: '#ef4444' },
+    { lo: 10,  hi: 50,       color: 'rgba(234,179,8,0.10)',   label: 'Moderate', badge: '#eab308' },
+    { lo: 0,   hi: 10,       color: 'rgba(34,197,94,0.07)',   label: 'Low',      badge: '#22c55e' },
+  ];
+  const trafficBands = {
+    id: 'pollenBands',
+    beforeDraw(chart) {
+      const { ctx: c, scales: { x, y }, chartArea } = chart;
+      for (const { lo, hi, color } of BANDS) {
+        const yTop = y.getPixelForValue(Math.min(hi, y.max + 1));
+        const yBot = y.getPixelForValue(lo);
+        const top  = Math.max(yTop, chartArea.top);
+        const bot  = Math.min(yBot, chartArea.bottom);
+        if (bot <= top) continue;
+        c.save();
+        c.fillStyle = color;
+        c.fillRect(chartArea.left, top, chartArea.width, bot - top);
+        c.restore();
+      }
+    },
+  };
+
+  // Populate the traffic-light status badges above the chart.
+  const statusEl = document.getElementById('pollen-status');
+  if (statusEl) {
+    const todayEntry = entries.find(e => (e.date || '').slice(0, 10) === todayStr) || entries[entries.length - 1];
+    const badges = active.map(s => {
+      const val = todayEntry ? (todayEntry[s.key] ?? 0) : 0;
+      const band = BANDS.find(b => val >= b.lo && val < b.hi) || BANDS[BANDS.length - 1];
+      return `<span style="background:${band.badge}22;border:1px solid ${band.badge};color:${band.badge};border-radius:4px;padding:2px 7px;font-weight:600;">${s.label}: ${band.label} (${val.toFixed(1)})</span>`;
+    });
+    statusEl.innerHTML = badges.join('') || '';
+  }
+
+  // Inline plugins: shaded forecast region + "Today" dashed line.
+  const forecastBg = {
+    id: 'pollenForecastBg',
+    beforeDraw(chart) {
+      if (todayIdx < 0) return;
+      const { ctx: c, scales: { x, y }, chartArea } = chart;
+      const xStart = x.getPixelForValue(todayIdx + 0.5);
+      c.save();
+      c.fillStyle = 'rgba(255,255,255,0.04)';
+      c.fillRect(xStart, chartArea.top, chartArea.right - xStart, chartArea.height);
+      c.restore();
+    },
+  };
+  const todayLine = {
+    id: 'pollenTodayLine',
+    afterDraw(chart) {
+      if (todayIdx < 0) return;
+      const { ctx: c, scales: { x, y } } = chart;
+      const xPos = x.getPixelForValue(todayIdx);
+      c.save();
+      c.strokeStyle = 'rgba(255,255,255,0.4)';
+      c.lineWidth = 1.5;
+      c.setLineDash([4, 4]);
+      c.beginPath();
+      c.moveTo(xPos, y.top);
+      c.lineTo(xPos, y.bottom);
+      c.stroke();
+      c.fillStyle = 'rgba(255,255,255,0.45)';
+      c.font = '11px sans-serif';
+      c.fillText('Today', xPos + 5, y.top + 14);
+      c.restore();
+    },
+  };
+
+  envPollenChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.06)' } },
+        y: {
+          title: { display: true, text: 'grains/m³' },
+          beginAtZero: true,
+          grid: { color: 'rgba(255,255,255,0.06)' },
+        },
+      },
+      plugins: {
+        legend: { display: true },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    },
+    plugins: [trafficBands, forecastBg, todayLine],
+  });
 }
 
 // ---- Environment ↔ Recovery overlay (Buekers 2023, Niu 2020, Cokorudy 2024) ----

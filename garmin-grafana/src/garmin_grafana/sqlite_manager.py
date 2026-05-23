@@ -75,6 +75,8 @@ class GarminDB:
             CREATE TABLE IF NOT EXISTS sleep_summary (
                 date TEXT PRIMARY KEY, -- Derived from end time usually
                 time TEXT,
+                sleep_start TEXT,
+                sleep_end TEXT,
                 device TEXT,
                 sleep_time_seconds INTEGER,
                 deep_sleep_seconds INTEGER,
@@ -524,6 +526,8 @@ class GarminDB:
                     self._upsert(cursor, 'sleep_summary', {
                         'date': timestamp[:10],
                         'time': timestamp,
+                        'sleep_start': fields.get('sleepStartTime'),
+                        'sleep_end':   fields.get('sleepEndTime'),
                         'device': device,
                         'sleep_time_seconds': fields.get('sleepTimeSeconds'),
                         'deep_sleep_seconds': fields.get('deepSleepSeconds'),
