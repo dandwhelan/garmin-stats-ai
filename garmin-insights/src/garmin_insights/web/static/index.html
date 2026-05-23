@@ -316,6 +316,18 @@
       </section>
     </div>
 
+    <section class="chart-section" id="env-recovery-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Environment &harr; Recovery <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overlays daily heat (apparent T), European AQI, PM2.5 and pollen peak against the physiological recovery markers Garmin records the same / next morning — RHR, overnight HRV, respiration rate, sleep score. Pollen uses a <em>next-day</em> lag because Buekers 2023 (n=72, 2,497 person-days, wearable telemonitoring of allergic rhinitis) found a +0.08 bpm next-day RHR rise per symptom-point, demonstrating systemic autonomic load beyond the respiratory tract. Heat / AQ / PM2.5 use same-day per Niu 2020 PM2.5↔HRV meta-analysis. Treat the table below as confounder-ranking evidence, not causation.<br><br>Sources: Buekers 2023 (Clin Transl Allergy); Niu 2020 (Environ Pollut); Cokorudy 2024 (ERJ Open Res, asthma digital-marker SR); Baniak 2023 (Sci Total Environ, bedroom T &amp; sleep); Lin 2022 (Biosensors, 24-study wearable env review); Matzke 2024 (JMIR mHealth, heat &amp; activity in rural Kenya).</span></span></h2>
+        <span class="chart-sub">Daily environmental drivers vs RHR / HRV / respiration / sleep, with Pearson r per pair</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="env-recovery-chart"></canvas>
+      </div>
+      <div id="env-recovery-correlations" class="env-correlations"></div>
+      <p id="env-recovery-notes" class="muted small"></p>
+    </section>
+
     <h2 class="section-divider">Lifestyle &amp; Health Insights</h2>
     <section class="chart-section">
       <div class="chart-header">

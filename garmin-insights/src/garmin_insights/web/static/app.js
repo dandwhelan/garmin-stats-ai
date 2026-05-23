@@ -532,6 +532,7 @@ async function loadDashboard() {
     loadLifestyle(date_range.start, date_range.end);
     loadMenstrual(date_range.start, date_range.end);
     loadEnvironment(date_range.start, date_range.end);
+    loadEnvironmentRecovery(date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
@@ -3387,4 +3388,122 @@ function renderEnvironment(entries) {
       },
     });
   }
+}
+
+// ---- Environment ↔ Recovery overlay (Buekers 2023, Niu 2020, Cokorudy 2024) ----
+let envRecoveryChart = null;
+
+async function loadEnvironmentRecovery(start, end) {
+  const section = document.getElementById('env-recovery-section');
+  if (!section) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/environment/recovery?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.available || !data.entries?.length) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    renderEnvironmentRecovery(data);
+  } catch (e) {
+    console.error('Environment-recovery load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderEnvironmentRecovery(data) {
+  const entries = data.entries || [];
+  const labels = entries.map(e => (e.date || '').slice(5));
+  const ctx = document.getElementById('env-recovery-chart');
+  if (!ctx) return;
+  if (envRecoveryChart) envRecoveryChart.destroy();
+
+  // Two y-axes: y (physiological — bpm / ms / br/min / score) and
+  // y1 (environmental — °C / AQI / µg/m³ / grains/m³). Pollen is plotted
+  // shifted +1 day relative to the date label so it aligns visually with
+  // the next-day RHR effect from Buekers 2023.
+  const pollenShifted = entries.map((_, i) => i === 0 ? null : entries[i - 1]?.pollen_peak ?? null);
+
+  envRecoveryChart = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        // Physiology (left axis)
+        { type: 'line', label: 'RHR (bpm)',           data: entries.map(e => e.restingHeartRate),         borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.12)',  tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
+        { type: 'line', label: 'Overnight HRV (ms)',  data: entries.map(e => e.avgOvernightHrv),          borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.12)', tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
+        { type: 'line', label: 'Respiration (br/min)', data: entries.map(e => e.averageRespirationValue), borderColor: '#0ea5e9', backgroundColor: 'rgba(14,165,233,0.12)', tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
+        // Environment (right axis), drawn lighter / dashed so the eye groups them
+        { type: 'line', label: 'Apparent T max (°C)',  data: entries.map(e => e.apparent_temp_max_c),     borderColor: '#f97316', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'European AQI',         data: entries.map(e => e.european_aqi),            borderColor: '#a855f7', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'PM2.5 (µg/m³)',        data: entries.map(e => e.pm25),                    borderColor: '#f59e0b', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'Pollen peak (lag-1, grains/m³)', data: pollenShifted,                     borderColor: '#22c55e', borderDash: [2, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y:  { title: { display: true, text: 'Physiology' } },
+        y1: { position: 'right', title: { display: true, text: 'Environment' }, grid: { drawOnChartArea: false }, beginAtZero: true },
+      },
+    },
+  });
+
+  // Correlation table — group by driver, one row per recovery marker.
+  const corrEl = document.getElementById('env-recovery-correlations');
+  if (corrEl) {
+    const cors = data.correlations || [];
+    if (!cors.length) {
+      corrEl.innerHTML = '';
+    } else {
+      const driverLabels = {
+        apparent_temp_max_c: 'Apparent T max',
+        european_aqi:        'European AQI',
+        pm25:                'PM2.5',
+        pollen_peak_lag1:    'Pollen peak (next-day)',
+      };
+      const markerLabels = {
+        restingHeartRate:        'RHR',
+        avgOvernightHrv:         'HRV',
+        averageRespirationValue: 'Respiration',
+        sleepScore:              'Sleep score',
+      };
+      const drivers = Array.from(new Set(cors.map(c => c.driver)));
+      const markers = Array.from(new Set(cors.map(c => c.marker)));
+
+      const fmtR = (r) => {
+        if (r === null || r === undefined) return '<span class="muted">—</span>';
+        const cls = Math.abs(r) >= 0.4 ? 'corr-strong'
+                  : Math.abs(r) >= 0.2 ? 'corr-moderate'
+                  : 'corr-weak';
+        return `<span class="${cls}">${r >= 0 ? '+' : ''}${r.toFixed(2)}</span>`;
+      };
+
+      let html = '<table class="env-corr-table"><thead><tr><th>Driver (lag)</th>';
+      for (const m of markers) html += `<th>${markerLabels[m] || m}</th>`;
+      html += '<th>N</th></tr></thead><tbody>';
+      for (const d of drivers) {
+        const rowCors = cors.filter(c => c.driver === d);
+        const lag = rowCors[0]?.lag || '';
+        const nMax = Math.max(...rowCors.map(c => c.n || 0));
+        html += `<tr><td><b>${driverLabels[d] || d}</b> <span class="muted small">(${lag})</span></td>`;
+        for (const m of markers) {
+          const cell = rowCors.find(c => c.marker === m);
+          html += `<td>${fmtR(cell?.r ?? null)}</td>`;
+        }
+        html += `<td class="muted">${nMax}</td></tr>`;
+      }
+      html += '</tbody></table>';
+      corrEl.innerHTML = html;
+    }
+  }
+
+  const notesEl = document.getElementById('env-recovery-notes');
+  if (notesEl) notesEl.textContent = data.notes || '';
 }

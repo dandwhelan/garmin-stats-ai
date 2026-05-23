@@ -219,6 +219,72 @@ class HealthAgent:
             logger.debug("Cycle context unavailable: %s", e)
             return None
 
+    def _environment_context_block(self) -> dict | None:
+        """If the user has Open-Meteo data and recent days show an environmental
+        extreme (heat, poor air quality, high pollen), surface it as a system
+        block so the model considers it as a confounder without having to call
+        a tool. Returns None when no environment data exists or nothing is
+        out of range."""
+        try:
+            today = datetime.utcnow().date()
+            start = (today - timedelta(days=2)).isoformat()
+            end = today.isoformat()
+            df = self._repo.query_environment(start, end)
+            if df is None or df.empty:
+                return None
+            if df.index.name is not None:
+                df = df.reset_index()
+
+            def _peak(col: str) -> float | None:
+                if col not in df.columns:
+                    return None
+                series = df[col].dropna()
+                if series.empty:
+                    return None
+                try:
+                    return float(series.max())
+                except (TypeError, ValueError):
+                    return None
+
+            apparent_max = _peak("apparent_temp_max_c")
+            aqi_max = _peak("european_aqi")
+            pm25_max = _peak("pm25")
+            pollen_max = max(
+                (v for v in (_peak("pollen_grass"), _peak("pollen_birch"),
+                             _peak("pollen_ragweed"), _peak("pollen_alder"),
+                             _peak("pollen_olive"), _peak("pollen_mugwort"))
+                 if v is not None),
+                default=None,
+            )
+
+            flags: list[str] = []
+            if apparent_max is not None and apparent_max >= 28.0:
+                flags.append(f"heat (apparent max {apparent_max:.1f}°C)")
+            if aqi_max is not None and aqi_max >= 60.0:
+                flags.append(f"poor air quality (EU AQI {aqi_max:.0f})")
+            if pm25_max is not None and pm25_max >= 25.0:
+                flags.append(f"elevated PM2.5 ({pm25_max:.1f} µg/m³)")
+            if pollen_max is not None and pollen_max >= 50.0:
+                flags.append(f"high pollen ({pollen_max:.0f} grains/m³)")
+            if not flags:
+                return None
+
+            text = (
+                "## Current Environmental Context (last 48h, user's home location)\n"
+                f"Active environmental confounders: {', '.join(flags)}.\n"
+                "When ranking causes for RHR↑ / HRV↓ / respiration↑ / sleep "
+                "fragmentation, include these alongside training load, alcohol, "
+                "sleep loss and illness — they are research-validated wearable-cohort "
+                "confounders (Buekers 2023 next-day RHR; Niu 2020 PM2.5↔HRV "
+                "meta-analysis; Baniak 2023 + Minor 2025 heat↔sleep; Cokorudy 2024 "
+                "asthma digital-marker SR). Call get_environment_data if you need "
+                "the full per-day numbers."
+            )
+            return {"type": "text", "text": text}
+        except Exception as e:
+            logger.debug("Environment context unavailable: %s", e)
+            return None
+
     def _evidence_tier_block(self) -> dict:
         """Tier-aware output rules. Garmin data detects deviations from baseline;
         it does not diagnose. This block tells the model how to phrase findings
@@ -265,6 +331,9 @@ class HealthAgent:
         cycle = self._cycle_context_block()
         if cycle is not None:
             blocks.append(cycle)
+        env = self._environment_context_block()
+        if env is not None:
+            blocks.append(env)
         return blocks
 
     def ensure_cache_fresh(self, days: int = 90) -> None:
@@ -489,6 +558,36 @@ class HealthAgent:
                 ]
         except Exception:
             pass
+
+        # Merge environment fields (temp / AQI / pollen) directly into summaries
+        environment_by_date: dict = {}
+        try:
+            env_df = self._repo.query_environment(start, end)
+            if env_df is not None and not env_df.empty:
+                if env_df.index.name is not None:
+                    env_df = env_df.reset_index()
+                env_keys = (
+                    "temp_max_c", "temp_min_c", "apparent_temp_max_c",
+                    "precipitation_mm", "humidity_mean", "uv_index_max",
+                    "european_aqi", "pm25", "pm10", "o3", "no2",
+                    "pollen_alder", "pollen_birch", "pollen_grass",
+                    "pollen_mugwort", "pollen_olive", "pollen_ragweed",
+                )
+                for row in env_df.to_dict(orient="records"):
+                    d = str(row.get("date", ""))[:10]
+                    if not d:
+                        continue
+                    environment_by_date[d] = {
+                        k: row[k] for k in env_keys
+                        if row.get(k) is not None
+                    }
+                summaries = [
+                    {**s, **{f"env_{k}": v for k, v in environment_by_date[str(s.get("date", ""))[:10]].items()}}
+                    if str(s.get("date", ""))[:10] in environment_by_date else s
+                    for s in summaries
+                ]
+        except Exception as e:
+            logger.debug("Portable prompt: environment merge failed: %s", e)
 
         # Concatenate every system block we'd send to the live API
         system_text_parts: list[str] = []

@@ -601,6 +601,28 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   margin-left: 12px;
 }
 
+/* Environment ↔ recovery correlation table */
+.env-correlations { margin-top: 14px; overflow-x: auto; }
+.env-corr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.env-corr-table th,
+.env-corr-table td {
+  padding: 6px 10px;
+  text-align: center;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+}
+.env-corr-table th { color: var(--muted); font-weight: 500; }
+.env-corr-table td:first-child,
+.env-corr-table th:first-child { text-align: left; }
+.env-corr-table .corr-strong   { color: var(--red); font-weight: 600; }
+.env-corr-table .corr-moderate { color: #f59e0b; font-weight: 600; }
+.env-corr-table .corr-weak     { color: var(--muted); }
+.muted { color: var(--muted); }
+.small { font-size: 0.78rem; }
+
 .alert-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .alert {
   background: rgba(248,113,113,0.1);

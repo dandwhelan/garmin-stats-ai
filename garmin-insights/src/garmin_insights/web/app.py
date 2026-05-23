@@ -586,6 +586,31 @@ async def environment(
         raise HTTPException(status_code=500, detail=str(ex))
 
 
+@app.get("/api/environment/recovery")
+async def environment_recovery(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Join environment (temp/AQI/pollen) with RHR/HRV/respiration/sleep.
+
+    Powers the Environment ↔ Recovery overlay chart and ships Pearson r
+    values per (driver, marker) pair so the chart can show research-aligned
+    correlation strength. Returns `available: false` when the user has no
+    environment_daily rows so the frontend can hide the section.
+    """
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=60)
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, bundle.viz.environment_recovery, s, e)
+        result["user"] = user
+        return result
+    except Exception as ex:
+        logger.exception("Environment-recovery query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
 @app.get("/api/menstrual")
 async def menstrual(
     user: str = Query(default="default"),
