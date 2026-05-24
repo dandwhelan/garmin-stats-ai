@@ -46,7 +46,8 @@ _AQ_DAILY_FIELDS = [
     "european_aqi",
 ]
 
-# Open-Meteo pollen is hourly only — we average to daily ourselves.
+# Open-Meteo pollen is hourly only — we reduce to a daily peak ourselves
+# (the daytime max, matching how Google/CAMS report a pollen index).
 _AQ_HOURLY_POLLEN = [
     "alder_pollen",
     "birch_pollen",
@@ -151,8 +152,11 @@ def build_daily_rows(lat: float, lon: float, past_days: int = DEFAULT_PAST_DAYS)
     o3_d   = _hourly_to_daily(aq_times, hourly_a.get("ozone", []) or [])
     no2_d  = _hourly_to_daily(aq_times, hourly_a.get("nitrogen_dioxide", []) or [])
     aqi_d  = _hourly_max(aq_times, hourly_a.get("european_aqi", []) or [])
+    # Pollen: take the daily PEAK, not the mean. Concentrations are ~zero
+    # overnight and peak midday, so a 24h mean roughly halves the daytime
+    # level and reads far below the peak-based index Google/CAMS report.
     pollen_d = {
-        name: _hourly_to_daily(aq_times, hourly_a.get(name, []) or [])
+        name: _hourly_max(aq_times, hourly_a.get(name, []) or [])
         for name in _AQ_HOURLY_POLLEN
     }
 
