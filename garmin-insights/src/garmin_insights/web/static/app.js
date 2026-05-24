@@ -3620,9 +3620,10 @@ function renderPollenChart(entries) {
     borderWidth: 2,
   }));
 
-  // Traffic-light background bands (CAMS daily-mean thresholds for grass pollen,
-  // broadly applicable across species for relative comparison).
-  // Low < 10, Moderate 10–50, High > 50 grains/m³.
+  // Traffic-light background bands. Applied to daily-PEAK pollen (the fetcher
+  // stores the daily max per species, matching how Google/CAMS report an index).
+  // Bands approximate the CAMS grass-pollen risk levels, broadly applicable
+  // across species for relative comparison. Low < 10, Moderate 10–50, High > 50 grains/m³.
   const BANDS = [
     { lo: 50,  hi: Infinity, color: 'rgba(239,68,68,0.10)',   label: 'High',     badge: '#ef4444' },
     { lo: 10,  hi: 50,       color: 'rgba(234,179,8,0.10)',   label: 'Moderate', badge: '#eab308' },
