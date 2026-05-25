@@ -349,6 +349,47 @@
       <p id="env-recovery-notes" class="muted small"></p>
     </section>
 
+    <section class="chart-section" id="allergy-pollen-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Allergy Symptoms &harr; Pollen <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Compares the days you logged "Allergy Symptoms" or "Allergy Severity" in Garmin against the species-level daily-peak pollen from Open-Meteo and your same-day recovery markers (RHR, HRV, respiration, sleep score). Log-confirmed pollen days are a stronger signal than population-level pollen alone — Buekers 2023 (n=72, 2,497 days, wearable allergic-rhinitis telemonitoring) showed +0.08 bpm next-day RHR per symptom-point.</span></span></h2>
+        <span class="chart-sub">Logged symptom days vs species pollen; on/off-day mean recovery deltas</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="allergy-pollen-chart"></canvas>
+      </div>
+      <div id="allergy-pollen-deltas" class="env-correlations"></div>
+    </section>
+
+    <section class="chart-section" id="asthma-aq-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Asthma Symptoms &harr; Air Quality <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Days you logged "Asthma symptoms" vs PM2.5 / European AQI / O3 / NO2 from Open-Meteo. Cokorudy 2024 (ERJ Open Res, asthma digital-marker SR) found wearable HR / respiration deviations track environmental exposure in asthma cohorts. Treat as confounder ranking, not diagnosis.</span></span></h2>
+        <span class="chart-sub">Logged asthma days vs air-quality drivers; on/off-day recovery deltas</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="asthma-aq-chart"></canvas>
+      </div>
+      <div id="asthma-aq-deltas" class="env-correlations"></div>
+    </section>
+
+    <section class="chart-section" id="bedroom-sleep-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Bedroom Temperature &harr; Sleep <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overnight bedroom temperature (22:00–08:00 mean from Home Assistant) vs sleep score, overnight HRV, awakening count, and RHR. Baniak 2023 (Sci Total Environ): bedroom T in the 16–19 °C range is associated with better sleep efficiency; >24 °C with fragmentation.</span></span></h2>
+        <span class="chart-sub">Overnight bedroom T vs sleep score / HRV / awakenings; Pearson r per pair</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="bedroom-sleep-chart"></canvas>
+      </div>
+      <div id="bedroom-sleep-correlations" class="env-correlations"></div>
+    </section>
+
+    <section class="chart-section" id="migraine-root-cause-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Migraine Root-Cause Scan <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier C]</b> For each day you logged "Migraines", lists the prior 48h lifestyle behaviors (alcohol, late caffeine, poor sleep, heavy meals, etc.) and same-day environmental extremes (apparent T, AQI, PM2.5, humidity, precipitation). Confounder ranking only — common migraine triggers from Pellegrino 2018 (Headache); use to spot patterns, not as a diagnostic.</span></span></h2>
+        <span class="chart-sub">Per-event 48h confounder list — lifestyle + environment + recovery</span>
+      </div>
+      <div id="migraine-root-cause" class="root-cause-list"></div>
+    </section>
+
     <h2 class="section-divider">Lifestyle &amp; Health Insights</h2>
     <section class="chart-section">
       <div class="chart-header">

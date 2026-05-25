@@ -534,6 +534,18 @@ async function loadDashboard() {
     loadEnvironment(date_range.start, date_range.end);
     loadEnvironmentRecovery(date_range.start, date_range.end);
     loadHABedroom(date_range.start, date_range.end);
+    loadBedroomSleep(date_range.start, date_range.end);
+    loadBehaviorEnvironment(
+      'allergy', 'Allergy Symptoms',
+      ['pollen_grass','pollen_birch','pollen_ragweed','pollen_alder','pollen_olive','pollen_mugwort'],
+      date_range.start, date_range.end,
+    );
+    loadBehaviorEnvironment(
+      'asthma', 'Asthma symptoms',
+      ['pm25','european_aqi','o3','no2','pm10'],
+      date_range.start, date_range.end,
+    );
+    loadBehaviorRootCause('migraine', 'Migraines', 48, date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
@@ -590,6 +602,29 @@ const ENTITY_LABELS = {
   cyclePhaseFollicular: 'Phase: Follicular (0/1)',
   cyclePhaseOvulatory: 'Phase: Ovulatory (0/1)',
   cyclePhaseLuteal: 'Phase: Luteal (0/1)',
+  env_temp_min_c: 'Outside temp — min (°C)',
+  env_temp_mean_c: 'Outside temp — mean (°C)',
+  env_temp_max_c: 'Outside temp — max (°C)',
+  env_apparent_temp_max_c: 'Apparent temp — max (°C)',
+  env_precipitation_mm: 'Precipitation (mm)',
+  env_wind_max_kmh: 'Wind — max (km/h)',
+  env_humidity_mean: 'Humidity — mean (%)',
+  env_uv_index_max: 'UV index — max',
+  env_european_aqi: 'European AQI',
+  env_pm25: 'PM2.5 (µg/m³)',
+  env_pm10: 'PM10 (µg/m³)',
+  env_o3: 'Ozone (µg/m³)',
+  env_no2: 'NO₂ (µg/m³)',
+  env_pollen_alder: 'Pollen — alder',
+  env_pollen_birch: 'Pollen — birch',
+  env_pollen_grass: 'Pollen — grass',
+  env_pollen_mugwort: 'Pollen — mugwort',
+  env_pollen_olive: 'Pollen — olive',
+  env_pollen_ragweed: 'Pollen — ragweed',
+  env_bedroom_temp_mean_c: 'Bedroom temp — mean (°C)',
+  env_bedroom_temp_min_c: 'Bedroom temp — min (°C)',
+  env_bedroom_temp_max_c: 'Bedroom temp — max (°C)',
+  env_bedroom_temp_overnight_c: 'Bedroom temp — overnight (°C)',
 };
 
 // Excluded from the picker: non-numeric, identifier, or metadata fields.
@@ -3833,4 +3868,303 @@ function renderEnvironmentRecovery(data) {
 
   const notesEl = document.getElementById('env-recovery-notes');
   if (notesEl) notesEl.textContent = data.notes || '';
+}
+
+// ---------------------------------------------------------------------------
+// Behavior × environment cross-tab (allergy/pollen, asthma/AQ)
+// ---------------------------------------------------------------------------
+const _behaviorEnvCharts = {};
+
+async function loadBehaviorEnvironment(key, behavior, drivers, start, end) {
+  const section = document.getElementById(`${key === 'allergy' ? 'allergy-pollen' : 'asthma-aq'}-section`);
+  if (!section) return;
+  const params = new URLSearchParams({
+    behavior, drivers: drivers.join(','),
+  });
+  if (start) params.set('start', start);
+  if (end)   params.set('end', end);
+  addUserParam(params);
+  try {
+    const res = await fetch(`/api/behavior-environment?${params.toString()}`);
+    if (!res.ok) { section.style.display = 'none'; return; }
+    const data = await res.json();
+    if (!data.available || !data.entries?.length || data.n_logged === 0) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    renderBehaviorEnvironment(key, data, drivers);
+  } catch (e) {
+    console.error(`Behavior×env load failed for ${behavior}:`, e);
+    section.style.display = 'none';
+  }
+}
+
+function renderBehaviorEnvironment(key, data, drivers) {
+  const canvasId = key === 'allergy' ? 'allergy-pollen-chart' : 'asthma-aq-chart';
+  const deltasId = key === 'allergy' ? 'allergy-pollen-deltas' : 'asthma-aq-deltas';
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (_behaviorEnvCharts[key]) _behaviorEnvCharts[key].destroy();
+
+  const labels = data.entries.map(e => (e.date || '').slice(5));
+  // Stack pollen / AQ drivers as bars; highlight logged days with a dot overlay on RHR
+  const palette = ['#fbbf24','#a78bfa','#f87171','#22d3ee','#34d399','#fb923c','#4f9cf9'];
+  const driverSets = drivers.map((d, i) => ({
+    label: entityLabel(`env_${d}`) || d,
+    data: data.entries.map(e => e[d] ?? null),
+    backgroundColor: palette[i % palette.length] + 'cc',
+    borderColor: palette[i % palette.length],
+    borderWidth: 1,
+    stack: 'env',
+    type: 'bar',
+    yAxisID: 'y',
+  }));
+  const rhrSet = {
+    label: 'RHR (logged day = filled)',
+    data: data.entries.map(e => e.restingHeartRate ?? null),
+    borderColor: '#fff',
+    backgroundColor: data.entries.map(e => e.logged ? '#f87171' : 'rgba(255,255,255,0.15)'),
+    pointBackgroundColor: data.entries.map(e => e.logged ? '#f87171' : 'rgba(255,255,255,0.25)'),
+    pointBorderColor: data.entries.map(e => e.logged ? '#f87171' : '#888'),
+    pointRadius: data.entries.map(e => e.logged ? 5 : 3),
+    type: 'line',
+    yAxisID: 'y2',
+    tension: 0.2,
+    spanGaps: true,
+    fill: false,
+  };
+
+  _behaviorEnvCharts[key] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [...driverSets, rhrSet] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true, grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' } },
+        y: { stacked: true, position: 'left', grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' }, title: { display: true, text: 'Environment driver', color: '#8892a4' } },
+        y2: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: 'RHR (bpm)', color: '#f87171' } },
+      },
+      plugins: {
+        legend: { labels: { color: '#8892a4' } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    },
+  });
+
+  // Deltas table
+  const el = document.getElementById(deltasId);
+  if (el) {
+    const d = data.deltas || {};
+    const markers = [
+      ['restingHeartRate', 'RHR (bpm)'],
+      ['avgOvernightHrv', 'HRV (ms)'],
+      ['averageRespirationValue', 'Resp (rpm)'],
+      ['sleepScore', 'Sleep score'],
+    ];
+    let html = `<div class="muted small">On-day mean vs off-day mean — n=${data.n_logged} logged, ${data.n_unlogged} unlogged</div>`;
+    html += '<table class="env-corr-table"><thead><tr><th>Marker</th><th>On</th><th>Off</th><th>Δ</th></tr></thead><tbody>';
+    for (const [k, label] of markers) {
+      const row = d[k] || {};
+      const sign = row.delta == null ? '' : (row.delta > 0 ? '↑' : (row.delta < 0 ? '↓' : ''));
+      const color = row.delta == null ? '' : (
+        (k === 'restingHeartRate' || k === 'averageRespirationValue') ?
+          (row.delta > 0 ? '#f87171' : '#34d399') :
+          (row.delta > 0 ? '#34d399' : '#f87171')
+      );
+      html += `<tr><td>${label}</td><td>${row.on ?? '—'}</td><td>${row.off ?? '—'}</td><td style="color:${color}">${sign} ${row.delta ?? '—'}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bedroom temp × sleep overlay
+// ---------------------------------------------------------------------------
+let bedroomSleepChart = null;
+
+async function loadBedroomSleep(start, end) {
+  const section = document.getElementById('bedroom-sleep-section');
+  if (!section) return;
+  const params = new URLSearchParams();
+  if (start) params.set('start', start);
+  if (end)   params.set('end', end);
+  addUserParam(params);
+  try {
+    const res = await fetch(`/api/bedroom-temp-sleep?${params.toString()}`);
+    if (!res.ok) { section.style.display = 'none'; return; }
+    const data = await res.json();
+    if (!data.available || !data.entries?.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    renderBedroomSleep(data);
+  } catch (e) {
+    console.error('Bedroom-sleep load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderBedroomSleep(data) {
+  const ctx = document.getElementById('bedroom-sleep-chart');
+  if (!ctx) return;
+  if (bedroomSleepChart) bedroomSleepChart.destroy();
+
+  const labels = data.entries.map(e => (e.date || '').slice(5));
+  bedroomSleepChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Bedroom overnight (°C)',
+          data: data.entries.map(e => e.bedroom_overnight_c ?? null),
+          borderColor: '#a78bfa',
+          backgroundColor: 'rgba(167,139,250,0.12)',
+          yAxisID: 'y',
+          tension: 0.3,
+          spanGaps: true,
+          fill: true,
+        },
+        {
+          label: 'Sleep score',
+          data: data.entries.map(e => e.sleepScore ?? null),
+          borderColor: '#34d399',
+          yAxisID: 'y2',
+          tension: 0.3,
+          spanGaps: true,
+          fill: false,
+        },
+        {
+          label: 'Overnight HRV (ms)',
+          data: data.entries.map(e => e.avgOvernightHrv ?? null),
+          borderColor: '#22d3ee',
+          yAxisID: 'y3',
+          tension: 0.3,
+          spanGaps: true,
+          fill: false,
+          hidden: false,
+          borderDash: [4, 4],
+        },
+        {
+          label: 'Awake count',
+          data: data.entries.map(e => e.awakeCount ?? null),
+          borderColor: '#fbbf24',
+          yAxisID: 'y4',
+          tension: 0.3,
+          spanGaps: true,
+          fill: false,
+          hidden: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' } },
+        y:  { position: 'left',  ticks: { color: '#a78bfa' }, title: { display: true, text: 'Bedroom T (°C)', color: '#a78bfa' }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y2: { position: 'right', ticks: { color: '#34d399' }, title: { display: true, text: 'Sleep score', color: '#34d399' }, grid: { drawOnChartArea: false } },
+        y3: { display: false },
+        y4: { display: false },
+      },
+      plugins: {
+        legend: { labels: { color: '#8892a4' } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    },
+  });
+
+  // Correlation table
+  const el = document.getElementById('bedroom-sleep-correlations');
+  if (el) {
+    const drivers = ['bedroom_overnight_c', 'bedroom_mean_c'];
+    const markers = ['sleepScore', 'avgOvernightHrv', 'awakeCount', 'restingHeartRate'];
+    const labelMap = {
+      bedroom_overnight_c: 'Overnight (°C)',
+      bedroom_mean_c: 'All-day mean (°C)',
+      sleepScore: 'Sleep score',
+      avgOvernightHrv: 'HRV',
+      awakeCount: 'Awakenings',
+      restingHeartRate: 'RHR',
+    };
+    let html = '<table class="env-corr-table"><thead><tr><th>Driver</th>';
+    for (const m of markers) html += `<th>${labelMap[m]}</th>`;
+    html += '<th>n</th></tr></thead><tbody>';
+    const fmtR = v => (v == null) ? '—' : `<span style="color:${Math.abs(v)>0.4?'#fbbf24':(Math.abs(v)>0.2?'#a78bfa':'#8892a4')}">${v.toFixed(2)}</span>`;
+    for (const d of drivers) {
+      const rowCors = (data.correlations || []).filter(c => c.driver === d);
+      const nMax = Math.max(0, ...rowCors.map(c => c.n || 0));
+      html += `<tr><td><b>${labelMap[d]}</b></td>`;
+      for (const m of markers) {
+        const cell = rowCors.find(c => c.marker === m);
+        html += `<td>${fmtR(cell?.r ?? null)}</td>`;
+      }
+      html += `<td class="muted">${nMax}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    if (data.notes) html += `<p class="muted small">${escapeHtml(data.notes)}</p>`;
+    el.innerHTML = html;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Behavior root-cause (migraine 48h confounders)
+// ---------------------------------------------------------------------------
+async function loadBehaviorRootCause(key, behavior, lookbackHours, start, end) {
+  const section = document.getElementById(`${key}-root-cause-section`);
+  if (!section) return;
+  const params = new URLSearchParams({ behavior, lookback_hours: String(lookbackHours) });
+  if (start) params.set('start', start);
+  if (end)   params.set('end', end);
+  addUserParam(params);
+  try {
+    const res = await fetch(`/api/behavior-root-cause?${params.toString()}`);
+    if (!res.ok) { section.style.display = 'none'; return; }
+    const data = await res.json();
+    if (!data.available || !data.events?.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    renderBehaviorRootCause(key, data);
+  } catch (e) {
+    console.error(`Root-cause load failed for ${behavior}:`, e);
+    section.style.display = 'none';
+  }
+}
+
+function renderBehaviorRootCause(key, data) {
+  const el = document.getElementById(`${key}-root-cause`);
+  if (!el) return;
+  let html = `<div class="muted small">${data.events.length} logged event(s) · ${data.lookback_hours}h lookback</div>`;
+  for (const ev of data.events) {
+    const prior = (ev.prior_behaviors || []).map(b => `<li>${escapeHtml(b)}</li>`).join('');
+    const same  = (ev.same_day_behaviors || []).map(b => `<li>${escapeHtml(b)}</li>`).join('');
+    const env = ev.env || {};
+    const envBits = [];
+    if (env.apparent_temp_max_c != null) envBits.push(`Apparent T: ${env.apparent_temp_max_c}°C`);
+    if (env.european_aqi != null) envBits.push(`EU AQI: ${env.european_aqi}`);
+    if (env.pm25 != null) envBits.push(`PM2.5: ${env.pm25}`);
+    if (env.humidity_mean != null) envBits.push(`Humidity: ${env.humidity_mean}%`);
+    if (env.precipitation_mm != null) envBits.push(`Precip: ${env.precipitation_mm}mm`);
+    const rec = ev.recovery_today || {};
+    const recPrev = ev.recovery_prev_day || {};
+    const recBits = [];
+    if (rec.restingHeartRate != null) recBits.push(`RHR ${rec.restingHeartRate}${recPrev.restingHeartRate != null ? ` (prev ${recPrev.restingHeartRate})` : ''}`);
+    if (rec.avgOvernightHrv != null)  recBits.push(`HRV ${rec.avgOvernightHrv}${recPrev.avgOvernightHrv != null ? ` (prev ${recPrev.avgOvernightHrv})` : ''}`);
+    if (rec.sleepScore != null)       recBits.push(`Sleep ${rec.sleepScore}${recPrev.sleepScore != null ? ` (prev ${recPrev.sleepScore})` : ''}`);
+
+    html += `
+      <details class="root-cause-event" open>
+        <summary><b>${escapeHtml(ev.date)}</b></summary>
+        <div class="root-cause-grid">
+          <div><h4>Prior 48h behaviors</h4>${prior ? `<ul>${prior}</ul>` : '<em class="muted">None logged</em>'}</div>
+          <div><h4>Same-day behaviors</h4>${same ? `<ul>${same}</ul>` : '<em class="muted">None logged</em>'}</div>
+          <div><h4>Environment</h4>${envBits.length ? `<ul>${envBits.map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>` : '<em class="muted">No env data</em>'}</div>
+          <div><h4>Recovery</h4>${recBits.length ? `<ul>${recBits.map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>` : '<em class="muted">No data</em>'}</div>
+        </div>
+      </details>
+    `;
+  }
+  el.innerHTML = html;
 }

@@ -1360,3 +1360,30 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 .activity-map-legend .legend-label { min-width: 60px; }
 .activity-map-legend .legend-label:last-child { text-align: right; }
+
+/* Behavior root-cause panel (migraine 48h analysis) */
+.root-cause-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.root-cause-event {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.root-cause-event summary { cursor: pointer; padding: 4px 0; }
+.root-cause-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+.root-cause-grid h4 {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.root-cause-grid ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 0.85rem;
+}
