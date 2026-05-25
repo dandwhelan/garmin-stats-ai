@@ -490,3 +490,299 @@ class VisualizationService:
                 ">0.4 as moderate."
             ),
         }
+
+    def _logged_behavior_days(self, conn, behavior: str, start: str, end: str) -> set[str]:
+        try:
+            rows = conn.execute(
+                "SELECT date FROM lifestyle_journal "
+                "WHERE behavior = ? AND status = 1 AND date >= ? AND date <= ?",
+                (behavior, start, end),
+            ).fetchall()
+        except sqlite3.Error:
+            return set()
+        return {str(r[0])[:10] for r in rows}
+
+    def _recovery_by_date(self, conn, start: str, end: str) -> dict[str, dict]:
+        rows = conn.execute(
+            "SELECT date, metric_json FROM daily_summaries "
+            "WHERE date >= ? AND date <= ? ORDER BY date",
+            (start, end),
+        ).fetchall()
+        keep = ("restingHeartRate", "avgOvernightHrv",
+                "averageRespirationValue", "sleepScore", "awakeCount")
+        out: dict[str, dict] = {}
+        for d, j in rows:
+            try:
+                m = json.loads(j) if j else {}
+            except Exception:
+                m = {}
+            out[str(d)[:10]] = {k: m.get(k) for k in keep}
+        return out
+
+    def behavior_environment_impact(
+        self,
+        behavior: str,
+        env_columns: list[str],
+        start: str,
+        end: str,
+    ) -> dict:
+        """For a logged behavior (e.g. 'Allergy Symptoms', 'Asthma symptoms'),
+        return per-day env drivers + same-day recovery markers, split into
+        on/off groups, plus Pearson r and mean deltas.
+
+        Used for the pollen×allergy and AQ×asthma cross-tab charts.
+        """
+        with self._conn() as conn:
+            logged = self._logged_behavior_days(conn, behavior, start, end)
+            try:
+                cols = ", ".join(env_columns)
+                env = pd.read_sql_query(
+                    f"SELECT date, {cols} FROM environment_daily "
+                    "WHERE date >= ? AND date <= ? ORDER BY date",
+                    conn, params=(start, end),
+                )
+            except Exception as exc:
+                logger.debug("behavior_environment_impact: env query failed: %s", exc)
+                return {"available": False, "behavior": behavior, "entries": []}
+            if env.empty:
+                return {"available": False, "behavior": behavior, "entries": []}
+            recovery = self._recovery_by_date(conn, start, end)
+
+        def _f(v):
+            if v is None:
+                return None
+            try:
+                if pd.isna(v):
+                    return None
+            except (TypeError, ValueError):
+                pass
+            try:
+                return round(float(v), 2)
+            except (TypeError, ValueError):
+                return None
+
+        entries = []
+        on_rows, off_rows = [], []
+        for _, r in env.iterrows():
+            d = str(r["date"])[:10]
+            rec = recovery.get(d, {})
+            entry = {
+                "date": d,
+                "logged": d in logged,
+                **{c: _f(r.get(c)) for c in env_columns},
+                "restingHeartRate": _f(rec.get("restingHeartRate")),
+                "avgOvernightHrv": _f(rec.get("avgOvernightHrv")),
+                "averageRespirationValue": _f(rec.get("averageRespirationValue")),
+                "sleepScore": _f(rec.get("sleepScore")),
+            }
+            entries.append(entry)
+            (on_rows if entry["logged"] else off_rows).append(entry)
+
+        def _mean(rows, key):
+            xs = [r[key] for r in rows if isinstance(r.get(key), (int, float))]
+            return round(sum(xs) / len(xs), 2) if xs else None
+
+        recovery_keys = ("restingHeartRate", "avgOvernightHrv",
+                         "averageRespirationValue", "sleepScore")
+        deltas = {}
+        for k in recovery_keys:
+            on_v, off_v = _mean(on_rows, k), _mean(off_rows, k)
+            deltas[k] = {
+                "on": on_v, "off": off_v,
+                "delta": round(on_v - off_v, 2) if (on_v is not None and off_v is not None) else None,
+                "n_on": sum(1 for r in on_rows if isinstance(r.get(k), (int, float))),
+                "n_off": sum(1 for r in off_rows if isinstance(r.get(k), (int, float))),
+            }
+
+        # Pearson r: env driver vs recovery marker across all days
+        correlations = []
+        df = pd.DataFrame(entries)
+        for driver in env_columns:
+            for marker in recovery_keys:
+                if driver not in df.columns or marker not in df.columns:
+                    continue
+                pair = df[[driver, marker]].apply(pd.to_numeric, errors="coerce").dropna()
+                if len(pair) < 7:
+                    correlations.append({"driver": driver, "marker": marker, "n": int(len(pair)), "r": None})
+                    continue
+                try:
+                    rval = float(pair[driver].corr(pair[marker]))
+                except Exception:
+                    rval = None
+                correlations.append({
+                    "driver": driver, "marker": marker,
+                    "n": int(len(pair)),
+                    "r": None if rval is None or np.isnan(rval) else round(rval, 2),
+                })
+
+        return {
+            "available": True,
+            "behavior": behavior,
+            "start": start, "end": end,
+            "entries": entries,
+            "deltas": deltas,
+            "correlations": correlations,
+            "n_logged": len(on_rows),
+            "n_unlogged": len(off_rows),
+        }
+
+    def bedroom_temp_sleep(self, start: str, end: str) -> dict:
+        """Overnight bedroom temperature vs sleep score / HRV / awakenings.
+
+        Reads ha_sensor_daily (overnight 22:00-08:00 mean) joined to
+        daily_summaries on date. Returns `available: false` when no HA
+        bedroom-temp entity is configured / has no data yet.
+        """
+        with self._conn() as conn:
+            try:
+                ha = pd.read_sql_query(
+                    "SELECT date, entity_id, mean_value, overnight_mean "
+                    "FROM ha_sensor_daily "
+                    "WHERE date >= ? AND date <= ? "
+                    "AND lower(entity_id) LIKE '%bedroom%' "
+                    "ORDER BY date",
+                    conn, params=(start, end),
+                )
+            except Exception as exc:
+                logger.debug("bedroom_temp_sleep: HA table missing: %s", exc)
+                return {"available": False, "entries": []}
+            if ha.empty:
+                return {"available": False, "entries": []}
+            recovery = self._recovery_by_date(conn, start, end)
+
+        entries = []
+        for _, r in ha.iterrows():
+            d = str(r["date"])[:10]
+            rec = recovery.get(d, {})
+            entries.append({
+                "date": d,
+                "bedroom_overnight_c": r.get("overnight_mean"),
+                "bedroom_mean_c": r.get("mean_value"),
+                "sleepScore": rec.get("sleepScore"),
+                "avgOvernightHrv": rec.get("avgOvernightHrv"),
+                "awakeCount": rec.get("awakeCount"),
+                "restingHeartRate": rec.get("restingHeartRate"),
+            })
+
+        df = pd.DataFrame(entries)
+        correlations = []
+        for driver in ("bedroom_overnight_c", "bedroom_mean_c"):
+            for marker in ("sleepScore", "avgOvernightHrv", "awakeCount", "restingHeartRate"):
+                pair = df[[driver, marker]].apply(pd.to_numeric, errors="coerce").dropna()
+                if len(pair) < 7:
+                    correlations.append({"driver": driver, "marker": marker, "n": int(len(pair)), "r": None})
+                    continue
+                try:
+                    rval = float(pair[driver].corr(pair[marker]))
+                except Exception:
+                    rval = None
+                correlations.append({
+                    "driver": driver, "marker": marker,
+                    "n": int(len(pair)),
+                    "r": None if rval is None or np.isnan(rval) else round(rval, 2),
+                })
+
+        return {
+            "available": True,
+            "start": start, "end": end,
+            "entries": entries,
+            "correlations": correlations,
+            "notes": (
+                "Bedroom T from Home Assistant. Overnight mean is 22:00–08:00. "
+                "Baniak 2023: cooler bedroom T (16–19°C) associated with better sleep efficiency."
+            ),
+        }
+
+    def behavior_root_cause(
+        self,
+        behavior: str,
+        start: str,
+        end: str,
+        lookback_hours: int = 48,
+    ) -> dict:
+        """For each day the user logged `behavior` (e.g. 'Migraines'), surface
+        the prior ~48h confounders: other lifestyle behaviors, env extremes,
+        sleep / HRV / RHR deltas.
+
+        Returns one entry per logged day. Used by the migraine root-cause panel.
+        """
+        with self._conn() as conn:
+            try:
+                target_days = sorted(self._logged_behavior_days(conn, behavior, start, end))
+            except sqlite3.Error:
+                return {"available": False, "behavior": behavior, "events": []}
+            if not target_days:
+                return {"available": True, "behavior": behavior, "events": []}
+            try:
+                lj = pd.read_sql_query(
+                    "SELECT date, behavior, status FROM lifestyle_journal "
+                    "WHERE date >= ? AND date <= ? AND status = 1",
+                    conn, params=(start, end),
+                )
+            except sqlite3.Error:
+                lj = pd.DataFrame(columns=("date", "behavior", "status"))
+            try:
+                env = pd.read_sql_query(
+                    "SELECT date, apparent_temp_max_c, european_aqi, pm25, "
+                    "humidity_mean, precipitation_mm FROM environment_daily "
+                    "WHERE date >= ? AND date <= ?",
+                    conn, params=(start, end),
+                )
+            except Exception:
+                env = pd.DataFrame()
+            recovery = self._recovery_by_date(conn, start, end)
+
+        from datetime import datetime, timedelta
+        env_by_date = {str(r["date"])[:10]: r for _, r in env.iterrows()} if not env.empty else {}
+        lj_by_date: dict[str, list[str]] = {}
+        for _, r in lj.iterrows():
+            d = str(r["date"])[:10]
+            if r["behavior"] == behavior:
+                continue
+            lj_by_date.setdefault(d, []).append(r["behavior"])
+
+        days_back = max(1, lookback_hours // 24)
+        events = []
+        for d in target_days:
+            try:
+                d0 = datetime.strptime(d, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            window: list[str] = []
+            for offset in range(days_back, 0, -1):
+                wd = (d0 - timedelta(days=offset)).isoformat()
+                for b in lj_by_date.get(wd, []):
+                    window.append(f"{wd}: {b}")
+            same_day = lj_by_date.get(d, [])
+            envrow = env_by_date.get(d, {})
+            rec_today = recovery.get(d, {})
+            rec_prev = recovery.get((d0 - timedelta(days=1)).isoformat(), {})
+
+            def _g(row, k):
+                v = row.get(k) if hasattr(row, "get") else None
+                try:
+                    return None if v is None or pd.isna(v) else round(float(v), 1)
+                except (TypeError, ValueError):
+                    return None
+
+            events.append({
+                "date": d,
+                "prior_behaviors": window,
+                "same_day_behaviors": same_day,
+                "env": {
+                    "apparent_temp_max_c": _g(envrow, "apparent_temp_max_c"),
+                    "european_aqi": _g(envrow, "european_aqi"),
+                    "pm25": _g(envrow, "pm25"),
+                    "humidity_mean": _g(envrow, "humidity_mean"),
+                    "precipitation_mm": _g(envrow, "precipitation_mm"),
+                },
+                "recovery_today": rec_today,
+                "recovery_prev_day": rec_prev,
+            })
+
+        return {
+            "available": True,
+            "behavior": behavior,
+            "lookback_hours": lookback_hours,
+            "events": events,
+        }

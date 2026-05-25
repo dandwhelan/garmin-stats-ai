@@ -213,6 +213,78 @@ def _enrich_summaries_with_cycle(bundle, summaries, start, end):
                 pass
 
 
+_ENV_NUMERIC_KEYS = (
+    "temp_min_c", "temp_mean_c", "temp_max_c", "apparent_temp_max_c",
+    "precipitation_mm", "wind_max_kmh", "humidity_mean", "uv_index_max",
+    "european_aqi", "pm25", "pm10", "o3", "no2",
+    "pollen_alder", "pollen_birch", "pollen_grass",
+    "pollen_mugwort", "pollen_olive", "pollen_ragweed",
+)
+
+
+def _enrich_summaries_with_environment(bundle, summaries, start, end):
+    """Merge Open-Meteo + Home Assistant fields into each daily summary so
+    they appear in the Entities picker (env_* prefix) alongside Garmin
+    metrics. No-op when the user has no HOME_LAT/LON or HA configured."""
+    if not summaries:
+        return
+    # Open-Meteo env data
+    try:
+        df = bundle.agent._repo.query_environment(start, end)
+    except Exception:
+        df = None
+    env_by_date: dict[str, dict] = {}
+    if df is not None and not df.empty:
+        if df.index.name is not None:
+            df = df.reset_index()
+        for row in df.to_dict(orient="records"):
+            d = str(row.get("date", ""))[:10]
+            if not d:
+                continue
+            env_by_date[d] = {
+                k: row[k] for k in _ENV_NUMERIC_KEYS
+                if row.get(k) is not None
+            }
+    # Bedroom / other HA sensors — pivot entity_id to a column name.
+    try:
+        ha_df = bundle.agent._repo.query_ha_sensors(start, end)
+    except Exception:
+        ha_df = None
+    if ha_df is not None and not ha_df.empty:
+        for _, row in ha_df.iterrows():
+            d = str(row.get("date", ""))[:10]
+            entity = (row.get("entity_id") or "").lower()
+            if not d or not entity:
+                continue
+            short = entity.split(".", 1)[-1].replace("_temperature", "").replace("_temp", "")
+            short = short.replace("xi_", "").strip("_")
+            if "bedroom" in entity:
+                short = "bedroom_temp"
+            slot = env_by_date.setdefault(d, {})
+            for src, suffix in (
+                ("mean_value", "mean"),
+                ("min_value", "min"),
+                ("max_value", "max"),
+                ("overnight_mean", "overnight"),
+            ):
+                val = row.get(src)
+                if val is None or (isinstance(val, float) and val != val):
+                    continue
+                try:
+                    slot[f"{short}_{suffix}_c"] = float(val)
+                except (TypeError, ValueError):
+                    pass
+    if not env_by_date:
+        return
+    for s in summaries:
+        d = str(s.get("date", ""))[:10]
+        fields = env_by_date.get(d)
+        if not fields:
+            continue
+        for k, v in fields.items():
+            s[f"env_{k}"] = v
+
+
 def _last_sync_iso(db_path: str) -> str | None:
     """Return the SQLite DB file's mtime as an ISO 8601 UTC timestamp.
 
@@ -285,6 +357,7 @@ async def dashboard(
         )
         baselines = await loop.run_in_executor(None, bundle.agent._memory.get_baselines)
         _enrich_summaries_with_cycle(bundle, summaries, start, end)
+        _enrich_summaries_with_environment(bundle, summaries, start, end)
         return {
             "user": user,
             "summaries": summaries,
@@ -625,6 +698,79 @@ async def environment_recovery(
         return result
     except Exception as ex:
         logger.exception("Environment-recovery query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/behavior-environment")
+async def behavior_environment(
+    user: str = Query(default="default"),
+    behavior: str = Query(..., description="Lifestyle behavior name (case-sensitive)"),
+    drivers: str = Query(
+        default="pollen_grass,pollen_birch,pollen_ragweed,pollen_alder,pollen_olive,pollen_mugwort",
+        description="Comma-separated environment_daily column names",
+    ),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Cross-tab a logged lifestyle behavior (e.g. 'Allergy Symptoms',
+    'Asthma symptoms') against environmental drivers and recovery markers.
+
+    Returns the on/off-day means, deltas, and Pearson r per driver pair.
+    """
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=90)
+    env_cols = [c.strip() for c in drivers.split(",") if c.strip()]
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, bundle.viz.behavior_environment_impact, behavior, env_cols, s, e
+        )
+        result["user"] = user
+        return result
+    except Exception as ex:
+        logger.exception("behavior-environment query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/bedroom-temp-sleep")
+async def bedroom_temp_sleep(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Overnight Home Assistant bedroom temperature vs sleep / HRV / awakenings."""
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=60)
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, bundle.viz.bedroom_temp_sleep, s, e)
+        result["user"] = user
+        return result
+    except Exception as ex:
+        logger.exception("bedroom-temp-sleep query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/behavior-root-cause")
+async def behavior_root_cause(
+    user: str = Query(default="default"),
+    behavior: str = Query(..., description="Behavior to root-cause"),
+    lookback_hours: int = Query(default=48, ge=24, le=168),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Per-event 24-48h confounder scan for a logged behavior (e.g. Migraines)."""
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=180)
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, bundle.viz.behavior_root_cause, behavior, s, e, lookback_hours
+        )
+        result["user"] = user
+        return result
+    except Exception as ex:
+        logger.exception("behavior-root-cause query failed")
         raise HTTPException(status_code=500, detail=str(ex))
 
 
