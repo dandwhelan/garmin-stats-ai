@@ -749,30 +749,6 @@ document.getElementById('entities-clear')?.addEventListener('click', () => {
 document.querySelector('.tab-btn[data-tab="entities"]')?.addEventListener('click', populateEntityMetrics);
 
 // ---- AI Scan ----
-document.querySelectorAll('.scan-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const focus = btn.dataset.focus;
-    const output = document.getElementById('scan-output');
-    document.querySelectorAll('.scan-btn').forEach(b => b.disabled = true);
-    output.classList.remove('hidden');
-    output.innerHTML = '<em>Running scan, please wait...</em>';
-
-    try {
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ focus }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      output.innerHTML = marked.parse(data.report || '(no report)');
-    } catch (e) {
-      output.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
-    } finally {
-      document.querySelectorAll('.scan-btn').forEach(b => b.disabled = false);
-    }
-  });
-});
 
 function safeRender(name, fn) {
   try { fn(); }
