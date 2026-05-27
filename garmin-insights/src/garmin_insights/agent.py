@@ -698,6 +698,13 @@ class HealthAgent:
         base_prompt = _SCAN_PROMPTS.get(focus, _SCAN_PROMPTS["general"])
 
         if start_date and end_date:
+            # Lazily backfill the daily_summaries cache for the selected window
+            # so the agent's tools have data to query even for dates older than
+            # the rolling 90-day refresh.
+            try:
+                self._cache.build_range(start_date, end_date)
+            except Exception as e:
+                logger.warning("Scan: cache build_range failed: %s", e)
             date_context = (
                 f"IMPORTANT: The user has selected a custom date range: {start_date} to {end_date}. "
                 f"Restrict your analysis to this date range when fetching data and drawing conclusions. "

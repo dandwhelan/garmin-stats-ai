@@ -381,6 +381,16 @@ async def dashboard(
 
     try:
         loop = asyncio.get_event_loop()
+        # Backfill the daily_summaries cache for the requested window so
+        # historical date ranges (older than the rolling 90-day refresh)
+        # return data instead of an empty list. build_range no-ops on
+        # already-cached dates so the cost is paid once.
+        try:
+            await loop.run_in_executor(
+                None, bundle.agent._cache.build_range, start, end
+            )
+        except Exception as e:
+            logger.warning("Dashboard build_range failed (non-fatal): %s", e)
         summaries = await loop.run_in_executor(
             None, bundle.agent._memory.get_daily_summaries_range, start, end
         )
