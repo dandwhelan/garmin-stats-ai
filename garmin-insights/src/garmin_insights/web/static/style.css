@@ -985,6 +985,27 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 
 .scan-output.hidden { display: none; }
 
+.scan-continue-row {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.scan-continue-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.scan-continue-btn:hover { filter: brightness(1.1); }
+.scan-continue-hint { color: var(--muted); font-size: 0.85em; }
+
 /* markdown inside scan output */
 .scan-output h1, .scan-output h2, .scan-output h3 {
   color: var(--accent);

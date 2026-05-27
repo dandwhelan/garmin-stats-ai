@@ -749,30 +749,6 @@ document.getElementById('entities-clear')?.addEventListener('click', () => {
 document.querySelector('.tab-btn[data-tab="entities"]')?.addEventListener('click', populateEntityMetrics);
 
 // ---- AI Scan ----
-document.querySelectorAll('.scan-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const focus = btn.dataset.focus;
-    const output = document.getElementById('scan-output');
-    document.querySelectorAll('.scan-btn').forEach(b => b.disabled = true);
-    output.classList.remove('hidden');
-    output.innerHTML = '<em>Running scan, please wait...</em>';
-
-    try {
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ focus }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      output.innerHTML = marked.parse(data.report || '(no report)');
-    } catch (e) {
-      output.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
-    } finally {
-      document.querySelectorAll('.scan-btn').forEach(b => b.disabled = false);
-    }
-  });
-});
 
 function safeRender(name, fn) {
   try { fn(); }
@@ -1611,7 +1587,15 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      output.innerHTML = marked.parse(data.report || '(no report)');
+      const report = data.report || '(no report)';
+      output.innerHTML = marked.parse(report)
+        + `<div class="scan-continue-row">
+             <button class="scan-continue-btn" data-focus="${focus}">💬 Continue in chat</button>
+             <span class="scan-continue-hint">Reply to the follow-up questions with the agent</span>
+           </div>`;
+      output.querySelector('.scan-continue-btn')?.addEventListener('click', () => {
+        continueScanInChat(focus, report);
+      });
     } catch (e) {
       output.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
     } finally {
@@ -1619,6 +1603,30 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
     }
   });
 });
+
+// Holds the most recent scan report so the next chat message can seed the
+// agent with it. Cleared after the first follow-up send.
+let _pendingScanContext = null;
+
+function continueScanInChat(focus, report) {
+  _pendingScanContext = { focus, report };
+  // Switch to the Chat tab
+  const chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
+  chatTabBtn?.click();
+  // Drop a visible assistant bubble showing the scan's questions section,
+  // so the user knows what they're replying to.
+  const questionsMatch = report.match(/(Three quick questions[\s\S]*)$/i)
+    || report.match(/(Follow[- ]up[\s\S]*)$/i);
+  const tail = questionsMatch ? questionsMatch[1] : report;
+  addMessage(
+    'assistant',
+    `<strong>Health Agent</strong><div class="md-content">${marked.parse(
+      `_Continuing from your **${focus}** scan._\n\n${tail}`,
+    )}</div>`,
+  );
+  chatInput.focus();
+  chatInput.placeholder = 'Reply to the agent...';
+}
 
 // ---- Chat ----
 const chatMessages = document.getElementById('chat-messages');
@@ -1856,6 +1864,18 @@ async function sendMessage() {
   addMessage('user', escapeHtml(text).replace(/\n/g, '<br>'));
   addTypingIndicator();
 
+  // If the user just clicked "Continue in chat" from a scan, prepend the
+  // full scan report once so the agent has it as conversation context.
+  let outgoingText = text;
+  if (_pendingScanContext) {
+    outgoingText =
+      `Context — I just ran a "${_pendingScanContext.focus}" scan and the agent produced this report:\n\n` +
+      `<<<SCAN_REPORT>>>\n${_pendingScanContext.report}\n<<<END_SCAN_REPORT>>>\n\n` +
+      `My reply: ${text}`;
+    _pendingScanContext = null;
+    chatInput.placeholder = 'Ask about your health data...';
+  }
+
   let assistantDiv = null;
   let assistantContent = '';
 
@@ -1871,7 +1891,7 @@ async function sendMessage() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, session_id: sessionId, user: activeUser }),
+      body: JSON.stringify({ message: outgoingText, session_id: sessionId, user: activeUser }),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

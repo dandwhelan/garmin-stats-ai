@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+from typing import Any
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -56,10 +58,36 @@ async def lifespan(app: FastAPI):
         _users.close()
 
 
+def _scrub_nan(obj: Any) -> Any:
+    """Recursively replace NaN/Inf floats with None so json.dumps doesn't raise.
+
+    pandas surfaces missing numeric cells as NaN; FastAPI's default JSONResponse
+    rejects those. Applied globally so individual endpoints don't each need to
+    sanitise their payloads.
+    """
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _scrub_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub_nan(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_scrub_nan(v) for v in obj)
+    return obj
+
+
+class SafeJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        return super().render(_scrub_nan(content))
+
+
 app = FastAPI(
     title="Garmin Health Insights",
     description="Personal health analytics dashboard with AI chat",
     lifespan=lifespan,
+    default_response_class=SafeJSONResponse,
 )
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
@@ -244,6 +272,7 @@ def _enrich_summaries_with_environment(bundle, summaries, start, end):
             env_by_date[d] = {
                 k: row[k] for k in _ENV_NUMERIC_KEYS
                 if row.get(k) is not None
+                and not (isinstance(row.get(k), float) and row.get(k) != row.get(k))
             }
     # Bedroom / other HA sensors — pivot entity_id to a column name.
     try:
