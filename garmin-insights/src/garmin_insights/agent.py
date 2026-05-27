@@ -528,6 +528,14 @@ class HealthAgent:
             end = end_d.isoformat()
         start = start_date or (end_d - timedelta(days=snapshot_days)).isoformat()
 
+        # Lazily build cache for any uncached dates in the requested window,
+        # so historical ranges (older than the rolling 90-day refresh) get a
+        # snapshot built on demand from the raw daily_stats table.
+        try:
+            self._cache.build_range(start, end)
+        except Exception as e:
+            logger.warning("Portable prompt: cache build_range failed: %s", e)
+
         # Pull data the agent would normally fetch via tools
         try:
             summaries = self._memory.get_daily_summaries_range(start, end)
@@ -618,6 +626,30 @@ class HealthAgent:
             if any(v is not None for v in vals.values())
         })
 
+        # When the user picked an explicit historical window, compute window-
+        # local stats so the LLM has something to compare against — the rolling
+        # baselines above are always anchored to today and so are misleading
+        # for older ranges.
+        explicit_window = bool(start_date and end_date)
+        window_stats: dict = {}
+        if explicit_window and summaries:
+            numeric_keys: set[str] = set()
+            for s in summaries:
+                for k, v in s.items():
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        numeric_keys.add(k)
+            numeric_keys -= {"is_complete"}
+            for k in sorted(numeric_keys):
+                vals = [s[k] for s in summaries if isinstance(s.get(k), (int, float))]
+                if not vals:
+                    continue
+                window_stats[k] = {
+                    "avg": round(float(sum(vals) / len(vals)), 1),
+                    "min": float(min(vals)),
+                    "max": float(max(vals)),
+                    "n": len(vals),
+                }
+
         return (
             f"{header_note}\n\n"
             f"{sep}\n"
@@ -628,11 +660,21 @@ class HealthAgent:
             f"DATA SNAPSHOT (pre-fetched — treat as your tool results)\n"
             f"{sep}\n\n"
             f"## Date range: {start} → {end}\n\n"
-            f"## Baselines ({len(clean_baselines)} metrics)\n"
+            f"## Baselines ({len(clean_baselines)} metrics — rolling 7d/30d "
+            f"anchored to TODAY ({datetime.utcnow().date().isoformat()}), "
+            f"NOT the snapshot window above)\n"
             "```json\n"
             f"{json.dumps(clean_baselines, default=str)}\n"
             "```\n\n"
-            f"## Daily summaries ({len(clean_summaries)} days, keyed by date)\n"
+            + (
+                f"## Window-local stats ({len(window_stats)} metrics, "
+                f"computed across the {start} → {end} snapshot)\n"
+                "```json\n"
+                f"{json.dumps(window_stats, default=str)}\n"
+                "```\n\n"
+                if window_stats else ""
+            )
+            + f"## Daily summaries ({len(clean_summaries)} days, keyed by date)\n"
             "```json\n"
             f"{json.dumps(clean_summaries, default=str)}\n"
             "```\n\n"
