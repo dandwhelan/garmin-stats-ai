@@ -241,10 +241,14 @@ def _enrich_summaries_with_environment(bundle, summaries, start, end):
             d = str(row.get("date", ""))[:10]
             if not d:
                 continue
-            env_by_date[d] = {
-                k: row[k] for k in _ENV_NUMERIC_KEYS
-                if row.get(k) is not None
-            }
+            env_by_date[d] = {}
+            for k in _ENV_NUMERIC_KEYS:
+                v = row.get(k)
+                if v is None:
+                    continue
+                if isinstance(v, float) and v != v:  # NaN
+                    continue
+                env_by_date[d][k] = v
     # Bedroom / other HA sensors — pivot entity_id to a column name.
     try:
         ha_df = bundle.agent._repo.query_ha_sensors(start, end)
