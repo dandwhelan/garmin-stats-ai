@@ -928,6 +928,14 @@ def get_training_status(date_str):
     if ts_training_data_all:
         for device_id, ts_dict in ts_training_data_all.items():
             logging.info(f"Success : Processing Training Status for Device {device_id}")
+            # Heat & altitude acclimation lives in the same training-status payload.
+            # Garmin has shipped a couple of key names for this block over time, so
+            # check both before falling back to an empty dict.
+            acclim = (
+                ts_dict.get("heatAltitudeAcclimationDTO")
+                or ts_dict.get("heatAltitudeAcclimation")
+                or {}
+            )
             data_fields = {
                 "trainingStatus": ts_dict.get("trainingStatus"),
                 "trainingStatusFeedbackPhrase": ts_dict.get("trainingStatusFeedbackPhrase"),
@@ -939,6 +947,11 @@ def get_training_status(date_str):
                 "maxTrainingLoadChronic": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("maxTrainingLoadChronic"),
                 "minTrainingLoadChronic": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("minTrainingLoadChronic"),
                 "dailyAcuteChronicWorkloadRatio": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("dailyAcuteChronicWorkloadRatio"),
+                "heatAcclimationPercentage": acclim.get("heatAcclimationPercentage"),
+                "altitudeAcclimationPercentage": acclim.get("altitudeAcclimationPercentage"),
+                "heatTrend": acclim.get("heatTrend"),
+                "altitudeTrend": acclim.get("altitudeTrend"),
+                "currentAltitude": acclim.get("currentAltitude"),
             }
             if ts_dict.get("timestamp") and any(value is not None for value in data_fields.values()):
                 points_list.append({

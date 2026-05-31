@@ -282,6 +282,11 @@ class GarminDB:
                 max_training_load_chronic REAL,
                 min_training_load_chronic REAL,
                 daily_acute_chronic_workload_ratio REAL,
+                heat_acclimation_percentage REAL,
+                altitude_acclimation_percentage REAL,
+                heat_trend TEXT,
+                altitude_trend TEXT,
+                current_altitude REAL,
                 PRIMARY KEY (time, device)
             )
         """)
@@ -452,6 +457,25 @@ class GarminDB:
                 raw_json TEXT
             )
         """)
+
+        # Lightweight migrations for databases created before a column existed.
+        # CREATE TABLE IF NOT EXISTS won't add columns to a pre-existing table,
+        # so ALTER each new column in, ignoring "duplicate column name" errors.
+        _added_columns = {
+            "training_status": [
+                ("heat_acclimation_percentage", "REAL"),
+                ("altitude_acclimation_percentage", "REAL"),
+                ("heat_trend", "TEXT"),
+                ("altitude_trend", "TEXT"),
+                ("current_altitude", "REAL"),
+            ],
+        }
+        for _table, _cols in _added_columns.items():
+            for _col, _type in _cols:
+                try:
+                    cursor.execute(f"ALTER TABLE {_table} ADD COLUMN {_col} {_type}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
         conn.commit()
 
@@ -684,6 +708,11 @@ class GarminDB:
                         'max_training_load_chronic': fields.get('maxTrainingLoadChronic'),
                         'min_training_load_chronic': fields.get('minTrainingLoadChronic'),
                         'daily_acute_chronic_workload_ratio': fields.get('dailyAcuteChronicWorkloadRatio'),
+                        'heat_acclimation_percentage': fields.get('heatAcclimationPercentage'),
+                        'altitude_acclimation_percentage': fields.get('altitudeAcclimationPercentage'),
+                        'heat_trend': fields.get('heatTrend'),
+                        'altitude_trend': fields.get('altitudeTrend'),
+                        'current_altitude': fields.get('currentAltitude'),
                     }, ['time', 'device'])
 
                 elif measurement == 'TrainingReadiness':

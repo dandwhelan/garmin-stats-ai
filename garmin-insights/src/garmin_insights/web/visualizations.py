@@ -78,7 +78,10 @@ class VisualizationService:
                    daily_training_load_acute AS acute_load,
                    daily_training_load_chronic AS chronic_load,
                    training_status,
-                   weekly_training_load
+                   weekly_training_load,
+                   heat_acclimation_percentage AS heat_acclimation,
+                   altitude_acclimation_percentage AS altitude_acclimation,
+                   heat_trend
             FROM training_status
             WHERE time >= ? AND time <= ?
             ORDER BY time

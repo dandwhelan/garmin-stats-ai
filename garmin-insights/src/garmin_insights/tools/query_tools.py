@@ -173,6 +173,33 @@ class QueryToolHandler:
         df["time"] = df["time"].astype(str)
         return _df_to_clean_json(df)
 
+    def get_heat_acclimation(self, start_date: str, end_date: str) -> str:
+        """Garmin heat (and altitude) acclimation percentage over a date range.
+
+        Acclimation is how adapted the body is to training in heat — it builds
+        with heat exposure and decays over ~1-2 weeks without it. Returns the
+        heat/altitude acclimation percentage and trend per day. Sourced from the
+        training_status table; empty if the device/account doesn't report it.
+        """
+        df = self._repo.query_training_status(start_date, end_date)
+        if df.empty:
+            return json.dumps({"message": "No training status data found"})
+        cols = [c for c in (
+            "heat_acclimation_percentage", "altitude_acclimation_percentage",
+            "heat_trend", "altitude_trend", "current_altitude",
+        ) if c in df.columns]
+        if not cols:
+            return json.dumps({"message": "No heat acclimation data available"})
+        df = df.reset_index()
+        df["time"] = df["time"].astype(str)
+        keep = ["time"] + cols
+        df = df[keep]
+        # Drop rows where every acclimation field is null
+        df = df.dropna(subset=cols, how="all")
+        if df.empty:
+            return json.dumps({"message": "No heat acclimation data recorded for this range"})
+        return _df_to_clean_json(df)
+
     def get_menstrual_cycle(self, start_date: str, end_date: str) -> str:
         df = self._repo.query_menstrual_cycle(start_date, end_date)
         if df.empty:
@@ -271,6 +298,17 @@ class QueryToolHandler:
     def get_user_profile(self) -> str:
         profile = self._memory.get_all_profile()
         return json.dumps(profile, default=str)
+
+    def save_daily_note(self, date: str, note: str) -> str:
+        """Record the user's own free-text note about what happened on a day."""
+        self._memory.upsert_daily_note(date, note)
+        return json.dumps({"saved": True, "date": date})
+
+    def get_daily_notes(self, start_date: str, end_date: str) -> str:
+        notes = self._memory.get_daily_notes_range(start_date, end_date)
+        if not notes:
+            return json.dumps({"message": "No daily notes recorded for this range"})
+        return json.dumps(notes, default=str)
 
 
 # ------------------------------------------------------------------
@@ -371,6 +409,26 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
         {
             "name": "get_training_readiness",
             "description": "Query Garmin training readiness scores and contributing factors for a date range.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        },
+        {
+            "name": "get_heat_acclimation",
+            "description": (
+                "Query Garmin heat (and altitude) acclimation for a date range. "
+                "Acclimation is how adapted the body is to exercising in heat — it "
+                "is reported as a percentage that builds with heat exposure and "
+                "decays over ~1-2 weeks without it (this is what 'how long it takes "
+                "to adjust to outside temperature' refers to). Returns per-day "
+                "heat/altitude acclimation percentage and trend. Empty if the "
+                "user's device/account does not report acclimation."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -612,6 +670,43 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        },
+        {
+            "name": "save_daily_note",
+            "description": (
+                "Record the user's own free-text note about what they did on a "
+                "specific day (e.g. 'hard 10k run, two coffees, poor sleep, "
+                "stressful work deadline'). Use this whenever the user tells you "
+                "what happened on a given day so it's attached to that date and "
+                "available in future analysis. Overwrites any existing note for "
+                "the date."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "date": {**_DATE_PROP, "description": "The day the note is about, YYYY-MM-DD."},
+                    "note": {"type": "string", "description": "The free-text note content."},
+                },
+                "required": ["date", "note"],
+            },
+        },
+        {
+            "name": "get_daily_notes",
+            "description": (
+                "Retrieve the user's own free-text daily notes for a date range "
+                "as a {date: note} map. These are the user's words about what they "
+                "actually did each day — read them when interpreting metric "
+                "deviations. (Notes are also merged inline into get_daily_metrics "
+                "under a 'note' key.)"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
             },
             # Cache the entire tool definitions list — it never changes at runtime
             # and Anthropic charges for these ~2,500 tokens on every round otherwise.

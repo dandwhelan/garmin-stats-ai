@@ -125,6 +125,21 @@ class CacheBuilder:
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
                     summary[f"training_{logical}"] = float(val) if isinstance(val, (int, float, np.number)) else val
 
+        # -- Heat / Altitude Acclimation (rides in the training_status table) --
+        df_ts = self._repo.query_training_status(date, date)
+        if not df_ts.empty:
+            row = df_ts.iloc[0]
+            _acc_map = {
+                "heatAcclimationPercentage": "heat_acclimation_percentage",
+                "altitudeAcclimationPercentage": "altitude_acclimation_percentage",
+                "heatTrend": "heat_trend",
+                "altitudeTrend": "altitude_trend",
+            }
+            for logical, db_col in _acc_map.items():
+                val = row.get(db_col)
+                if val is not None and not (isinstance(val, float) and np.isnan(val)):
+                    summary[logical] = float(val) if isinstance(val, (int, float, np.number)) else val
+
         # -- LifestyleJournal --
         df_lj = self._repo.query_lifestyle_journal(date, date)
         lifestyle: dict[str, Any] = {}
