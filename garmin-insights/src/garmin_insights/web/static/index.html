@@ -186,6 +186,16 @@
       </section>
     </div>
 
+    <section class="chart-section" id="heat-acclimation-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Heat Acclimation <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Device metric]</b> Garmin's estimate of how adapted your body is to exercising in heat, as a percentage. It builds with repeated heat exposure and decays over roughly 1–2 weeks without it — this is what "how long it takes to adjust to outside temperature" refers to. Requires training in temperatures above ~22&nbsp;°C to accumulate. Only shown when your device reports it.</span></span></h2>
+        <span class="chart-sub">Percentage adapted to training in heat · builds with exposure, decays without it</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="heat-acclimation-chart"></canvas>
+      </div>
+    </section>
+
     <section class="chart-section" id="ha-bedroom-section" style="display:none;">
       <div class="chart-header">
         <h2>Bedroom Temperature</h2>

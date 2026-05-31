@@ -766,6 +766,7 @@ async function loadVisualizations(start, end) {
     vizData = await res.json();
     safeRender('acwr', () => renderAcwrChart(vizData.training));
     safeRender('readiness', () => renderReadinessChart(vizData.training));
+    safeRender('heatAcclimation', () => renderHeatAcclimationChart(vizData.training));
     safeRender('sleepTimeline', () => renderSleepTimeline(vizData.sleep_timeline));
     safeRender('sleepWindow',   () => renderSleepWindow(vizData.sleep_timeline));
     safeRender('bodyComp', () => renderBodyComposition(vizData.body_composition));
@@ -874,6 +875,59 @@ function renderReadinessChart(training) {
         x: { stacked: true, ...commonScales().x },
         y: { stacked: true, ...commonScales('factor %').y, beginAtZero: true },
         y1: { ...commonScales('score').y, position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+function renderHeatAcclimationChart(training) {
+  const ts = training?.training_status || [];
+  const section = document.getElementById('heat-acclimation-section');
+  // Only days where Garmin actually reported an acclimation percentage
+  const pts = ts.filter(r => r.heat_acclimation != null || r.altitude_acclimation != null);
+  if (!pts.length) {
+    if (section) section.style.display = 'none';
+    destroyAux('heatAcclimation');
+    return;
+  }
+  if (section) section.style.display = '';
+
+  const labels = pts.map(r => r.date.slice(5));
+  const hasAltitude = pts.some(r => r.altitude_acclimation != null);
+  const datasets = [
+    {
+      label: 'Heat acclimation (%)',
+      data: pts.map(r => r.heat_acclimation ?? null),
+      borderColor: '#f97316',
+      backgroundColor: 'rgba(249,115,22,0.15)',
+      fill: true,
+      tension: 0.3, spanGaps: true, pointRadius: 2,
+    },
+  ];
+  if (hasAltitude) {
+    datasets.push({
+      label: 'Altitude acclimation (%)',
+      data: pts.map(r => r.altitude_acclimation ?? null),
+      borderColor: '#4f9cf9',
+      backgroundColor: 'transparent',
+      tension: 0.3, spanGaps: true, pointRadius: 2,
+    });
+  }
+
+  destroyAux('heatAcclimation');
+  const ctx = document.getElementById('heat-acclimation-chart');
+  if (!ctx) return;
+  auxCharts.heatAcclimation = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('% acclimated').y, beginAtZero: true, suggestedMax: 100 },
       },
       plugins: commonPlugins(),
     },
