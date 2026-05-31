@@ -22,6 +22,7 @@
       <nav>
         <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
         <button class="tab-btn" data-tab="chat">Chat</button>
+        <button class="tab-btn" data-tab="journal">Journal</button>
         <button class="tab-btn" data-tab="entities">Entities</button>
       </nav>
       <div class="header-right">
@@ -739,6 +740,34 @@
   </main>
 
   <!-- Chat Tab -->
+  <main id="tab-journal" class="tab-panel">
+    <div class="journal-layout">
+      <div class="journal-editor">
+        <h2>Daily Note</h2>
+        <p class="journal-hint">
+          Write what you actually did that day — workouts, food, alcohol, travel,
+          stress, illness, anything. The AI reads these alongside your metrics and
+          weights them heavily when explaining the day.
+        </p>
+        <label class="journal-date-label">
+          Date
+          <input type="date" id="journal-date">
+        </label>
+        <textarea id="journal-text" class="journal-text"
+          placeholder="e.g. Hard 10k run before work, two coffees, glass of wine with dinner, slept badly — noisy neighbours."></textarea>
+        <div class="journal-actions">
+          <button id="journal-save" class="primary-btn">Save note</button>
+          <button id="journal-delete" class="secondary-btn">Clear note</button>
+          <span id="journal-status" class="journal-status"></span>
+        </div>
+      </div>
+      <div class="journal-recent">
+        <h3>Recent notes</h3>
+        <div id="journal-list" class="journal-list"></div>
+      </div>
+    </div>
+  </main>
+
   <main id="tab-chat" class="tab-panel">
     <div class="chat-container">
       <div class="chat-messages" id="chat-messages">

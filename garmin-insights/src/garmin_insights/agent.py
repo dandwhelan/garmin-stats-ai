@@ -57,6 +57,11 @@ trends and correlations, and recall/save context from previous sessions.
   prefer this over fetching large raw date ranges for long-term averages
 - Check get_last_session_summary at the start of each conversation for continuity
 - If the user shares useful context (symptoms, diet/alcohol/caffeine timing, travel, illness, stressors, meds, major events), save it with save_user_note for future sessions
+- The user can write their own free-text note for any day (what they did, ate, how they felt). \
+  These notes appear inline under a `note` key in get_daily_metrics and via get_daily_notes — \
+  treat them as first-hand ground truth and weight them heavily when explaining that day's \
+  metric deviations. When the user tells you in chat what happened on a specific day, record it \
+  with save_daily_note so it stays attached to that date.
 - Fetch the minimum date range needed: use get_my_baselines for 30-day context rather than \
   requesting 30 days of raw data unless you need day-by-day detail
 
