@@ -77,7 +77,7 @@ garmin-insights status        # check DB + API connectivity
 | `garmin-insights/src/garmin_insights/insights/proactive.py` | `InsightScanner` — local anomaly + behavior + trend detection, enriched with tier metadata. `scan_composite_strain()` collapses concurrent RHR/HRV/respiration anomalies into a single ranked-contributor finding. |
 | `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js` (date range toolbar, customize panel, info-icon tooltips, user/sync badges, Entities tab, ~17 secondary chart renderers) |
 | `garmin-insights/src/garmin_insights/db/sqlite_repo.py` | SQLite query layer (pandas DataFrames) |
-| `garmin-insights/src/garmin_insights/db/memory.py` | Memory store — baselines, insights, session history |
+| `garmin-insights/src/garmin_insights/db/memory.py` | Memory store — baselines, insights, session history, and user-authored `daily_notes` (free-text note per day, merged into `get_daily_summaries_range`/`get_daily_summary` under a `note` key so it rides into the dashboard, the AI's `get_daily_metrics` tool, and the portable prompt) |
 | `garmin-insights/src/garmin_insights/db/cache.py` | Daily summary + baseline cache builder |
 | `garmin-insights/src/garmin_insights/config.py` | Settings via pydantic-settings + `.env`. `settings_for_user(user_id)` overlays `display_name`, `garminconnect_email`, and `biological_sex` from `users/<id>.env` so each user gets their own UI badge + AI persona |
 | `garmin-grafana/src/garmin_grafana/garmin_fetch.py` | Garmin Connect poller — daily stats, intraday, activities, etc. |
@@ -164,12 +164,14 @@ All data lives in a single `garmin.db`. Key tables:
 - `menstrual_cycle` — per-day cycle phase, day-of-cycle, predicted/observed cycle length, flow intensity, symptoms (only populated for users who track cycles in Garmin Connect)
 - `environment_daily` — per-day weather + air quality + pollen for the user's home location (Open-Meteo). Columns: `temp_min/mean/max_c`, `apparent_temp_max_c`, `precipitation_mm`, `wind_max_kmh`, `humidity_mean`, `uv_index_max`, `pm25`, `pm10`, `o3`, `no2`, `european_aqi`, `pollen_alder/birch/grass/mugwort/olive/ragweed`. Empty when `HOME_LAT`/`HOME_LON` not configured.
 - `daily_summaries` — pre-computed cache used by the LLM (faster than raw queries)
+- `daily_notes` — user-authored free-text note per day (one row per date). Written from the Journal tab (`GET`/`POST /api/notes`) or by the agent via `save_daily_note`. Merged into daily summaries under a `note` key, so it survives cache rebuilds and reaches the AI automatically.
 - `baselines` — 7-day and 30-day rolling averages per metric
 - `sessions` — conversation summaries for cross-session continuity
 - `user_profile` — user notes/preferences saved by the agent
 
 ## Web UI Features
 
+- **Journal tab** — write a free-text note for any day (what you did, ate, how you felt). Saved via `POST /api/notes`; an empty body clears the day. Notes are read back into the editor + a "recent notes" list (`GET /api/notes`) and merged into the AI's daily summaries so the agent treats them as first-hand ground truth when explaining metric deviations.
 - **User picker** — when `USERS` is set, a dropdown in the header lets a viewer switch between configured users. Switching clears the chat session, refetches `/api/health`, reloads the dashboard against the new DB, and updates the document title.
 - **User badge** — shows `DISPLAY_NAME` (or name derived from Garmin email) and the email address in the header. Resolved per-user from `users/<id>.env` so the badge always matches the active user.
 - **Sync badge** — shows time since last Garmin fetch (green < 10 min, amber < 60 min, red otherwise); auto-refreshes every 30 s via `/api/health`
@@ -195,6 +197,7 @@ All data lives in a single `garmin.db`. Key tables:
 | `GET /api/lifestyle?start=&end=` | 15 lifestyle analytics: SRI, social jet lag, illness radar, recovery debt, inflammation index, resilience, BB decay, recovery cost, dose-response, caffeine cutoff, streak calendar, habit half-life, co-occurrence, fingerprint, trigger leaderboard | last 90 days |
 | `GET /api/intraday/heatmap?metric=&days=` | 24h × N-day matrix for `stress` / `body_battery` / `heart_rate` | 14 days |
 | `GET /api/menstrual?start=&end=` | Raw `menstrual_cycle` rows for the window — phase, day-of-cycle, flow, predicted length | last 30 days |
+| `GET /api/notes?start=&end=` | User-authored free-text daily notes as a `{date: note}` map. `POST /api/notes` (`{user, date, note}`) upserts; an empty `note` deletes the day. | last 30 days |
 | `GET /api/environment?start=&end=` | Daily weather + air quality + pollen rows from `environment_daily`. Returns `available: false` when the user has no home location configured. | last 30 days |
 | `GET /api/environment/recovery?start=&end=` | Date-aligned join of `environment_daily` with `daily_summaries` for the Environment ↔ Recovery overlay. Returns per-day environmental drivers (apparent T, EU AQI, PM2.5, pollen peak) + recovery markers (RHR, HRV, respiration, sleep score) plus per-pair Pearson r values. Uses **next-day lag** for pollen↔RHR (Buekers 2023) and same-day for heat/AQ/PM2.5↔HRV (Niu 2020 meta-analysis). `available: false` when no home location is set. | last 60 days |
 | `GET /api/behavior-environment?behavior=&drivers=` | Cross-tab a logged lifestyle behavior (e.g. `Allergy Symptoms`, `Asthma symptoms`) against comma-separated `environment_daily` columns. Returns per-day entries, on-/off-day mean recovery deltas (RHR/HRV/respiration/sleep), and Pearson r per (driver, marker) pair. Hidden in UI when `n_logged == 0`. | last 90 days |
