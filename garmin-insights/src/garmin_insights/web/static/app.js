@@ -4188,3 +4188,117 @@ function renderBehaviorRootCause(key, data) {
   }
   el.innerHTML = html;
 }
+
+// ============================================
+// Journal (user-authored daily notes)
+// ============================================
+let _journalInit = false;
+
+function journalToday() {
+  const d = new Date();
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d - tz).toISOString().slice(0, 10);
+}
+
+function ensureJournalTab() {
+  if (!_journalInit) {
+    const dateEl = document.getElementById('journal-date');
+    if (dateEl) {
+      dateEl.value = journalToday();
+      dateEl.addEventListener('change', () => loadJournalNote(dateEl.value));
+    }
+    document.getElementById('journal-save')?.addEventListener('click', saveJournalNote);
+    document.getElementById('journal-delete')?.addEventListener('click', clearJournalNote);
+    _journalInit = true;
+  }
+  const dateEl = document.getElementById('journal-date');
+  if (dateEl) loadJournalNote(dateEl.value);
+  loadJournalRecent();
+}
+
+function journalSetStatus(msg, isError) {
+  const el = document.getElementById('journal-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--red, #c0392b)' : 'var(--muted, #888)';
+  if (msg && !isError) {
+    setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+  }
+}
+
+async function loadJournalNote(date) {
+  const ta = document.getElementById('journal-text');
+  if (!ta || !date) return;
+  try {
+    const res = await fetch(withUser(`/api/notes?start=${date}&end=${date}`));
+    const data = await res.json();
+    ta.value = (data.entries && data.entries[date]) || '';
+  } catch (e) {
+    journalSetStatus('Could not load note', true);
+  }
+}
+
+async function saveJournalNote() {
+  const date = document.getElementById('journal-date')?.value;
+  const note = document.getElementById('journal-text')?.value || '';
+  if (!date) { journalSetStatus('Pick a date first', true); return; }
+  try {
+    const res = await fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: activeUser, date, note }),
+    });
+    const data = await res.json();
+    journalSetStatus(data.deleted ? 'Note cleared' : 'Saved', false);
+    loadJournalRecent();
+  } catch (e) {
+    journalSetStatus('Save failed', true);
+  }
+}
+
+async function clearJournalNote() {
+  const ta = document.getElementById('journal-text');
+  if (ta) ta.value = '';
+  await saveJournalNote();
+}
+
+async function loadJournalRecent() {
+  const list = document.getElementById('journal-list');
+  if (!list) return;
+  try {
+    const end = journalToday();
+    const start = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const res = await fetch(withUser(`/api/notes?start=${start}&end=${end}`));
+    const data = await res.json();
+    const entries = data.entries || {};
+    const dates = Object.keys(entries).sort().reverse();
+    list.innerHTML = '';
+    if (dates.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'journal-empty';
+      empty.textContent = 'No notes yet for the last 30 days.';
+      list.appendChild(empty);
+      return;
+    }
+    for (const d of dates) {
+      const item = document.createElement('div');
+      item.className = 'journal-item';
+      const head = document.createElement('div');
+      head.className = 'journal-item-date';
+      head.textContent = d;
+      const body = document.createElement('div');
+      body.className = 'journal-item-text';
+      body.textContent = entries[d];
+      item.appendChild(head);
+      item.appendChild(body);
+      item.addEventListener('click', () => {
+        const dateEl = document.getElementById('journal-date');
+        if (dateEl) { dateEl.value = d; loadJournalNote(d); }
+        document.getElementById('journal-text')?.focus();
+      });
+      list.appendChild(item);
+    }
+  } catch (e) {
+    list.innerHTML = '';
+  }
+}

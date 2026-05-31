@@ -121,6 +121,12 @@ class PromptRequest(BaseModel):
     end_date: str | None = None
 
 
+class NoteRequest(BaseModel):
+    user: str = "default"
+    date: str
+    note: str = ""
+
+
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -836,6 +842,34 @@ async def menstrual(
     except Exception as ex:
         logger.exception("Menstrual query failed")
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/notes")
+async def get_notes(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Return the user's free-text daily notes for the window as {date: note}."""
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=30)
+    loop = asyncio.get_event_loop()
+    entries = await loop.run_in_executor(
+        None, bundle.agent._memory.get_daily_notes_range, s, e
+    )
+    return {"entries": entries, "date_range": {"start": s, "end": e}}
+
+
+@app.post("/api/notes")
+async def save_note(req: NoteRequest):
+    """Create, update, or (with an empty body) delete a day's free-text note."""
+    bundle = _require_user(req.user)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None, bundle.agent._memory.upsert_daily_note, req.date, req.note
+    )
+    saved = bool(req.note and req.note.strip())
+    return {"saved": saved, "deleted": not saved, "date": req.date}
 
 
 @app.post("/api/chat")

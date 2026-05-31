@@ -69,6 +69,12 @@ CREATE TABLE IF NOT EXISTS chat_memory (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_chat_memory_user_created ON chat_memory (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS daily_notes (
+    date TEXT PRIMARY KEY,
+    note TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 class MemoryStore:
@@ -138,10 +144,15 @@ class MemoryStore:
                 result = json.loads(row["metric_json"]) if row["metric_json"] else {}
                 if row["lifestyle_json"]:
                     result["lifestyle"] = json.loads(row["lifestyle_json"])
-                return result
-            return None
+            else:
+                result = None
         finally:
             conn.close()
+        if result is not None:
+            note = self.get_daily_note(date)
+            if note:
+                result["note"] = note
+        return result
 
     def get_daily_summaries_range(
         self, start: str, end: str
@@ -162,9 +173,20 @@ class MemoryStore:
                 if row["lifestyle_json"]:
                     entry["lifestyle"] = json.loads(row["lifestyle_json"])
                 results.append(entry)
-            return results
         finally:
             conn.close()
+
+        # Merge in the user's free-text daily notes so they ride along with the
+        # metrics everywhere summaries are consumed (dashboard, the AI's
+        # get_daily_metrics tool, and the portable prompt). Notes live in a
+        # separate table so they survive daily_summaries cache rebuilds.
+        notes = self.get_daily_notes_range(start, end)
+        if notes:
+            for entry in results:
+                note = notes.get(entry["date"])
+                if note:
+                    entry["note"] = note
+        return results
 
     def get_uncached_dates(self, start: str, end: str) -> list[str]:
         """Return dates in range that don't have a valid cached daily summary.
@@ -204,6 +226,68 @@ class MemoryStore:
                 all_dates.append(ds)
             d += timedelta(days=1)
         return all_dates
+
+    # ------------------------------------------------------------------
+    # Daily notes (user-authored free text about a given day)
+    # ------------------------------------------------------------------
+    def upsert_daily_note(self, date: str, note: str) -> None:
+        """Save (or replace) the free-text note for a calendar day.
+
+        An empty/whitespace-only note deletes the row so blank days don't
+        clutter the AI's context.
+        """
+        if note is None or not note.strip():
+            self.delete_daily_note(date)
+            return
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO daily_notes (date, note, updated_at)
+                VALUES (?, ?, datetime('now'))
+                ON CONFLICT(date) DO UPDATE SET
+                    note = excluded.note,
+                    updated_at = datetime('now')
+                """,
+                (date, note.strip()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_daily_note(self, date: str) -> None:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM daily_notes WHERE date = ?", (date,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_daily_note(self, date: str) -> str | None:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT note FROM daily_notes WHERE date = ?", (date,))
+            row = cursor.fetchone()
+            return row["note"] if row else None
+        finally:
+            conn.close()
+
+    def get_daily_notes_range(self, start: str, end: str) -> dict[str, str]:
+        """Return {date: note} for all days in the inclusive range that have one."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT date, note FROM daily_notes "
+                "WHERE date >= ? AND date <= ? ORDER BY date",
+                (start, end),
+            )
+            return {row["date"]: row["note"] for row in cursor.fetchall()}
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Baselines

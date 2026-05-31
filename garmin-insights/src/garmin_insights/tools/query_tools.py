@@ -272,6 +272,17 @@ class QueryToolHandler:
         profile = self._memory.get_all_profile()
         return json.dumps(profile, default=str)
 
+    def save_daily_note(self, date: str, note: str) -> str:
+        """Record the user's own free-text note about what happened on a day."""
+        self._memory.upsert_daily_note(date, note)
+        return json.dumps({"saved": True, "date": date})
+
+    def get_daily_notes(self, start_date: str, end_date: str) -> str:
+        notes = self._memory.get_daily_notes_range(start_date, end_date)
+        if not notes:
+            return json.dumps({"message": "No daily notes recorded for this range"})
+        return json.dumps(notes, default=str)
+
 
 # ------------------------------------------------------------------
 # Anthropic tool definitions
@@ -612,6 +623,43 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        },
+        {
+            "name": "save_daily_note",
+            "description": (
+                "Record the user's own free-text note about what they did on a "
+                "specific day (e.g. 'hard 10k run, two coffees, poor sleep, "
+                "stressful work deadline'). Use this whenever the user tells you "
+                "what happened on a given day so it's attached to that date and "
+                "available in future analysis. Overwrites any existing note for "
+                "the date."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "date": {**_DATE_PROP, "description": "The day the note is about, YYYY-MM-DD."},
+                    "note": {"type": "string", "description": "The free-text note content."},
+                },
+                "required": ["date", "note"],
+            },
+        },
+        {
+            "name": "get_daily_notes",
+            "description": (
+                "Retrieve the user's own free-text daily notes for a date range "
+                "as a {date: note} map. These are the user's words about what they "
+                "actually did each day — read them when interpreting metric "
+                "deviations. (Notes are also merged inline into get_daily_metrics "
+                "under a 'note' key.)"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
             },
             # Cache the entire tool definitions list — it never changes at runtime
             # and Anthropic charges for these ~2,500 tokens on every round otherwise.
