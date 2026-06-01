@@ -925,14 +925,23 @@ def get_training_status(date_str):
     ts_list_all = garmin_obj.get_training_status(date_str)
     ts_training_data_all = (ts_list_all.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData", {})
 
+    # Heat & altitude acclimation lives in the same training-status payload, but
+    # Garmin returns it at the TOP LEVEL of the response (verified 2026-06-01
+    # against live responses for both accounts) — not nested inside each device's
+    # dict. Read it from the top level, with a per-device fallback in case Garmin
+    # moves it, and check both historical key spellings.
+    top_acclim = (
+        ts_list_all.get("heatAltitudeAcclimationDTO")
+        or ts_list_all.get("heatAltitudeAcclimation")
+        or {}
+    )
+
     if ts_training_data_all:
         for device_id, ts_dict in ts_training_data_all.items():
             logging.info(f"Success : Processing Training Status for Device {device_id}")
-            # Heat & altitude acclimation lives in the same training-status payload.
-            # Garmin has shipped a couple of key names for this block over time, so
-            # check both before falling back to an empty dict.
             acclim = (
-                ts_dict.get("heatAltitudeAcclimationDTO")
+                top_acclim
+                or ts_dict.get("heatAltitudeAcclimationDTO")
                 or ts_dict.get("heatAltitudeAcclimation")
                 or {}
             )
