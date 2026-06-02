@@ -2591,18 +2591,31 @@ function renderRecoveryCost(rows) {
 }
 
 // 1. Behavior dose-response
+// Each metric (sleep, HRV, deep sleep, RHR) lives on a wildly different scale,
+// so we render small multiples — one mini-chart per metric — each showing the
+// raw nights as faint points plus a bold mean-per-dose line on its own y-axis.
+// That surfaces the actual dose→response relationship instead of piling four
+// incompatible scales onto one 0–100 axis.
+const DOSE_METRICS = [
+  { key: 'sleepScore',     label: 'Sleep score', color: '#4f9cf9', unit: '',     lowerBetter: false },
+  { key: 'hrv',            label: 'HRV',         color: '#34d399', unit: ' ms',  lowerBetter: false },
+  { key: 'deepSleepHours', label: 'Deep sleep',  color: '#a78bfa', unit: ' h',   lowerBetter: false },
+  { key: 'rhr',            label: 'RHR',         color: '#f87171', unit: ' bpm', lowerBetter: true },
+];
+
+function destroyDoseCharts() {
+  Object.keys(auxCharts).filter(k => k.startsWith('dose_')).forEach(destroyAux);
+}
+
 function renderDoseControls(payload) {
   const behaviors = payload?.behaviors || [];
   const ctrl = document.getElementById('dose-controls');
+  const container = document.getElementById('dose-container');
   if (!ctrl) return;
   if (!behaviors.length) {
     ctrl.innerHTML = '';
-    destroyAux('dose');
-    const ctx = document.getElementById('dose-response-chart');
-    if (ctx) {
-      const c = ctx.getContext('2d');
-      c.clearRect(0, 0, ctx.width, ctx.height);
-    }
+    destroyDoseCharts();
+    if (container) container.innerHTML = '<div class="empty-state">Log a behavior with a numeric quantity (e.g. "Alcohol: 2") to populate dose-response.</div>';
     return;
   }
   if (!activeDoseBehavior || !behaviors.find(b => b.behavior === activeDoseBehavior)) {
@@ -2615,7 +2628,6 @@ function renderDoseControls(payload) {
     btn.addEventListener('click', () => {
       activeDoseBehavior = btn.dataset.behavior;
       renderDoseControls(payload);
-      renderDoseResponse(payload);
     });
   });
   renderDoseResponse(payload);
@@ -2624,50 +2636,98 @@ function renderDoseControls(payload) {
 function renderDoseResponse(payload) {
   const behaviors = payload?.behaviors || [];
   const target = behaviors.find(b => b.behavior === activeDoseBehavior);
-  if (!target) return;
+  const container = document.getElementById('dose-container');
+  if (!target || !container) return;
   const points = target.points || [];
-  destroyAux('dose');
-  const ctx = document.getElementById('dose-response-chart');
-  if (!ctx) return;
+  destroyDoseCharts();
+  container.innerHTML = '';
 
-  // Detect binary behaviors: all x-values identical (no quantity variation)
-  const xs = points.map(p => p.value).filter(v => v != null);
-  const uniqueXs = new Set(xs);
-  if (uniqueXs.size <= 1) {
-    ctx.style.display = 'none';
-    let note = ctx.parentElement.querySelector('.dose-binary-note');
-    if (!note) {
-      note = document.createElement('div');
-      note.className = 'dose-binary-note empty-state';
-      ctx.parentElement.appendChild(note);
-    }
-    note.textContent = `"${activeDoseBehavior}" is logged as a yes/no behavior without a numeric quantity, so dose-response analysis isn't meaningful — all ${points.length} occurrences have the same x-value. Log it with a quantity (e.g. "Alcohol: 2") to use this chart.`;
+  // Binary behaviors (single logged quantity) can't show a dose curve.
+  const doses = [...new Set(points.map(p => p.value).filter(v => v != null))].sort((a, b) => a - b);
+  if (doses.length <= 1) {
+    container.innerHTML = `<div class="empty-state">"${escapeHtml(activeDoseBehavior)}" is logged as a yes/no behavior (all ${points.length} entries share one value), so there's no dose to vary. Log it with a quantity — e.g. "Alcohol: 2" — to see a dose-response.</div>`;
     return;
   }
 
-  // Clear any previous binary note
-  ctx.style.display = '';
-  ctx.parentElement.querySelector('.dose-binary-note')?.remove();
+  // Mean + sample count per distinct dose, per metric.
+  const mean = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+  const byDose = new Map(doses.map(d => [d, points.filter(p => p.value === d)]));
 
-  auxCharts.dose = new Chart(ctx, {
-    type: 'scatter',
-    data: {
-      datasets: [
-        { label: 'Sleep score',     data: points.map(p => ({x: p.value, y: p.sleepScore})),     backgroundColor: '#4f9cf9' },
-        { label: 'HRV (ms)',        data: points.map(p => ({x: p.value, y: p.hrv})),            backgroundColor: '#34d399' },
-        { label: 'Deep sleep (h)*10', data: points.map(p => ({x: p.value, y: p.deepSleepHours == null ? null : p.deepSleepHours * 10})), backgroundColor: '#7c6af7' },
-        { label: 'RHR',             data: points.map(p => ({x: p.value, y: p.rhr})),            backgroundColor: '#f87171' },
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      scales: {
-        x: { ...commonScales(`${target.behavior} (logged value)`).x, type: 'linear' },
-        y: commonScales().y,
+  DOSE_METRICS.forEach(m => {
+    const means = doses.map(d => {
+      const vals = byDose.get(d).map(p => p[m.key]).filter(v => v != null);
+      return { mean: mean(vals), n: vals.length };
+    });
+    const valid = means.filter(x => x.mean != null);
+    if (valid.length < 2) return;  // need at least two doses with data to draw a curve
+
+    // Direction summary: compare lowest vs highest dose with data.
+    const firstM = valid[0].mean, lastM = valid[valid.length - 1].mean;
+    const delta = lastM - firstM;
+    let dir = '→ flat';
+    if (Math.abs(delta) >= (m.key === 'deepSleepHours' ? 0.15 : 1)) {
+      const up = delta > 0;
+      const good = up !== m.lowerBetter;
+      dir = `${up ? '↑' : '↓'} ${Math.abs(delta).toFixed(m.key === 'deepSleepHours' ? 1 : 0)}${m.unit} ${good ? '🟢' : '🔴'}`;
+    }
+
+    const cell = document.createElement('div');
+    cell.className = 'dose-cell';
+    cell.innerHTML = `<div class="dose-cell-head"><span style="color:${m.color}">${m.label}</span><span class="dose-dir">${dir}</span></div>`;
+    const canvas = document.createElement('canvas');
+    cell.appendChild(canvas);
+    container.appendChild(cell);
+
+    auxCharts[`dose_${m.key}`] = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: doses,
+        datasets: [
+          {
+            type: 'scatter',
+            label: 'Nights',
+            data: points.map(p => ({ x: p.value, y: p[m.key] })),
+            backgroundColor: m.color + '40',
+            pointRadius: 3,
+          },
+          {
+            type: 'line',
+            label: 'Mean',
+            data: doses.map((d, i) => ({ x: d, y: means[i].mean })),
+            borderColor: m.color,
+            backgroundColor: m.color,
+            borderWidth: 2,
+            tension: 0.2,
+            spanGaps: true,
+            pointRadius: doses.map((d, i) => 3 + Math.min(8, means[i].n)),
+            pointHoverRadius: 8,
+          },
+        ],
       },
-      plugins: commonPlugins(),
-    },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { ...commonScales(`${target.behavior}`).x, type: 'linear', ticks: { stepSize: 1, color: '#8892a4' } },
+          y: commonScales(m.label + m.unit).y,
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            ...commonPlugins().tooltip,
+            callbacks: {
+              label: c => c.datasetIndex === 1
+                ? `Mean: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1)}${m.unit} (n=${means[doses.indexOf(c.parsed.x)].n})`
+                : `${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1)}${m.unit}`,
+            },
+          },
+        },
+      },
+    });
   });
+
+  if (!container.children.length) {
+    container.innerHTML = '<div class="empty-state">Not enough paired nights to chart a dose-response for this behavior yet.</div>';
+  }
 }
 
 // 2. Caffeine cutoff comparison
@@ -2956,8 +3016,14 @@ function renderCycleHrv(payload) {
   const phaseSection = document.getElementById('cycle-phase-section');
   const daySection = document.getElementById('cycle-day-section');
   if (!payload || payload.available === false) {
-    if (phaseSection) phaseSection.style.display = 'none';
-    if (daySection) daySection.style.display = 'none';
+    // Hide the entire cycle group — covers non-tracking (male) users and the
+    // case where the active user is switched away from a cycle-tracking one,
+    // so calendar/sleep/stress don't linger with stale data.
+    ['cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section',
+     'cycle-sleep-section', 'cycle-stress-section'].forEach(id => {
+      const s = document.getElementById(id);
+      if (s) s.style.display = 'none';
+    });
     return;
   }
 
