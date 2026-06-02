@@ -204,7 +204,22 @@ def _resolve_user_identity(settings) -> dict[str, str]:
         name = " ".join(p.capitalize() for p in local.replace("_", ".").split("."))
     else:
         name = "User"
-    return {"name": name, "email": email}
+    sex = (settings.biological_sex or "").strip()
+    return {"name": name, "email": email, "biological_sex": sex,
+            "tracks_cycle": sex.lower() == "female"}
+
+
+def _tracks_cycle(settings) -> bool:
+    """Menstrual-cycle analytics are surfaced only for users whose biological
+    sex is Female. Male users never see cycle charts, even if stray cycle rows
+    exist in their database."""
+    return (getattr(settings, "biological_sex", "") or "").strip().lower() == "female"
+
+
+_CYCLE_NOT_TRACKED = {
+    "available": False,
+    "note": "Cycle tracking is shown only for users with biological sex Female.",
+}
 
 
 _FLOW_INTENSITY = {"LIGHT": 1, "MEDIUM": 2, "HEAVY": 3}
@@ -216,6 +231,8 @@ def _enrich_summaries_with_cycle(bundle, summaries, start, end):
     tab can chart them like any other numeric metric. No-op when the user
     doesn't track cycles."""
     if not summaries:
+        return
+    if not _tracks_cycle(bundle.agent._settings):
         return
     try:
         df = bundle.agent._repo.query_menstrual_cycle(start, end)
@@ -468,6 +485,11 @@ async def lifestyle(
             logger.warning("Lifestyle %s failed: %s", fn.__name__, exc)
             return {"error": str(exc)}
 
+    async def _const(value):
+        return value
+
+    tracks_cycle = _tracks_cycle(bundle.agent._settings)
+
     results = await asyncio.gather(
         _run(svc.behavior_dose_response, start, end),
         _run(svc.caffeine_cutoff, start, end),
@@ -485,8 +507,8 @@ async def lifestyle(
         _run(svc.step_distribution, start, end),
         _run(svc.fitness_age_delta, start, end),
         _run(svc.who_intensity_target, start, end),
-        _run(svc.cycle_hrv, start, end),
-        _run(svc.cycle_yearly),
+        _run(svc.cycle_hrv, start, end) if tracks_cycle else _const(dict(_CYCLE_NOT_TRACKED)),
+        _run(svc.cycle_yearly) if tracks_cycle else _const(dict(_CYCLE_NOT_TRACKED)),
         _run(svc.stress_hour_fingerprint, start, end),
         _run(svc.stress_trigger_leaderboard, start, end),
         _run(svc.research_signal_scorecard, start, end),
@@ -828,6 +850,8 @@ async def menstrual(
     """Menstrual cycle data for the requested window. Empty result if user doesn't track."""
     bundle = _require_user(user)
     s, e = _resolve_range(start, end, default_days=90)
+    if not _tracks_cycle(bundle.agent._settings):
+        return {"start": s, "end": e, "tracked": False, "entries": []}
     loop = asyncio.get_event_loop()
     try:
         df = await loop.run_in_executor(None, bundle.agent._repo.query_menstrual_cycle, s, e)

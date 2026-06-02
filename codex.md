@@ -75,7 +75,7 @@ bash scripts/run-helen.sh      # helen.env: START_WEB=true, WEB_PORT=8081 → fe
 | `garmin-insights/src/garmin_insights/web/app.py` | FastAPI server. Routes: SSE chat, dashboard (auto-cache-refresh + date params + cycle-field enrichment), scans (`/api/scan`), `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`, `/api/menstrual`, `/api/users`, `/api/health`. |
 | `garmin-insights/src/garmin_insights/web/user_context.py` | Per-user agent pool — one `HealthAgent` / `VisualizationService` / `LifestyleService` per `users/<id>.env`, lazily constructed and cached for the server's lifetime. |
 | `garmin-insights/src/garmin_insights/web/visualizations.py` | `VisualizationService` — intraday heatmap, sleep timeline, anomaly z-score calendar, correlation matrix, 90-day behavior impact. |
-| `garmin-insights/src/garmin_insights/web/lifestyle_viz.py` | `LifestyleService` — 15 research-backed lifestyle analytics (SRI, social jet lag, illness radar, recovery debt, etc.) plus the cycle analytics (phase-stratified vitals, cycle-day curve, calendar, sleep by phase, stress by phase). |
+| `garmin-insights/src/garmin_insights/web/lifestyle_viz.py` | `LifestyleService` — 15 research-backed lifestyle analytics (SRI, social jet lag, illness radar, recovery debt, etc.) plus the cycle analytics (phase-stratified vitals, cycle-day curve, calendar, sleep by phase, stress by phase). z-score analytics prime their `rolling(30)` baseline with ~35 days of pre-window history (`_prime_start()`) so short presets (e.g. 7-day) aren't blank. |
 | `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js`. Date-range toolbar, customize panel, info-icon tooltips, user/sync badges, Entities tab, ~25 chart renderers. |
 | `garmin-insights/src/garmin_insights/db/sqlite_repo.py` | SQLite query layer returning pandas DataFrames. |
 | `garmin-insights/src/garmin_insights/db/memory.py` | Per-user memory store — baselines, insights, session history, user profile. |
@@ -187,9 +187,15 @@ Key tables:
   endpoint enriches summaries with `cycleDay`, `cycleLength`,
   `cycleFlowIntensity`, and one-hot `cyclePhaseMenstrual/Follicular/Ovulatory/
   Luteal` so cycle metrics appear in the picker for menstruating users.
-- **Cycle dashboards** (auto-hidden when no cycle data): Vitals by Phase, Cycle-
-  Day Curve, Cycle Calendar (60-day phase grid + flow markers), Sleep
-  Architecture by Phase, Stress & Body Battery by Phase.
+- **Cycle dashboards** (shown **only** for `BIOLOGICAL_SEX=Female` — gated
+  server-side in `/api/lifestyle` + `/api/menstrual`; male users never see them
+  even with stray cycle rows): Vitals by Phase, Cycle-Day Curve, Cycle Calendar
+  (60-day phase grid + flow markers), Sleep Architecture by Phase, Stress & Body
+  Battery by Phase.
+- **Behavior Dose-Response** — small multiples (one mini-chart per metric: sleep
+  / HRV / deep sleep / RHR), each on its own scale with raw nights + a bold
+  mean-per-dose line, so the dose→response slope is legible (the four metrics
+  share no common y-axis).
 
 ## Evidence-Tier System (READ BEFORE EDITING RULES)
 

@@ -400,6 +400,32 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .chart-container { position: relative; height: 260px; }
 .chart-container-tall { height: 360px; }
 
+/* Dose-response small multiples — one mini-chart per metric */
+.dose-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+.dose-cell {
+  background: #1a1d2b;
+  border: 1px solid #2e3350;
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  height: 220px;
+  display: flex;
+  flex-direction: column;
+}
+.dose-cell canvas { flex: 1; min-height: 0; }
+.dose-cell-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.dose-dir { font-weight: 500; color: #8892a4; font-size: 12px; }
+
 /* ---- Heatmap (intraday) ---- */
 .heatmap-container { overflow-x: auto; padding: 4px 0; }
 .heatmap-grid {
@@ -1046,9 +1072,13 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   padding: 20px 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;  /* anchor messages to the bottom near the input */
   gap: 16px;
 }
+/* Anchor messages to the bottom when there are only a few, WITHOUT using
+   justify-content: flex-end — that clips overflowing messages off the top of a
+   scroll container and makes them unreachable (can't scroll up). An auto top
+   margin on the first child pushes content down only when there's slack. */
+.chat-messages > :first-child { margin-top: auto; }
 
 /* Collapsed welcome bubble — show only a one-line summary and a chevron */
 .message.welcome.collapsed .message-bubble > *:not(.welcome-toggle) { display: none; }

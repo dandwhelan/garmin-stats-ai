@@ -45,6 +45,22 @@ def _int_or_none(x):
         return None
 
 
+# Days of history to prepend before the requested window when an analytic needs
+# its rolling baseline (rolling(30, min_periods=7)) primed. Without this, a short
+# display window — e.g. the 7-day preset — only contains enough rows for a valid
+# z-score on its final day, so the chart collapses to a single point. We fetch
+# the extra history, compute over the full series, then trim back to [start, end].
+_BASELINE_PRIME_DAYS = 35
+
+
+def _prime_start(start: str, days: int = _BASELINE_PRIME_DAYS) -> str:
+    """Return `start` shifted back by `days` so a rolling baseline has history."""
+    try:
+        return (datetime.strptime(start, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
+    except Exception:
+        return start
+
+
 class LifestyleService:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -261,7 +277,9 @@ class LifestyleService:
     # ------------------------------------------------------------------
     def behavior_recovery_cost(self, start: str, end: str) -> list[dict]:
         lj = self._load_journal(start, end)
-        ds = self._load_summaries(start, end)
+        # Prime the rolling HRV/RHR baseline with history before `start`; logged
+        # events still only come from the in-window journal.
+        ds = self._load_summaries(_prime_start(start), end)
         if lj.empty or ds.empty:
             return []
         lj = lj[lj["status"] == 1]
@@ -308,7 +326,9 @@ class LifestyleService:
     # 6. Stress-resilience score — daily inverted stress z-score
     # ------------------------------------------------------------------
     def stress_resilience(self, start: str, end: str) -> list[dict]:
-        ds = self._load_summaries(start, end)
+        # Prime the 30-day rolling baseline with history before `start` so short
+        # display windows still produce a value on every day, not just the last.
+        ds = self._load_summaries(_prime_start(start), end)
         if ds.empty:
             return []
         s = pd.to_numeric(ds.get("stressPercentage"), errors="coerce")
@@ -319,6 +339,7 @@ class LifestyleService:
         return [
             {"date": d, "resilience": (None if pd.isna(v) else round(float(v), 1))}
             for d, v in zip(ds["date"], score)
+            if d >= start
         ]
 
     # ------------------------------------------------------------------
@@ -360,7 +381,10 @@ class LifestyleService:
     # 8. Pre-symptom illness radar (Quer 2021 multi-signal)
     # ------------------------------------------------------------------
     def illness_radar(self, start: str, end: str) -> dict:
-        ds = self._load_summaries(start, end)
+        # Prime the 30-day rolling z-score baseline with pre-window history so a
+        # short display window yields z-scores on every day, not just the last.
+        prime = _prime_start(start)
+        ds = self._load_summaries(prime, end)
         if ds.empty:
             return {"series": [], "alerts": []}
         # Pull respiration from sleep_summary directly
@@ -368,7 +392,7 @@ class LifestyleService:
             sleep = pd.read_sql_query(
                 "SELECT date, average_respiration_value AS resp FROM sleep_summary "
                 "WHERE date >= ? AND date <= ? ORDER BY date",
-                conn, params=(start, end),
+                conn, params=(prime, end),
             )
         ds = ds.merge(sleep, on="date", how="left")
         ds["rhr"] = pd.to_numeric(ds.get("restingHeartRate"), errors="coerce")
@@ -388,6 +412,8 @@ class LifestyleService:
         series = []
         alerts = []
         for _, r in ds.iterrows():
+            if r["date"] < start:  # drop the priming history, keep display window
+                continue
             entry = {
                 "date": r["date"],
                 "z_rhr": _round(r["z_rhr"]),
@@ -410,7 +436,9 @@ class LifestyleService:
     # 9. Inflammation index — RHR + respiration + (1 - sleep efficiency)
     # ------------------------------------------------------------------
     def inflammation_index(self, start: str, end: str) -> list[dict]:
-        ds = self._load_summaries(start, end)
+        # Prime the 30-day rolling z-score baseline with pre-window history.
+        prime = _prime_start(start)
+        ds = self._load_summaries(prime, end)
         if ds.empty:
             return []
         with self._conn() as conn:
@@ -418,7 +446,7 @@ class LifestyleService:
                 "SELECT date, average_respiration_value AS resp, "
                 "       deep_sleep_seconds, light_sleep_seconds, rem_sleep_seconds, awake_sleep_seconds "
                 "FROM sleep_summary WHERE date >= ? AND date <= ?",
-                conn, params=(start, end),
+                conn, params=(prime, end),
             )
         ds = ds.merge(sleep, on="date", how="left")
         ds["rhr"] = pd.to_numeric(ds.get("restingHeartRate"), errors="coerce")
@@ -434,6 +462,8 @@ class LifestyleService:
         z_total = z(ds["rhr"]) + z(ds["resp"]) + (-z(sleep_eff))
         out = []
         for d, val in zip(ds["date"], z_total):
+            if d < start:  # drop priming history, keep display window
+                continue
             out.append({"date": d, "index": _round(val)})
         return out
 

@@ -204,12 +204,12 @@ Lifestyle & Health Insights. Every chart tooltip carries an evidence-tier chip (
 - Recovery Debt, Inflammation Index, Stress Resilience, Body Battery Decay Slope
 - Sleep Regularity Index (Windred 2024) and Social Jet Lag dual-clock (weekday vs weekend midpoints)
 - Behavior Recovery Cost (median days for HRV to return to baseline)
-- Behavior Dose-Response (per-behavior scatter for behaviors logged with numeric values)
+- Behavior Dose-Response (per-behavior small multiples — one mini-chart per metric (sleep / HRV / deep sleep / RHR), each on its own scale, plotting the raw nights plus a bold mean-per-dose line so the dose→response trend is legible)
 - Caffeine Timing Comparison (Drake 2013 late vs early vs none)
 - Habit Half-Life, Behavior Streak Calendar, Behavior Co-occurrence, Stress Trigger Leaderboard
 - Stress Hour-of-Day Fingerprint (weekday vs weekend)
 
-Menstrual cycle (auto-hidden for users with no cycle data). Cycle phase is framed as a **confounder / context label**, never a single cause:
+Menstrual cycle (shown **only** for users with `BIOLOGICAL_SEX=Female` — gated server-side, so male users never see these charts even if stray cycle rows exist; also hidden when a female user has no cycle data in the selected window). Cycle phase is framed as a **confounder / context label**, never a single cause:
 - Vitals by Menstrual Phase — RHR / HRV / Sleep score / Body Battery across follicular / ovulatory / luteal / menstrual phases (Shilaih 2017, Maijala 2022, Alzueta 2022, Symons Downs 2025 *Sports Med* SR)
 - Cycle-Day Curve — RHR + HRV averaged at each day-of-cycle (Symons Downs 2025; Masuda 2025)
 - Cycle Calendar — 60-day phase grid with flow-intensity markers
