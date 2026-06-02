@@ -778,8 +778,24 @@ function renderEntitiesChart() {
     };
   });
 
-  if (entitiesChart) entitiesChart.destroy();
-  entitiesChart = new Chart(document.getElementById('entities-chart'), {
+  // Show the container BEFORE instantiating so Chart.js can measure the canvas
+  // (a chart created inside a display:none parent sizes to 0 and the reused
+  // canvas can get stuck, which broke every build after the first).
+  container.classList.add('active');
+  emptyMsg.style.display = 'none';
+
+  // Destroy whatever chart is actually bound to the canvas — use Chart.getChart
+  // as the source of truth so a stale `entitiesChart` reference can never strand
+  // a chart on the canvas and block re-creation. Guarded so a failed teardown
+  // can't abort the rebuild (this is what stopped Clear and re-Build working).
+  const canvas = document.getElementById('entities-chart');
+  const existing = entitiesChart || Chart.getChart(canvas);
+  if (existing) {
+    try { existing.destroy(); } catch (e) { console.warn('entities chart destroy failed', e); }
+  }
+  entitiesChart = null;
+
+  entitiesChart = new Chart(canvas, {
     type,
     data: { labels, datasets },
     options: {
@@ -790,8 +806,6 @@ function renderEntitiesChart() {
       plugins: commonPlugins(),
     },
   });
-  container.classList.add('active');
-  emptyMsg.style.display = 'none';
 }
 
 // Wire up Entities controls (deferred so DOM exists)
@@ -799,7 +813,12 @@ document.getElementById('entities-build')?.addEventListener('click', renderEntit
 document.getElementById('entities-clear')?.addEventListener('click', () => {
   document.querySelectorAll('#entities-metrics input[type=checkbox]')
     .forEach(el => { el.checked = false; });
-  if (entitiesChart) { entitiesChart.destroy(); entitiesChart = null; }
+  const canvas = document.getElementById('entities-chart');
+  const existing = entitiesChart || Chart.getChart(canvas);
+  if (existing) {
+    try { existing.destroy(); } catch (e) { console.warn('entities chart destroy failed', e); }
+  }
+  entitiesChart = null;
   document.getElementById('entities-chart-container').classList.remove('active');
   const emptyMsg = document.getElementById('entities-empty');
   emptyMsg.textContent = 'No chart yet — pick at least one metric and click Build.';
@@ -809,6 +828,10 @@ document.getElementById('entities-clear')?.addEventListener('click', () => {
 // Re-populate the metric list whenever the tab is opened (handles the case
 // where dashboardData loaded after the initial render)
 document.querySelector('.tab-btn[data-tab="entities"]')?.addEventListener('click', populateEntityMetrics);
+
+// Wire up the Journal tab the first time it's opened (attaches the Save/Clear
+// click handlers inside ensureJournalTab; without this the buttons do nothing)
+document.querySelector('.tab-btn[data-tab="journal"]')?.addEventListener('click', ensureJournalTab);
 
 // ---- AI Scan ----
 

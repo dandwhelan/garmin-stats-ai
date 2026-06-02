@@ -1368,11 +1368,58 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
+/* ---- Two-row mobile header (Concept A) ----
+   Brand + sync + user controls on row 1; tabs become a full-width
+   underlined strip on row 2. Keeps the desktop single-row layout intact. */
+@media (max-width: 820px) {
+  .header-inner {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 14px 0;
+    gap: 8px 10px;
+    row-gap: 0;
+  }
+  .logo { font-size: 0.95rem; order: 1; }
+  .sync-badge { order: 2; }
+  /* The user dropdown already shows who's active — drop the long email badge
+     and the "User" label so row 1 stays uncrowded on a phone. */
+  .user-badge { display: none; }
+  .user-label { display: none; }
+  .header-right { order: 3; margin-left: auto; gap: 8px; }
+
+  /* Tabs drop to their own full-width row, bleeding to the header edges. */
+  nav {
+    order: 4;
+    flex-basis: 100%;
+    width: calc(100% + 28px);
+    margin: 8px -14px 0;
+    gap: 0;
+    border-top: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1;
+    text-align: center;
+    border-radius: 0;
+    padding: 12px 0;
+    font-size: 0.82rem;
+    position: relative;
+  }
+  .tab-btn:hover { background: none; }
+  .tab-btn.active { background: none; }
+  .tab-btn.active::after {
+    content: "";
+    position: absolute;
+    left: 22%; right: 22%; bottom: 0;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--accent);
+  }
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .message-bubble { max-width: 92%; }
-  .header-inner { gap: 12px; }
   .logo { font-size: 0.9rem; }
 }
 
