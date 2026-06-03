@@ -256,6 +256,26 @@ class MemoryStore:
         finally:
             conn.close()
 
+    def append_daily_note(self, date: str, note: str) -> None:
+        """Append text to a day's note without discarding what's already there.
+
+        Used by the AI agent so it can never overwrite or erase a note the user
+        wrote by hand — it only ever adds to it. If the day has no note yet this
+        behaves like a plain insert. Identical content is not appended twice.
+        """
+        if note is None or not note.strip():
+            return
+        addition = note.strip()
+        existing = self.get_daily_note(date)
+        if not existing:
+            self.upsert_daily_note(date, addition)
+            return
+        # Don't duplicate text that's already present in the note.
+        if addition in existing:
+            return
+        merged = f"{existing.rstrip()}\n{addition}"
+        self.upsert_daily_note(date, merged)
+
     def delete_daily_note(self, date: str) -> None:
         conn = self._get_conn()
         try:

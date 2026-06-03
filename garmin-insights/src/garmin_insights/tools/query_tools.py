@@ -300,8 +300,8 @@ class QueryToolHandler:
         return json.dumps(profile, default=str)
 
     def save_daily_note(self, date: str, note: str) -> str:
-        """Record the user's own free-text note about what happened on a day."""
-        self._memory.upsert_daily_note(date, note)
+        """Append to the user's free-text note for a day (never overwrites)."""
+        self._memory.append_daily_note(date, note)
         return json.dumps({"saved": True, "date": date})
 
     def get_daily_notes(self, start_date: str, end_date: str) -> str:
@@ -679,8 +679,9 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 "specific day (e.g. 'hard 10k run, two coffees, poor sleep, "
                 "stressful work deadline'). Use this whenever the user tells you "
                 "what happened on a given day so it's attached to that date and "
-                "available in future analysis. Overwrites any existing note for "
-                "the date."
+                "available in future analysis. This APPENDS to the day's note — "
+                "it never overwrites or erases text the user wrote by hand. "
+                "Identical text won't be added twice."
             ),
             "input_schema": {
                 "type": "object",
