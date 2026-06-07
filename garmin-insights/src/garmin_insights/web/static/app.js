@@ -684,17 +684,79 @@ function selectedEntityMetrics() {
 }
 
 function renderEntitiesChart() {
-  const metrics = selectedEntityMetrics();
-  const days = parseInt(document.getElementById('entities-days').value, 10);
-  const type = document.getElementById('entities-type').value;
   const container = document.getElementById('entities-chart-container');
   const emptyMsg = document.getElementById('entities-empty');
+  try {
+    const metrics = selectedEntityMetrics();
+    const days = parseInt(document.getElementById('entities-days').value, 10);
+    const type = document.getElementById('entities-type').value;
 
-  if (!metrics.length || !dashboardData?.summaries) {
-    container.classList.remove('active');
-    emptyMsg.textContent = 'Pick at least one metric, then click Build.';
-    emptyMsg.style.display = '';
-    return;
+    if (!metrics.length || !dashboardData?.summaries) {
+      container.classList.remove('active');
+      emptyMsg.textContent = 'Pick at least one metric, then click Build.';
+      emptyMsg.style.display = '';
+      return;
+    }
+
+    const sorted = [...dashboardData.summaries]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-days);
+    const labels = sorted.map(s => s.date.slice(5));
+
+    const datasets = metrics.map((key, i) => {
+      const color = ENTITY_COLORS[i % ENTITY_COLORS.length];
+      return {
+        label: entityLabel(key),
+        data: sorted.map(s => (s[key] != null ? s[key] : null)),
+        borderColor: color,
+        backgroundColor: type === 'bar' ? color : color + '22',
+        tension: 0.3,
+        spanGaps: true,
+        pointRadius: type === 'line' ? 3 : 0,
+        borderWidth: 2,
+      };
+    });
+
+    // Show the container BEFORE instantiating so Chart.js can measure the canvas.
+    container.classList.add('active');
+    emptyMsg.style.display = 'none';
+
+    // Bulletproof rebuild: tear down the tracked chart, then REPLACE the canvas
+    // element with a brand-new one. A fresh <canvas> can never be "already in
+    // use" and carries no stale Chart.js / context state — this sidesteps every
+    // canvas-reuse failure on the 2nd+ build.
+    if (entitiesChart) {
+      try { entitiesChart.destroy(); } catch (e) { console.warn('destroy failed', e); }
+      entitiesChart = null;
+    }
+    let canvas = document.getElementById('entities-chart');
+    if (canvas) {
+      const fresh = canvas.cloneNode(false); // same id/attrs, no chart bound
+      canvas.replaceWith(fresh);
+      canvas = fresh;
+    }
+    const stuck = Chart.getChart(canvas); // paranoia: nothing should be bound
+    if (stuck) { try { stuck.destroy(); } catch (e) { /* ignore */ } }
+
+    entitiesChart = new Chart(canvas, {
+      type,
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: commonScales(),
+        plugins: commonPlugins(),
+      },
+    });
+  } catch (err) {
+    // Surface ANY failure on the page so it's visible without DevTools.
+    console.error('entities chart build failed', err);
+    if (container) container.classList.remove('active');
+    if (emptyMsg) {
+      emptyMsg.textContent = 'Chart build error: ' + (err && err.message ? err.message : String(err));
+      emptyMsg.style.display = '';
+    }
   }
 
   const sorted = [...dashboardData.summaries]
@@ -716,8 +778,24 @@ function renderEntitiesChart() {
     };
   });
 
-  if (entitiesChart) entitiesChart.destroy();
-  entitiesChart = new Chart(document.getElementById('entities-chart'), {
+  // Show the container BEFORE instantiating so Chart.js can measure the canvas
+  // (a chart created inside a display:none parent sizes to 0 and the reused
+  // canvas can get stuck, which broke every build after the first).
+  container.classList.add('active');
+  emptyMsg.style.display = 'none';
+
+  // Destroy whatever chart is actually bound to the canvas — use Chart.getChart
+  // as the source of truth so a stale `entitiesChart` reference can never strand
+  // a chart on the canvas and block re-creation. Guarded so a failed teardown
+  // can't abort the rebuild (this is what stopped Clear and re-Build working).
+  const canvas = document.getElementById('entities-chart');
+  const existing = entitiesChart || Chart.getChart(canvas);
+  if (existing) {
+    try { existing.destroy(); } catch (e) { console.warn('entities chart destroy failed', e); }
+  }
+  entitiesChart = null;
+
+  entitiesChart = new Chart(canvas, {
     type,
     data: { labels, datasets },
     options: {
@@ -728,8 +806,6 @@ function renderEntitiesChart() {
       plugins: commonPlugins(),
     },
   });
-  container.classList.add('active');
-  emptyMsg.style.display = 'none';
 }
 
 // Wire up Entities controls (deferred so DOM exists)
@@ -737,7 +813,12 @@ document.getElementById('entities-build')?.addEventListener('click', renderEntit
 document.getElementById('entities-clear')?.addEventListener('click', () => {
   document.querySelectorAll('#entities-metrics input[type=checkbox]')
     .forEach(el => { el.checked = false; });
-  if (entitiesChart) { entitiesChart.destroy(); entitiesChart = null; }
+  const canvas = document.getElementById('entities-chart');
+  const existing = entitiesChart || Chart.getChart(canvas);
+  if (existing) {
+    try { existing.destroy(); } catch (e) { console.warn('entities chart destroy failed', e); }
+  }
+  entitiesChart = null;
   document.getElementById('entities-chart-container').classList.remove('active');
   const emptyMsg = document.getElementById('entities-empty');
   emptyMsg.textContent = 'No chart yet — pick at least one metric and click Build.';
@@ -747,6 +828,10 @@ document.getElementById('entities-clear')?.addEventListener('click', () => {
 // Re-populate the metric list whenever the tab is opened (handles the case
 // where dashboardData loaded after the initial render)
 document.querySelector('.tab-btn[data-tab="entities"]')?.addEventListener('click', populateEntityMetrics);
+
+// Wire up the Journal tab the first time it's opened (attaches the Save/Clear
+// click handlers inside ensureJournalTab; without this the buttons do nothing)
+document.querySelector('.tab-btn[data-tab="journal"]')?.addEventListener('click', ensureJournalTab);
 
 // ---- AI Scan ----
 
@@ -4325,15 +4410,20 @@ function ensureJournalTab() {
     const dateEl = document.getElementById('journal-date');
     if (dateEl) {
       dateEl.value = journalToday();
-      dateEl.addEventListener('change', () => loadJournalNote(dateEl.value));
+      dateEl.addEventListener('change', () => {
+        loadJournalNote(dateEl.value);
+        syncCalendarToDate(dateEl.value); // jump the calendar to the picked month
+      });
     }
     document.getElementById('journal-save')?.addEventListener('click', saveJournalNote);
     document.getElementById('journal-delete')?.addEventListener('click', clearJournalNote);
+    initJournalCalendarNav();
     _journalInit = true;
   }
   const dateEl = document.getElementById('journal-date');
   if (dateEl) loadJournalNote(dateEl.value);
   loadJournalRecent();
+  renderJournalCalendar();
 }
 
 function journalSetStatus(msg, isError) {
@@ -4350,7 +4440,7 @@ async function loadJournalNote(date) {
   const ta = document.getElementById('journal-text');
   if (!ta || !date) return;
   try {
-    const res = await fetch(withUser(`/api/notes?start=${date}&end=${date}`));
+    const res = await fetch(withUser(`/api/notes?start=${date}&end=${date}`), { cache: 'no-store' });
     const data = await res.json();
     ta.value = (data.entries && data.entries[date]) || '';
   } catch (e) {
@@ -4371,6 +4461,7 @@ async function saveJournalNote() {
     const data = await res.json();
     journalSetStatus(data.deleted ? 'Note cleared' : 'Saved', false);
     loadJournalRecent();
+    renderJournalCalendar(); // reflect the new/removed note marker
   } catch (e) {
     journalSetStatus('Save failed', true);
   }
@@ -4382,13 +4473,109 @@ async function clearJournalNote() {
   await saveJournalNote();
 }
 
+// ---- Journal month calendar ----
+// Highlights days that have a note and lets the user click any day to view or
+// add one. Currently displayed month is held in _calYear / _calMonth (0-based).
+let _calYear = null;
+let _calMonth = null;
+let _calNavInit = false;
+const _CAL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+// Local YYYY-MM-DD (avoids the UTC day-shift that toISOString can introduce).
+function ymdLocal(y, m, d) {
+  return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function initJournalCalendarNav() {
+  if (_calNavInit) return;
+  document.getElementById('cal-prev')?.addEventListener('click', () => {
+    if (_calMonth === 0) { _calMonth = 11; _calYear -= 1; } else { _calMonth -= 1; }
+    renderJournalCalendar();
+  });
+  document.getElementById('cal-next')?.addEventListener('click', () => {
+    if (_calMonth === 11) { _calMonth = 0; _calYear += 1; } else { _calMonth += 1; }
+    renderJournalCalendar();
+  });
+  _calNavInit = true;
+}
+
+// Move the calendar view to the month containing `dateStr` (YYYY-MM-DD).
+function syncCalendarToDate(dateStr) {
+  if (!dateStr) return;
+  const [y, m] = dateStr.split('-').map(Number);
+  if (!y || !m) return;
+  _calYear = y;
+  _calMonth = m - 1;
+  renderJournalCalendar();
+}
+
+async function renderJournalCalendar() {
+  const grid = document.getElementById('cal-grid');
+  const title = document.getElementById('cal-title');
+  if (!grid || !title) return;
+
+  if (_calYear == null || _calMonth == null) {
+    const now = new Date();
+    _calYear = now.getFullYear();
+    _calMonth = now.getMonth();
+  }
+  const year = _calYear;
+  const month = _calMonth;
+  title.textContent = `${_CAL_MONTHS[month]} ${year}`;
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const start = ymdLocal(year, month, 1);
+  const end = ymdLocal(year, month, daysInMonth);
+
+  let entries = {};
+  try {
+    const res = await fetch(withUser(`/api/notes?start=${start}&end=${end}`), { cache: 'no-store' });
+    const data = await res.json();
+    entries = data.entries || {};
+  } catch (e) {
+    // Render the grid anyway, just without note markers.
+  }
+
+  const todayStr = journalToday();
+  const selected = document.getElementById('journal-date')?.value;
+  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // 0 = Monday
+
+  let html = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+    .map(d => `<div class="cal-dow">${d}</div>`).join('');
+  for (let i = 0; i < firstWeekday; i++) html += '<div class="cal-cell blank"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = ymdLocal(year, month, d);
+    const cls = ['cal-cell'];
+    if (entries[ds]) cls.push('has-note');
+    if (ds === todayStr) cls.push('today');
+    if (ds === selected) cls.push('selected');
+    const tip = entries[ds] ? ` title="${escapeHtml(String(entries[ds]).slice(0, 80))}"` : '';
+    html += `<button type="button" class="${cls.join(' ')}" data-date="${ds}"${tip}>${d}<span class="cal-dot"></span></button>`;
+  }
+  grid.innerHTML = html;
+
+  grid.querySelectorAll('.cal-cell[data-date]').forEach(cell => {
+    cell.addEventListener('click', () => {
+      const ds = cell.dataset.date;
+      const dateEl = document.getElementById('journal-date');
+      if (dateEl) { dateEl.value = ds; loadJournalNote(ds); }
+      grid.querySelectorAll('.cal-cell.selected').forEach(c => c.classList.remove('selected'));
+      cell.classList.add('selected');
+      document.getElementById('journal-text')?.focus();
+    });
+  });
+}
+
 async function loadJournalRecent() {
   const list = document.getElementById('journal-list');
   if (!list) return;
   try {
-    const end = journalToday();
+    // The date picker allows future days, so the list must look ahead too —
+    // capping `end` at today silently hid any note dated in the future.
     const start = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const res = await fetch(withUser(`/api/notes?start=${start}&end=${end}`));
+    const end = new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
+    const res = await fetch(withUser(`/api/notes?start=${start}&end=${end}`), { cache: 'no-store' });
     const data = await res.json();
     const entries = data.entries || {};
     const dates = Object.keys(entries).sort().reverse();

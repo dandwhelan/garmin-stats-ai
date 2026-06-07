@@ -170,13 +170,43 @@ def _extract_chat_tags(text: str) -> list[str]:
     return tags[:8]
 
 
+def _extract_assistant_text(history: list[dict]) -> str:
+    """Latest assistant text from history, tolerating both plain dict content
+    blocks and Anthropic SDK block objects (TextBlock/ToolUseBlock), which is
+    what the agent actually stores. The old code only handled dicts, so the
+    assistant reply never got persisted into chat memory."""
+    for msg in reversed(history):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for b in content:
+                if isinstance(b, dict):
+                    if b.get("type") == "text":
+                        parts.append(b.get("text", "") or "")
+                elif getattr(b, "type", None) == "text":
+                    parts.append(getattr(b, "text", "") or "")
+            text = " ".join(p for p in parts if p).strip()
+            if text:
+                return text
+    return ""
+
+
 # ------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(content=(_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
+    # Always revalidate the HTML so new ?v= asset references reach the client
+    # immediately; the versioned static files themselves stay cacheable.
+    return HTMLResponse(
+        content=(_STATIC_DIR / "index.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/api/users")
@@ -911,33 +941,28 @@ async def chat(body: ChatRequest):
         loop = asyncio.get_event_loop()
         gen = bundle.agent.chat_stream(body.message, history=history)
         sentinel = object()
+        streamed_parts: list[str] = []
 
         try:
             while True:
                 event = await loop.run_in_executor(None, next, gen, sentinel)
                 if event is sentinel:
                     break
+                # Capture the assistant's visible text as it streams — this is
+                # the reliable source for persistence (history stores SDK block
+                # objects, not dicts, which the old parser silently dropped).
+                if isinstance(event, dict) and event.get("type") == "text":
+                    streamed_parts.append(event.get("text", "") or "")
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             logger.exception("Chat stream failed")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         finally:
             try:
-                assistant_text = ""
-                for msg in reversed(history):
-                    if msg.get("role") != "assistant":
-                        continue
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        assistant_text = " ".join(
-                            b.get("text", "")
-                            for b in content
-                            if isinstance(b, dict) and b.get("type") == "text"
-                        )
-                    elif isinstance(content, str):
-                        assistant_text = content
-                    if assistant_text:
-                        break
+                assistant_text = "".join(streamed_parts).strip()
+                if not assistant_text:
+                    # Fallback: parse it back out of history (SDK-aware).
+                    assistant_text = _extract_assistant_text(history)
                 bundle.agent._memory.save_chat_memory(
                     user_id=body.user,
                     user_text=body.message,

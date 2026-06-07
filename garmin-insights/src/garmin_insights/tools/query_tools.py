@@ -148,9 +148,13 @@ class QueryToolHandler:
         df = self._repo.query_activity_summary(start_date, end_date, activity_type)
         if df.empty:
             return json.dumps({"message": "No activities found for this range"})
+        # SQLite columns are snake_case (the Influx schema was camelCase). Using
+        # the old camelCase names here silently dropped everything except
+        # calories/distance, so the agent could not tell a run from a strength
+        # session.
         keep_cols = [
-            "activityName", "activityType", "averageHR", "maxHR",
-            "calories", "distance", "elapsedDuration",
+            "activity_name", "activity_type", "average_hr", "max_hr",
+            "calories", "distance", "elapsed_duration", "moving_duration",
         ]
         available = [c for c in keep_cols if c in df.columns]
         df = df[available].reset_index()

@@ -1368,11 +1368,58 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
+/* ---- Two-row mobile header (Concept A) ----
+   Brand + sync + user controls on row 1; tabs become a full-width
+   underlined strip on row 2. Keeps the desktop single-row layout intact. */
+@media (max-width: 820px) {
+  .header-inner {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 14px 0;
+    gap: 8px 10px;
+    row-gap: 0;
+  }
+  .logo { font-size: 0.95rem; order: 1; }
+  .sync-badge { order: 2; }
+  /* The user dropdown already shows who's active — drop the long email badge
+     and the "User" label so row 1 stays uncrowded on a phone. */
+  .user-badge { display: none; }
+  .user-label { display: none; }
+  .header-right { order: 3; margin-left: auto; gap: 8px; }
+
+  /* Tabs drop to their own full-width row, bleeding to the header edges. */
+  nav {
+    order: 4;
+    flex-basis: 100%;
+    width: calc(100% + 28px);
+    margin: 8px -14px 0;
+    gap: 0;
+    border-top: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1;
+    text-align: center;
+    border-radius: 0;
+    padding: 12px 0;
+    font-size: 0.82rem;
+    position: relative;
+  }
+  .tab-btn:hover { background: none; }
+  .tab-btn.active { background: none; }
+  .tab-btn.active::after {
+    content: "";
+    position: absolute;
+    left: 22%; right: 22%; bottom: 0;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--accent);
+  }
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .message-bubble { max-width: 92%; }
-  .header-inner { gap: 12px; }
   .logo { font-size: 0.9rem; }
 }
 
@@ -1533,4 +1580,91 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+/* ---- Journal calendar ---- */
+.journal-calendar {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+.cal-title { font-weight: 600; font-size: 0.95rem; color: var(--text); }
+.cal-nav {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  width: 30px; height: 30px;
+  line-height: 1;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.cal-nav:hover { border-color: var(--accent); color: var(--accent); }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.cal-dow {
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-bottom: 2px;
+}
+.cal-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.cal-cell.blank { background: none; cursor: default; }
+.cal-cell:not(.blank):hover { border-color: var(--accent); color: var(--text); }
+.cal-cell.today { color: var(--text); font-weight: 700; box-shadow: inset 0 0 0 1px var(--border); }
+.cal-cell.has-note {
+  background: rgba(79,156,249,0.16);
+  color: var(--text);
+  font-weight: 600;
+}
+.cal-cell.selected { border-color: var(--accent); }
+.cal-dot {
+  position: absolute;
+  bottom: 4px; left: 50%;
+  transform: translateX(-50%);
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+}
+.cal-cell.has-note .cal-dot { opacity: 1; }
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0.7rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.cal-dot-legend {
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  background: rgba(79,156,249,0.55);
+  flex-shrink: 0;
 }
