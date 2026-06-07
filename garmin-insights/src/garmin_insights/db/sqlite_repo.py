@@ -73,9 +73,13 @@ class SqliteRepo:
         conn = self._get_conn()
         try:
             df = pd.read_sql_query(sql, conn, params=params)
-            # Standardize time index if present
+            # Standardize time index if present. format="ISO8601" tolerates
+            # mixed-precision timestamps (some rows carry microseconds, some
+            # don't) — the default parser infers one format from the first row
+            # and then raises on any row of differing precision, which silently
+            # emptied tables like body_composition / vo2_max.
             if "time" in df.columns:
-                df["time"] = pd.to_datetime(df["time"])
+                df["time"] = pd.to_datetime(df["time"], format="ISO8601")
                 df = df.set_index("time").sort_index()
             return df
         except Exception as e:
@@ -377,7 +381,7 @@ class SqliteRepo:
         try:
             df = pd.read_sql_query(q, conn, params=params)
             if "time" in df.columns:
-                df["time"] = pd.to_datetime(df["time"])
+                df["time"] = pd.to_datetime(df["time"], format="ISO8601")
                 df = df.set_index("time").sort_index()
             return df
         except Exception as e:

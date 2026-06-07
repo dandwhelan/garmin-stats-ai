@@ -602,6 +602,87 @@ class HealthAgent:
         except Exception as e:
             logger.debug("Portable prompt: environment merge failed: %s", e)
 
+        # Workouts / activities in the window. The live agent fetches these via
+        # get_activity_history; the daily summaries only carry aggregate steps /
+        # calories, so without this a pasted prompt has no per-session training
+        # data to analyse (run vs strength vs walk, HR, duration).
+        activities: list[dict] = []
+        try:
+            adf = self._repo.query_activity_summary(start, end)
+            if adf is not None and not adf.empty:
+                adf = adf.reset_index()
+                for row in adf.to_dict(orient="records"):
+                    name = row.get("activity_name")
+                    atype = row.get("activity_type")
+                    if name in (None, "", "END") or atype in (None, "", "No Activity"):
+                        continue
+                    entry: dict = {
+                        "date": str(row.get("time", ""))[:10],
+                        "type": atype,
+                        "name": name,
+                    }
+                    dist = row.get("distance")
+                    if dist not in (None, 0, 0.0):
+                        entry["km"] = round(float(dist) / 1000.0, 2)
+                    dur = row.get("elapsed_duration")
+                    if dur:
+                        entry["min"] = round(float(dur) / 60.0, 1)
+                    for src, dst in (("average_hr", "avg_hr"), ("max_hr", "max_hr"),
+                                     ("calories", "kcal")):
+                        v = row.get(src)
+                        if v not in (None, 0, 0.0):
+                            entry[dst] = round(float(v))
+                    activities.append(entry)
+        except Exception as e:
+            logger.debug("Portable prompt: activities fetch failed: %s", e)
+
+        # Slow-moving fitness markers (VO2 max, fitness age, weight). These
+        # update infrequently, so we look back up to a year and keep the most
+        # recent readings — the latest value may legitimately predate the
+        # snapshot window above.
+        fitness_markers: dict = {}
+        marker_start = (end_d - timedelta(days=365)).isoformat()
+
+        def _marker_series(df, value_col, scale=1.0, ndp=1, keep=8) -> dict | None:
+            if df is None or getattr(df, "empty", True) or value_col not in df.columns:
+                return None
+            d = df.reset_index() if df.index.name is not None else df
+            series: dict = {}
+            for row in d.to_dict(orient="records"):
+                v = row.get(value_col)
+                if v is None:
+                    continue
+                date = str(row.get("time", ""))[:10]
+                if not date:
+                    continue
+                series[date] = round(float(v) * scale, ndp)
+            if not series:
+                return None
+            return dict(sorted(series.items())[-keep:])
+
+        try:
+            vo2 = _marker_series(self._repo.query_vo2_max(marker_start, end), "vo2_max_value")
+            if vo2:
+                fitness_markers["vo2_max"] = vo2
+        except Exception as e:
+            logger.debug("Portable prompt: vo2 fetch failed: %s", e)
+        try:
+            fa = _marker_series(self._repo.query_fitness_age(marker_start, end), "fitness_age")
+            if fa:
+                fitness_markers["fitness_age_years"] = fa
+        except Exception as e:
+            logger.debug("Portable prompt: fitness age fetch failed: %s", e)
+        try:
+            bc_df = self._repo.query_body_composition(marker_start, end)
+            wt = _marker_series(bc_df, "weight", scale=0.001)  # grams → kg
+            if wt:
+                fitness_markers["weight_kg"] = wt
+            bf = _marker_series(bc_df, "body_fat")
+            if bf:
+                fitness_markers["body_fat_pct"] = bf
+        except Exception as e:
+            logger.debug("Portable prompt: body composition fetch failed: %s", e)
+
         # Concatenate every system block we'd send to the live API
         system_text_parts: list[str] = []
         for block in self._system_for_call():
@@ -683,7 +764,24 @@ class HealthAgent:
             "```json\n"
             f"{json.dumps(clean_summaries, default=str)}\n"
             "```\n\n"
-            f"{sep}\n"
+            + (
+                f"## Workouts ({len(activities)} sessions in window — "
+                f"km / min / HR / kcal per session)\n"
+                "```json\n"
+                f"{json.dumps(activities, default=str)}\n"
+                "```\n\n"
+                if activities else ""
+            )
+            + (
+                f"## Fitness markers (latest known readings + recent trend; "
+                f"weight in kg — these update infrequently and may predate the "
+                f"snapshot window)\n"
+                "```json\n"
+                f"{json.dumps(fitness_markers, default=str)}\n"
+                "```\n\n"
+                if fitness_markers else ""
+            )
+            + f"{sep}\n"
             f"USER QUESTION\n"
             f"{sep}\n\n"
             f"{user_text}\n"
