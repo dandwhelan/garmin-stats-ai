@@ -419,7 +419,10 @@ local-only tool.
 - Bind to `127.0.0.1` (`WEB_HOST=127.0.0.1`) if you only use it from the same
   machine. The default `0.0.0.0` exposes it to your whole LAN.
 - For remote access, put it behind **Tailscale**, a WireGuard VPN, or an SSH
-  tunnel — *not* a public reverse proxy.
+  tunnel — *not* a public reverse proxy. To reach it from anywhere via a DNS name,
+  gate it at the edge with **Cloudflare Access (Zero Trust)** over a Cloudflare
+  Tunnel: see the step-by-step runbook in
+  [docs/deployment-security.md](docs/deployment-security.md).
 - Never expose the port directly to the internet. Your `.env` file contains
   your Garmin password and an Anthropic API key; the database contains years
   of biometric data.

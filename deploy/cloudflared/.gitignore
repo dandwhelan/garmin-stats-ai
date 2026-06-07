@@ -1,0 +1,9 @@
+# Never commit real tunnel credentials or live config.
+# This Pi uses a dashboard/token-managed tunnel (no local config.yml),
+# but guard defensively in case a real one is ever dropped here.
+*.json
+cert.pem
+config.yml
+config.yaml
+!*.example.yml
+!*.example.yaml

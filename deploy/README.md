@@ -128,3 +128,12 @@ all charts and starts a fresh chat session scoped to that user's data.
 2. `sudo systemctl enable --now garmin-fetch@<name>`
 3. Add `<name>:/home/pi/garmin-data/<name>.db` to `USERS` in `.env`.
 4. `sudo systemctl restart garmin-insights`
+
+---
+
+## Remote access (from anywhere)
+
+To reach the dashboard over the internet behind authentication, put it behind a
+**Cloudflare Tunnel + Cloudflare Access (Zero Trust)**. See
+[`cloudflared/README.md`](cloudflared/README.md) and the full runbook in
+[`../docs/deployment-security.md`](../docs/deployment-security.md).
