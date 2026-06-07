@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Top-bar redesign concepts</title>
+<style>
+  :root{
+    --bg:#0f1117; --surface:#1a1d27; --surface2:#22263a; --border:#2e3350;
+    --accent:#4f9cf9; --accent2:#7c6af7; --green:#34d399; --yellow:#fbbf24;
+    --red:#f87171; --text:#e2e8f0; --muted:#8892a4; --radius:12px; --radius-sm:8px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#07080c;color:var(--text);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:18px 14px 60px;}
+  h1{font-size:1.25rem;margin:0 0 4px;color:var(--accent);}
+  .sub{color:var(--muted);font-size:.85rem;margin:0 0 22px;line-height:1.5;}
+  .concept{margin-bottom:34px;}
+  .concept > .cap{font-weight:700;font-size:1rem;margin-bottom:2px;}
+  .concept > .note{color:var(--muted);font-size:.8rem;margin-bottom:10px;line-height:1.5;}
+
+  /* phone frame */
+  .phone{max-width:390px;margin:0 auto;border:1px solid var(--border);
+         border-radius:20px;overflow:hidden;background:var(--bg);
+         box-shadow:0 8px 30px rgba(0,0,0,.5);}
+  .statusbar{height:26px;display:flex;align-items:center;justify-content:space-between;
+             padding:0 16px;font-size:.7rem;color:var(--muted);background:#000;}
+  .body-stub{padding:16px;}
+  .stub-card{background:var(--surface);border:1px solid var(--border);
+             border-radius:var(--radius);padding:14px;margin-bottom:10px;}
+  .stub-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+  .stub-val{font-size:1.5rem;font-weight:700;color:var(--yellow);margin-top:4px;}
+  .stub-row{display:flex;gap:10px;}
+  .stub-row .stub-card{flex:1;margin-bottom:0;}
+
+  /* shared header bits */
+  .logo-full{font-size:1rem;font-weight:700;color:var(--accent);white-space:nowrap;}
+  .logo-icon{font-size:1.2rem;}
+  .sync{font-size:.72rem;color:var(--green);white-space:nowrap;display:flex;align-items:center;gap:5px;}
+  .sync .dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .avatar{width:30px;height:30px;border-radius:50%;background:var(--accent2);color:#fff;
+          display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem;flex-shrink:0;}
+  .chip{background:var(--surface2);border:1px solid var(--border);border-radius:999px;
+        padding:4px 10px;font-size:.75rem;display:flex;align-items:center;gap:6px;color:var(--text);}
+  .caret{color:var(--muted);font-size:.6rem;}
+
+  /* ---------- Concept A : two-row ---------- */
+  .A-hdr{background:var(--surface);border-bottom:1px solid var(--border);}
+  .A-row1{display:flex;align-items:center;gap:10px;padding:10px 14px;}
+  .A-row1 .sp{margin-left:auto;}
+  .A-tabs{display:flex;border-top:1px solid var(--border);}
+  .A-tabs button{flex:1;background:none;border:none;color:var(--muted);
+                 padding:11px 0;font-size:.82rem;font-weight:600;position:relative;}
+  .A-tabs button.on{color:var(--accent);}
+  .A-tabs button.on::after{content:"";position:absolute;left:18%;right:18%;bottom:0;
+                           height:2px;border-radius:2px;background:var(--accent);}
+
+  /* ---------- Concept B : single row + bottom nav ---------- */
+  .B-hdr{display:flex;align-items:center;gap:10px;padding:11px 14px;
+         background:var(--surface);border-bottom:1px solid var(--border);}
+  .B-hdr .sp{margin-left:auto;}
+  .bottomnav{display:flex;border-top:1px solid var(--border);background:var(--surface);}
+  .bottomnav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+               padding:9px 0 11px;color:var(--muted);text-decoration:none;font-size:.66rem;font-weight:600;}
+  .bottomnav a.on{color:var(--accent);}
+  .bottomnav .ic{font-size:1.15rem;line-height:1;}
+
+  /* ---------- Concept C : compact one-row, scroll tabs ---------- */
+  .C-hdr{background:var(--surface);border-bottom:1px solid var(--border);
+         display:flex;align-items:center;gap:10px;padding:9px 12px;}
+  .C-hdr .sp{margin-left:auto;}
+  .C-tabs{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:var(--bg);
+          border-bottom:1px solid var(--border);scrollbar-width:none;}
+  .C-tabs::-webkit-scrollbar{display:none;}
+  .C-tabs button{flex:0 0 auto;background:var(--surface2);border:1px solid var(--border);
+                 color:var(--muted);padding:7px 16px;border-radius:999px;font-size:.8rem;font-weight:600;}
+  .C-tabs button.on{background:rgba(79,156,249,.14);border-color:var(--accent);color:var(--accent);}
+
+  /* ---------- Concept D : hamburger drawer ---------- */
+  .D-hdr{display:flex;align-items:center;gap:12px;padding:12px 14px;
+         background:var(--surface);border-bottom:1px solid var(--border);}
+  .D-hdr .sp{margin-left:auto;}
+  .burger{display:flex;flex-direction:column;gap:4px;}
+  .burger span{width:20px;height:2px;background:var(--text);border-radius:2px;}
+  .D-drawer{position:absolute;top:0;left:0;width:64%;height:100%;background:var(--surface);
+            border-right:1px solid var(--border);padding:18px 0;}
+  .D-stage{position:relative;height:300px;overflow:hidden;}
+  .D-scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);}
+  .D-drawer .ditem{padding:13px 22px;font-weight:600;font-size:.92rem;color:var(--muted);}
+  .D-drawer .ditem.on{color:var(--accent);background:rgba(79,156,249,.1);
+                      border-left:3px solid var(--accent);padding-left:19px;}
+  .D-drawer .dhead{padding:0 22px 16px;font-weight:700;color:var(--accent);font-size:.95rem;}
+</style>
+</head>
+<body>
+  <h1>⌚ Top-bar redesign — mobile concepts</h1>
+  <p class="sub">Four ways to fix the crammed mobile header. Same colors as the app.
+     Resize / view on your phone. Pick one (or mix) and I'll wire it into the real
+     <code>index.html</code> + <code>style.css</code>.</p>
+
+  <!-- ============ CONCEPT A ============ -->
+  <div class="concept">
+    <div class="cap">A · Two-row bar (brand+user on top, full-width tabs below)</div>
+    <div class="note">Tabs get the whole width as evenly-spaced segments with an underline for the
+       active one. Email is dropped from the badge (still on tap/hold); sync becomes a small green chip.
+       Closest to the current look, lowest-risk change.</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:54</span><span>🔋 ▮▮▮</span></div>
+      <div class="A-hdr">
+        <div class="A-row1">
+          <span class="logo-icon">⌚</span>
+          <span class="logo-full">Health Insights</span>
+          <span class="sp"></span>
+          <span class="sync"><span class="dot"></span>5m</span>
+          <span class="chip">Dan <span class="caret">▾</span></span>
+        </div>
+        <div class="A-tabs">
+          <button class="on">Dashboard</button>
+          <button>Chat</button>
+          <button>Journal</button>
+          <button>Entities</button>
+        </div>
+      </div>
+      <div class="body-stub">
+        <div class="stub-row">
+          <div class="stub-card"><div class="stub-label">Sleep Score</div><div class="stub-val">72</div></div>
+          <div class="stub-card"><div class="stub-label">Resting HR</div><div class="stub-val" style="color:var(--green)">52</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CONCEPT B ============ -->
+  <div class="concept">
+    <div class="cap">B · Slim header + bottom tab bar (native-app style) ⭐</div>
+    <div class="note">Top shrinks to brand + sync + user avatar. The 4 tabs move to a fixed bottom bar
+       with icons — thumb-reachable, and it's the pattern people expect from a phone app.
+       Best mobile ergonomics; biggest visual change.</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:54</span><span>🔋 ▮▮▮</span></div>
+      <div class="B-hdr">
+        <span class="logo-icon">⌚</span>
+        <span class="logo-full">Health Insights</span>
+        <span class="sp"></span>
+        <span class="sync"><span class="dot"></span>5m</span>
+        <span class="avatar">D</span>
+      </div>
+      <div class="body-stub">
+        <div class="stub-row" style="margin-bottom:10px;">
+          <div class="stub-card"><div class="stub-label">Sleep Score</div><div class="stub-val">72</div></div>
+          <div class="stub-card"><div class="stub-label">Resting HR</div><div class="stub-val" style="color:var(--green)">52</div></div>
+        </div>
+        <div class="stub-card"><div class="stub-label">Overnight HRV</div><div class="stub-val">47 ms</div></div>
+      </div>
+      <div class="bottomnav">
+        <a class="on"><span class="ic">📊</span>Dashboard</a>
+        <a><span class="ic">💬</span>Chat</a>
+        <a><span class="ic">📓</span>Journal</a>
+        <a><span class="ic">🧩</span>Entities</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CONCEPT C ============ -->
+  <div class="concept">
+    <div class="cap">C · Compact one-row + horizontally scrollable pill tabs</div>
+    <div class="note">Everything stays at the top but stops wrapping: brand + sync + avatar on one tight
+       row, tabs become a swipeable strip of pills below. Scales to more tabs later without breaking.</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:54</span><span>🔋 ▮▮▮</span></div>
+      <div class="C-hdr">
+        <span class="logo-icon">⌚</span>
+        <span class="logo-full">Health Insights</span>
+        <span class="sp"></span>
+        <span class="sync"><span class="dot"></span>5m</span>
+        <span class="avatar">D</span>
+      </div>
+      <div class="C-tabs">
+        <button class="on">Dashboard</button>
+        <button>Chat</button>
+        <button>Journal</button>
+        <button>Entities</button>
+      </div>
+      <div class="body-stub">
+        <div class="stub-row">
+          <div class="stub-card"><div class="stub-label">Sleep Score</div><div class="stub-val">72</div></div>
+          <div class="stub-card"><div class="stub-label">Resting HR</div><div class="stub-val" style="color:var(--green)">52</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CONCEPT D ============ -->
+  <div class="concept">
+    <div class="cap">D · Minimal header + hamburger drawer</div>
+    <div class="note">Single tidy row; tabs + user switching live behind a ☰ menu drawer. Maximum
+       breathing room up top, but nav takes one extra tap — best if the bar gets more crowded
+       later. Shown with the drawer open.</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:54</span><span>🔋 ▮▮▮</span></div>
+      <div class="D-hdr">
+        <div class="burger"><span></span><span></span><span></span></div>
+        <span class="logo-full">Health Insights</span>
+        <span class="sp"></span>
+        <span class="sync"><span class="dot"></span>5m</span>
+        <span class="avatar">D</span>
+      </div>
+      <div class="D-stage">
+        <div class="body-stub">
+          <div class="stub-card"><div class="stub-label">Sleep Score</div><div class="stub-val">72</div></div>
+          <div class="stub-card"><div class="stub-label">Resting HR</div><div class="stub-val" style="color:var(--green)">52</div></div>
+        </div>
+        <div class="D-scrim"></div>
+        <div class="D-drawer">
+          <div class="dhead">⌚ Health Insights</div>
+          <div class="ditem on">Dashboard</div>
+          <div class="ditem">Chat</div>
+          <div class="ditem">Journal</div>
+          <div class="ditem">Entities</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
