@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/style.css?v=20260521g" />
+  <link rel="stylesheet" href="/static/style.css?v=20260607a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -770,6 +770,15 @@
         </div>
       </div>
       <div class="journal-recent">
+        <div class="journal-calendar" id="journal-calendar">
+          <div class="cal-header">
+            <button type="button" class="cal-nav" id="cal-prev" aria-label="Previous month">‹</button>
+            <span class="cal-title" id="cal-title"></span>
+            <button type="button" class="cal-nav" id="cal-next" aria-label="Next month">›</button>
+          </div>
+          <div class="cal-grid" id="cal-grid"></div>
+          <p class="cal-legend"><span class="cal-dot-legend"></span> day with a note · click any day to view or add</p>
+        </div>
         <h3>Recent notes</h3>
         <div id="journal-list" class="journal-list"></div>
       </div>
@@ -802,6 +811,6 @@
     </div>
   </main>
 
-  <script src="/static/app.js?v=20260521g"></script>
+  <script src="/static/app.js?v=20260607a"></script>
 </body>
 </html>

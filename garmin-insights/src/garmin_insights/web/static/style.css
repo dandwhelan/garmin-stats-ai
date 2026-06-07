@@ -1534,3 +1534,90 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
+
+/* ---- Journal calendar ---- */
+.journal-calendar {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+.cal-title { font-weight: 600; font-size: 0.95rem; color: var(--text); }
+.cal-nav {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  width: 30px; height: 30px;
+  line-height: 1;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.cal-nav:hover { border-color: var(--accent); color: var(--accent); }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.cal-dow {
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-bottom: 2px;
+}
+.cal-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.cal-cell.blank { background: none; cursor: default; }
+.cal-cell:not(.blank):hover { border-color: var(--accent); color: var(--text); }
+.cal-cell.today { color: var(--text); font-weight: 700; box-shadow: inset 0 0 0 1px var(--border); }
+.cal-cell.has-note {
+  background: rgba(79,156,249,0.16);
+  color: var(--text);
+  font-weight: 600;
+}
+.cal-cell.selected { border-color: var(--accent); }
+.cal-dot {
+  position: absolute;
+  bottom: 4px; left: 50%;
+  transform: translateX(-50%);
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+}
+.cal-cell.has-note .cal-dot { opacity: 1; }
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0.7rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.cal-dot-legend {
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  background: rgba(79,156,249,0.55);
+  flex-shrink: 0;
+}
