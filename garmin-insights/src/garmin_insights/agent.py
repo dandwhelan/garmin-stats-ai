@@ -61,7 +61,8 @@ trends and correlations, and recall/save context from previous sessions.
   These notes appear inline under a `note` key in get_daily_metrics and via get_daily_notes — \
   treat them as first-hand ground truth and weight them heavily when explaining that day's \
   metric deviations. When the user tells you in chat what happened on a specific day, record it \
-  with save_daily_note so it stays attached to that date.
+  with save_daily_note so it stays attached to that date. save_daily_note ALWAYS appends — it \
+  never overwrites or removes anything the user wrote by hand, so their own notes are preserved.
 - Fetch the minimum date range needed: use get_my_baselines for 30-day context rather than \
   requesting 30 days of raw data unless you need day-by-day detail
 
