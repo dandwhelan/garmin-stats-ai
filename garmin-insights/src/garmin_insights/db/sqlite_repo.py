@@ -62,7 +62,9 @@ class SqliteRepo:
         self.db_path = settings.sqlite_db_path
 
     def _get_conn(self):
-        return sqlite3.connect(self.db_path)
+        # timeout=10 waits out the fetcher's write locks instead of failing
+        # immediately with "database is locked".
+        return sqlite3.connect(self.db_path, timeout=10)
 
     # ------------------------------------------------------------------
     # Low-level helpers
@@ -83,10 +85,24 @@ class SqliteRepo:
                 df = df.set_index("time").sort_index()
             return df
         except Exception as e:
-            logger.error(f"Query failed: {e}")
-            return pd.DataFrame()
+            return self._handle_query_error(e)
         finally:
             conn.close()
+
+    @staticmethod
+    def _handle_query_error(e: Exception) -> pd.DataFrame:
+        """Swallow query errors as an empty frame — except lock contention.
+
+        A locked database must surface to the caller: returning an empty
+        DataFrame there renders as blank charts with no visible error.
+        """
+        if isinstance(e, sqlite3.OperationalError) and (
+            "locked" in str(e).lower() or "busy" in str(e).lower()
+        ):
+            logger.error("Query hit lock contention: %s", e)
+            raise e
+        logger.error(f"Query failed: {e}")
+        return pd.DataFrame()
 
     @staticmethod
     def _date_clause(start: str, end: str) -> str:
@@ -350,8 +366,7 @@ class SqliteRepo:
                 df = df.set_index("time").sort_index()
             return df
         except Exception as e:
-            logger.error(f"Query failed: {e}")
-            return pd.DataFrame()
+            return self._handle_query_error(e)
         finally:
             conn.close()
 
@@ -385,8 +400,7 @@ class SqliteRepo:
                 df = df.set_index("time").sort_index()
             return df
         except Exception as e:
-            logger.error(f"Query failed: {e}")
-            return pd.DataFrame()
+            return self._handle_query_error(e)
         finally:
             conn.close()
 

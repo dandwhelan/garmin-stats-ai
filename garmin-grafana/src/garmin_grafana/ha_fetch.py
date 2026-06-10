@@ -95,7 +95,7 @@ def build_daily_rows(
 def upsert_rows(db_path: str, rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, timeout=10) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ha_sensor_daily (
                 date           TEXT NOT NULL,

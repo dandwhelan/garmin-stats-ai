@@ -12,7 +12,11 @@ class GarminDB:
         self._init_db()
 
     def _get_conn(self):
-        return sqlite3.connect(self.db_path)
+        # timeout=10 makes writes wait out brief reader locks instead of
+        # failing immediately; WAL lets the web app read while we write.
+        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
 
     def _init_db(self):
         """Initialize the database schema."""

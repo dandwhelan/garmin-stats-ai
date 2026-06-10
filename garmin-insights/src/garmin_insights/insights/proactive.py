@@ -152,7 +152,7 @@ class InsightScanner:
         start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
         rows: list[tuple] = []
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=10)
             try:
                 cur = conn.execute(
                     "SELECT apparent_temp_max_c, european_aqi, pm25, "
