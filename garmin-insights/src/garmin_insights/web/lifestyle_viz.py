@@ -66,7 +66,7 @@ class LifestyleService:
         self.db_path = db_path
 
     def _conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        return sqlite3.connect(self.db_path, timeout=10)
 
     # ------------------------------------------------------------------
     # Helpers

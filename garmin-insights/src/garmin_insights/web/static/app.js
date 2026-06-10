@@ -9,6 +9,14 @@ if (typeof marked !== 'undefined' && typeof marked.use === 'function') {
   marked.use({ renderer: { del(text) { return text; } } });
 }
 
+// Render model/markdown output safely: the model's text is influenced by
+// data it reads (journal notes, activity names), so always sanitize the
+// generated HTML before it reaches innerHTML.
+function renderMarkdown(md) {
+  const html = marked.parse(md);
+  return (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(html) : html;
+}
+
 // ---- Active user ----
 const USER_KEY = 'garmin-active-user';
 let activeUser = localStorage.getItem(USER_KEY) || 'default';
@@ -1727,7 +1735,7 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const report = data.report || '(no report)';
-      output.innerHTML = marked.parse(report)
+      output.innerHTML = renderMarkdown(report)
         + `<div class="scan-continue-row">
              <button class="scan-continue-btn" data-focus="${focus}">💬 Continue in chat</button>
              <span class="scan-continue-hint">Reply to the follow-up questions with the agent</span>
@@ -1759,7 +1767,7 @@ function continueScanInChat(focus, report) {
   const tail = questionsMatch ? questionsMatch[1] : report;
   addMessage(
     'assistant',
-    `<strong>Health Agent</strong><div class="md-content">${marked.parse(
+    `<strong>Health Agent</strong><div class="md-content">${renderMarkdown(
       `_Continuing from your **${focus}** scan._\n\n${tail}`,
     )}</div>`,
   );
@@ -2072,7 +2080,7 @@ async function sendMessage() {
             break;
           case 'text':
             assistantContent += evt.text || '';
-            ensureAssistantBubble().innerHTML = marked.parse(assistantContent);
+            ensureAssistantBubble().innerHTML = renderMarkdown(assistantContent);
             scrollToBottom();
             break;
           case 'error':
@@ -2462,7 +2470,7 @@ function renderIllnessRadar(data) {
   const alerts = data?.alerts || [];
   if (alertEl) {
     alertEl.innerHTML = alerts.length
-      ? alerts.map(a => `<div class="alert"><strong>${a.date}</strong> · ${a.note} (composite z=${a.composite})</div>`).join('')
+      ? alerts.map(a => `<div class="alert"><strong>${escapeHtml(a.date)}</strong> · ${escapeHtml(a.note)} (composite z=${escapeHtml(String(a.composite))})</div>`).join('')
       : '<div class="alert ok">No illness signature in the current window.</div>';
   }
 }

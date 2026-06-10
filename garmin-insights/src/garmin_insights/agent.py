@@ -155,13 +155,6 @@ class HealthAgent:
         # Tool definitions never change — build once
         self._tools_cache = get_all_tools_anthropic(self._tool_handler)
 
-        # Opus 4.7+ supports "adaptive" thinking; older models use explicit budget
-        self._thinking = (
-            {"type": "adaptive"}
-            if "opus-4-7" in settings.claude_model
-            else {"type": "enabled", "budget_tokens": 8000}
-        )
-
         # Default history for CLI use; web callers pass their own list
         self._history: list[dict] = []
         self._key_findings: list[str] = []
@@ -385,13 +378,18 @@ class HealthAgent:
     def chat(self, user_message: str, history: list[dict] | None = None) -> str:
         """Send a message and get a response, executing tool calls as needed."""
         history = self._history if history is None else history
+        # Remember where this exchange started so a failed API call can roll
+        # the history back — otherwise a dangling user turn (no assistant
+        # reply) breaks role alternation and poisons every later call in the
+        # session.
+        base_len = len(history)
         history.append({"role": "user", "content": user_message})
 
         for round_num in range(10):
             try:
                 response = self._client.messages.create(
                     model=self._settings.claude_model,
-                    max_tokens=8096,
+                    max_tokens=16000,
                     system=self._system_for_call(),
                     tools=self._tools_cache,
                     messages=history,
@@ -399,13 +397,17 @@ class HealthAgent:
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
+                del history[base_len:]
                 return f"Error communicating with Claude: {e}"
 
             history.append({"role": "assistant", "content": response.content})
 
-            if response.stop_reason == "end_turn":
+            if response.stop_reason in ("end_turn", "max_tokens"):
                 text_parts = [b.text for b in response.content if b.type == "text"]
-                return "\n".join(text_parts) if text_parts else ""
+                text = "\n".join(text_parts) if text_parts else ""
+                if response.stop_reason == "max_tokens":
+                    text = (text + "\n\n" if text else "") + "_Response truncated (output token limit reached)._"
+                return text
 
             if response.stop_reason == "tool_use":
                 tool_results = []
@@ -441,13 +443,16 @@ class HealthAgent:
         keeps yielding once the next round begins streaming.
         """
         history = self._history if history is None else history
+        # See chat(): roll back on failure so a dangling user turn can't
+        # poison the session history.
+        base_len = len(history)
         history.append({"role": "user", "content": user_message})
 
         for round_num in range(10):
             try:
                 with self._client.messages.stream(
                     model=self._settings.claude_model,
-                    max_tokens=8096,
+                    max_tokens=16000,
                     system=self._system_for_call(),
                     tools=self._tools_cache,
                     messages=history,
@@ -462,12 +467,17 @@ class HealthAgent:
                     final = stream.get_final_message()
             except Exception as e:
                 logger.error("Stream error: %s", e)
+                del history[base_len:]
                 yield {"type": "error", "error": str(e)}
                 return
 
             history.append({"role": "assistant", "content": final.content})
 
             if final.stop_reason == "end_turn":
+                return
+
+            if final.stop_reason == "max_tokens":
+                yield {"type": "text", "text": "\n\n_Response truncated (output token limit reached)._"}
                 return
 
             if final.stop_reason == "tool_use":

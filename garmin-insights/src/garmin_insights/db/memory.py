@@ -84,7 +84,7 @@ class MemoryStore:
         self.db_path = settings.sqlite_db_path
 
     def _get_conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row  # Access columns by name
         return conn
 

@@ -196,7 +196,7 @@ def upsert_rows(db_path: str, rows: list[dict[str, Any]]) -> int:
     """Insert/replace rows into environment_daily. Returns count written."""
     if not rows:
         return 0
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
     try:
         cursor = conn.cursor()
         placeholders = ", ".join(["?"] * len(_COLUMNS))
