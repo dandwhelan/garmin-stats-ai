@@ -690,10 +690,13 @@
         <button class="scan-btn" data-focus="weekly">Weekly Summary</button>
       </div>
       <div class="scan-copy-row">
-        <span class="scan-copy-label">Don't want to spend API tokens? Copy the prompt and paste it into your own LLM chat (Claude.ai, ChatGPT, Gemini…):</span>
-        <button class="copy-prompt-btn" data-focus="general" title="Copy General Scan prompt">📋 General</button>
-        <button class="copy-prompt-btn" data-focus="morning" title="Copy Morning Brief prompt">📋 Morning</button>
-        <button class="copy-prompt-btn" data-focus="weekly" title="Copy Weekly Summary prompt">📋 Weekly</button>
+        <span class="scan-copy-label">Don't want to spend API tokens? Copy or download the prompt and paste/upload it into your own LLM chat (Claude.ai, ChatGPT, Gemini…):</span>
+        <button class="copy-prompt-btn" data-focus="general" title="Copy General Scan prompt to clipboard">📋 General</button>
+        <button class="download-prompt-btn" data-focus="general" title="Download General Scan prompt as a .txt file (more reliable for large prompts)">⬇</button>
+        <button class="copy-prompt-btn" data-focus="morning" title="Copy Morning Brief prompt to clipboard">📋 Morning</button>
+        <button class="download-prompt-btn" data-focus="morning" title="Download Morning Brief prompt as a .txt file (more reliable for large prompts)">⬇</button>
+        <button class="copy-prompt-btn" data-focus="weekly" title="Copy Weekly Summary prompt to clipboard">📋 Weekly</button>
+        <button class="download-prompt-btn" data-focus="weekly" title="Download Weekly Summary prompt as a .txt file (more reliable for large prompts)">⬇</button>
       </div>
       <div id="scan-output" class="scan-output hidden"></div>
     </section>
@@ -806,12 +809,13 @@
           placeholder="Ask about your health data..."
           rows="1"
         ></textarea>
+        <button id="download-prompt-btn" class="reset-btn" title="Download prompt as a .txt file to upload into another LLM (more reliable for large prompts)">⬇</button>
         <button id="copy-prompt-btn" class="reset-btn" title="Copy prompt to paste into another LLM (no API tokens used)">📋</button>
         <button id="send-btn" class="send-btn">Send</button>
       </div>
     </div>
   </main>
 
-  <script src="/static/app.js?v=20260610a"></script>
+  <script src="/static/app.js?v=20260615a"></script>
 </body>
 </html>
