@@ -1835,14 +1835,49 @@ async function generateAndCopyPrompt(body, label = 'prompt') {
     const ok = await copyToClipboard(data.prompt || '');
     if (ok) {
       const kb = Math.round((data.chars || 0) / 1024);
-      showCopyToast(`✓ ${label} copied (${kb} KB, ~${(data.approx_tokens || 0).toLocaleString()} tokens). Paste into any LLM chat.`);
+      const sizeNote = kb > 40
+        ? ' Large prompt — if the AI says data is missing, use ⬇ to download and upload as a file instead.'
+        : '';
+      showCopyToast(`✓ ${label} copied (${kb} KB, ~${(data.approx_tokens || 0).toLocaleString()} tokens). Paste into any LLM chat.${sizeNote}`);
     } else {
-      showCopyToast('Copy failed — your browser blocked clipboard access.', true);
+      showCopyToast('Copy failed — use ⬇ to download the prompt as a file instead.', true);
     }
   } catch (e) {
     showCopyToast(`Error: ${e.message}`, true);
   }
 }
+
+async function generateAndDownloadPrompt(body, label = 'prompt') {
+  try {
+    const res = await fetch('/api/prompt/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); detail = j.detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const data = await res.json();
+    const text = data.prompt || '';
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `garmin-prompt-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    const kb = Math.round((data.chars || 0) / 1024);
+    showCopyToast(`✓ ${label} downloaded (${kb} KB). Upload the file to Claude.ai or ChatGPT via their file-attach button.`);
+  } catch (e) {
+    showCopyToast(`Error: ${e.message}`, true);
+  }
+}
+
+const downloadPromptBtn = document.getElementById('download-prompt-btn');
 
 if (copyPromptBtn) {
   copyPromptBtn.addEventListener('click', async () => {
@@ -1863,6 +1898,25 @@ if (copyPromptBtn) {
   });
 }
 
+if (downloadPromptBtn) {
+  downloadPromptBtn.addEventListener('click', async () => {
+    const text = chatInput.value.trim();
+    if (!text) {
+      showCopyToast('Type a question first, then click ⬇.', true);
+      return;
+    }
+    downloadPromptBtn.disabled = true;
+    try {
+      await generateAndDownloadPrompt(
+        { user: activeUser, message: text },
+        'Chat prompt',
+      );
+    } finally {
+      downloadPromptBtn.disabled = false;
+    }
+  });
+}
+
 document.querySelectorAll('.copy-prompt-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const focus = btn.dataset.focus;
@@ -1879,6 +1933,28 @@ document.querySelectorAll('.copy-prompt-btn').forEach(btn => {
     btn.disabled = true;
     try {
       await generateAndCopyPrompt(body, `${focus[0].toUpperCase()}${focus.slice(1)} scan prompt`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
+document.querySelectorAll('.download-prompt-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const focus = btn.dataset.focus;
+    if (!focus) return;
+    const startVal = scanDateStart?.value || null;
+    const endVal = scanDateEnd?.value || null;
+    if (startVal && endVal && startVal > endVal) {
+      showCopyToast('Start date must be before end date.', true);
+      return;
+    }
+    const body = { user: activeUser, focus };
+    if (startVal) body.start_date = startVal;
+    if (endVal) body.end_date = endVal;
+    btn.disabled = true;
+    try {
+      await generateAndDownloadPrompt(body, `${focus[0].toUpperCase()}${focus.slice(1)} scan prompt`);
     } finally {
       btn.disabled = false;
     }

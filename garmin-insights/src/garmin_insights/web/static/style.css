@@ -975,6 +975,18 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 .copy-prompt-btn:hover { border-color: var(--accent); color: var(--accent); }
 .copy-prompt-btn:disabled { opacity: 0.5; cursor: progress; }
+.download-prompt-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: all 0.15s;
+}
+.download-prompt-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+.download-prompt-btn:disabled { opacity: 0.5; cursor: progress; }
 
 .copy-toast {
   position: fixed;
