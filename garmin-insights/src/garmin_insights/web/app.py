@@ -368,17 +368,25 @@ def _enrich_summaries_with_environment(bundle, summaries, start, end):
 
 
 def _last_sync_iso(db_path: str) -> str | None:
-    """Return the SQLite DB file's mtime as an ISO 8601 UTC timestamp.
+    """Return the freshest SQLite write time as an ISO 8601 UTC timestamp.
 
-    The fetcher writes to the DB on every successful Garmin pull, so the file
-    mtime is a faithful "last synced" indicator for the UI. None if missing.
+    The fetcher writes to the DB on every successful Garmin pull. Under WAL mode
+    those writes land in the ``-wal`` sidecar and the main ``.db`` file's mtime
+    only advances on a checkpoint (which can lag by hours), so we take the most
+    recent mtime across the DB and its ``-wal``/``-shm`` sidecars to get a
+    faithful "last synced" indicator for the UI. None if missing.
     """
     try:
         from pathlib import Path
         p = Path(db_path)
         if not p.exists():
             return None
-        return datetime.utcfromtimestamp(p.stat().st_mtime).isoformat() + "Z"
+        mtimes = [p.stat().st_mtime]
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(db_path + suffix)
+            if sidecar.exists():
+                mtimes.append(sidecar.stat().st_mtime)
+        return datetime.utcfromtimestamp(max(mtimes)).isoformat() + "Z"
     except Exception:
         return None
 
