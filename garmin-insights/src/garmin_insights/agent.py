@@ -144,14 +144,18 @@ class HealthAgent:
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(),
         )
-        # Cache the large system prompt to reduce token costs on repeat calls
-        self._system = [
-            {
-                "type": "text",
-                "text": system_content,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
+        # Static system prefix — identical for the life of this (per-user) agent.
+        # Beyond the general instructions + KB, the evidence-tier rules and the
+        # user-identity block never change, so we fold them into the cached
+        # prefix (cache_control on the LAST static block) rather than re-sending
+        # them uncached on every tool-loop round. The day-varying blocks (date,
+        # cycle phase, environment) are appended per-call in _system_for_call().
+        self._system = [{"type": "text", "text": system_content}]
+        self._system.append(self._evidence_tier_block())
+        _identity = self._identity_block()
+        if _identity is not None:
+            self._system.append(_identity)
+        self._system[-1] = {**self._system[-1], "cache_control": {"type": "ephemeral"}}
 
         # Tool definitions never change — build once
         self._tools_cache = get_all_tools_anthropic(self._tool_handler)
@@ -320,20 +324,24 @@ class HealthAgent:
         return {"type": "text", "text": text}
 
     def _system_for_call(self) -> list[dict]:
-        """Build the system blocks for a single API call: cached prompt + dynamic context."""
-        blocks = list(self._system)
-        blocks.append(self._today_block())
-        blocks.append(self._evidence_tier_block())
-        identity = self._identity_block()
-        if identity is not None:
-            blocks.append(identity)
+        """Build the system blocks for a single API call.
+
+        The static prefix (general instructions + KB + tier rules + identity) is
+        already cached for the life of the agent via ``self._system``. Here we
+        append only the day-varying blocks (today's date, cycle phase,
+        environment extremes) and put a second cache breakpoint on the last of
+        them, so the whole system prompt stays warm across the rounds of a
+        single conversation turn instead of being re-billed each round.
+        """
+        daily = [self._today_block()]
         cycle = self._cycle_context_block()
         if cycle is not None:
-            blocks.append(cycle)
+            daily.append(cycle)
         env = self._environment_context_block()
         if env is not None:
-            blocks.append(env)
-        return blocks
+            daily.append(env)
+        daily[-1] = {**daily[-1], "cache_control": {"type": "ephemeral"}}
+        return list(self._system) + daily
 
     def ensure_cache_fresh(self, days: int = 90) -> None:
         """Ensure recent daily summaries and baselines are up to date."""
@@ -590,10 +598,14 @@ class HealthAgent:
             if env_df is not None and not env_df.empty:
                 if env_df.index.name is not None:
                     env_df = env_df.reset_index()
+                # Keep only the environmental fields that actually drive an
+                # analysis. Secondary pollutants (pm10/o3/no2) and humidity/UV
+                # rarely change a finding and were ~15% of the whole snapshot, so
+                # they're dropped. Pollen species are zero-stripped per-day (see
+                # below) so permanently-absent species don't repeat on every row.
                 env_keys = (
                     "temp_max_c", "temp_min_c", "apparent_temp_max_c",
-                    "precipitation_mm", "humidity_mean", "uv_index_max",
-                    "european_aqi", "pm25", "pm10", "o3", "no2",
+                    "precipitation_mm", "european_aqi", "pm25",
                     "pollen_alder", "pollen_birch", "pollen_grass",
                     "pollen_mugwort", "pollen_olive", "pollen_ragweed",
                 )
@@ -604,6 +616,7 @@ class HealthAgent:
                     environment_by_date[d] = {
                         k: row[k] for k in env_keys
                         if row.get(k) is not None
+                        and not (k.startswith("pollen_") and row[k] in (0, 0.0))
                     }
                 summaries = [
                     {**s, **{f"env_{k}": v for k, v in environment_by_date[str(s.get("date", ""))[:10]].items()}}
@@ -709,10 +722,18 @@ class HealthAgent:
             "question can't be answered from it."
         )
 
-        # Convert to date-keyed dict — removes the repeated "date" field from every row
+        # Convert to date-keyed dict — removes the repeated "date" field from
+        # every row, plus a few fields that carry no extra signal in the
+        # snapshot: bodyBattery charged/drained are derivable from
+        # bodyBatteryChange, so they're dropped to save tokens.
+        _drop_fields = {"bodyBatteryChargedValue", "bodyBatteryDrainedValue"}
+
         def _to_date_dict(rows: list[dict]) -> dict:
             return {
-                str(s.get("date", ""))[:10]: {k: v for k, v in s.items() if k != "date"}
+                str(s.get("date", ""))[:10]: {
+                    k: v for k, v in s.items()
+                    if k != "date" and k not in _drop_fields
+                }
                 for s in rows
             }
 
