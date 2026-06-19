@@ -3540,10 +3540,29 @@ function initChartCustomization() {
 
   const prefs = loadPrefs();
 
+  // Summary metric cards (top of dashboard) — give each a stable id from its
+  // element id so it can be hidden/shown alongside the charts.
+  const cardItems = [];
+  dash.querySelectorAll('#metrics-grid .metric-card').forEach(card => {
+    const id = card.id;            // e.g. "card-sleepScore" — already unique
+    if (!id) return;
+    const labelEl = card.querySelector('.metric-label');
+    let label = 'Card';
+    if (labelEl) {
+      const clone = labelEl.cloneNode(true);
+      clone.querySelectorAll('.info-icon').forEach(n => n.remove());
+      label = clone.textContent.trim();
+    }
+    card.dataset.chartId = id;
+    if (prefs[id] === false) card.classList.add('chart-hidden');
+    cardItems.push({ id, label, el: card });
+  });
+
   // Walk through every chart-section AND charts-row, assign an id, and
   // group them by the most recent .section-divider.
   let currentGroup = 'Recovery & Activity';
   const groups = new Map(); // group label -> [{id, label, el}]
+  if (cardItems.length) groups.set('Summary Cards', cardItems);
   groups.set(currentGroup, []);
 
   const nodes = dash.querySelectorAll('h2.section-divider, .chart-section');
@@ -3578,6 +3597,8 @@ function initChartCustomization() {
     if (header) {
       header.classList.add('collapsible-header');
       const collapseKey = `collapsed:${id}`;
+      // Restore persisted collapsed state so it survives reloads.
+      if (prefs[collapseKey] === true) node.classList.add('chart-collapsed');
       header.addEventListener('click', e => {
         if (e.target.closest('button, input')) return;
         node.classList.toggle('chart-collapsed');
@@ -3677,6 +3698,21 @@ function initChartCustomization() {
   document.getElementById('customize-none-btn')?.addEventListener('click', () => {
     setAllVisible(false);
   });
+  document.getElementById('customize-expand-btn')?.addEventListener('click', () => {
+    setAllCollapsed(false);
+  });
+  document.getElementById('customize-collapse-btn')?.addEventListener('click', () => {
+    setAllCollapsed(true);
+  });
+
+  function setAllCollapsed(collapsed) {
+    const updated = loadPrefs();
+    dash.querySelectorAll('.chart-section').forEach(sec => {
+      sec.classList.toggle('chart-collapsed', collapsed);
+      if (sec.dataset.chartId) updated[`collapsed:${sec.dataset.chartId}`] = collapsed;
+    });
+    savePrefs(updated);
+  }
 
   function setAllVisible(visible) {
     const updated = loadPrefs();

@@ -836,7 +836,12 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   margin-bottom: 12px;
 }
 .customize-header strong { color: var(--accent); font-size: 0.95rem; }
-.customize-actions { display: flex; gap: 6px; }
+.customize-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.customize-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: -4px 0 12px;
+}
 .customize-mini {
   background: var(--surface2);
   border: 1px solid var(--border);
