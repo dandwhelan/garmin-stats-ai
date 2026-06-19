@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/style.css?v=20260607a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260619a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -54,13 +54,16 @@
 
     <div id="customize-panel" class="customize-panel hidden">
       <div class="customize-header">
-        <strong>Show / hide charts</strong>
+        <strong>Show / hide cards &amp; charts</strong>
         <div class="customize-actions">
           <button id="customize-all-btn" class="customize-mini">Show all</button>
           <button id="customize-none-btn" class="customize-mini">Hide all</button>
+          <button id="customize-expand-btn" class="customize-mini">Expand all</button>
+          <button id="customize-collapse-btn" class="customize-mini">Collapse all</button>
           <button id="customize-close-btn" class="customize-mini">Close</button>
         </div>
       </div>
+      <p class="customize-hint">Tip: click any chart heading (▾) to collapse just that one. Untick to hide it completely.</p>
       <div id="customize-list" class="customize-list"></div>
     </div>
 
@@ -816,6 +819,6 @@
     </div>
   </main>
 
-  <script src="/static/app.js?v=20260615a"></script>
+  <script src="/static/app.js?v=20260619a"></script>
 </body>
 </html>
