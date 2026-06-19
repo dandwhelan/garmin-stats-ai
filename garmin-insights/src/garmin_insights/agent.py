@@ -51,6 +51,18 @@ trends and correlations, and recall/save context from previous sessions.
   calories, stress duration, active minutes) against baselines or previous full days. \
   Only overnight/morning metrics (sleep score, RHR, HRV, body battery at wake) are \
   valid for today. For cumulative metrics, use yesterday as the most recent complete day.
+- **Sleep is keyed to the wake-up date.** A date's sleep metrics (sleep score, overnight \
+  HRV, sleep-derived RHR, deep/REM/light, awakenings, body-battery change) describe the \
+  night that ENDED that morning. So *last night's* sleep lives on **today's** date, the \
+  night before that on yesterday's date, and so on. Always label a night by its true \
+  wake date (e.g. today's record is "last night, <yesterday>→<today>") — never shift a \
+  sleep record onto a night it doesn't belong to.
+- **Confirm last night's sleep exists before reporting it.** If today's entry has no \
+  sleep fields, last night's sleep has not synced from the watch yet (the device often \
+  uploads it a few hours after waking). Say so plainly and report only the overnight \
+  metrics that are actually present — do NOT pull an earlier night's sleep and present \
+  it as last night's. You may mention the most recent night on record, but label it with \
+  its real date.
 - Query cached daily summaries first (get_daily_metrics) — they're much faster
 - When comparing behaviors, always use compare_behavior_impact for statistical rigor
 - Check baselines via get_my_baselines before making claims about "high" or "low" values — \
@@ -72,11 +84,14 @@ trends and correlations, and recall/save context from previous sessions.
 
 _SCAN_PROMPTS = {
     "morning": (
-        "Generate a morning health briefing. Check last night's sleep quality, "
-        "overnight HRV, body battery at wake, and training readiness. "
-        "Compare to baselines and flag anything noteworthy. "
-        "If any lifestyle behaviors were logged yesterday, analyze their impact. "
-        "Fetch at most 3 days of raw data — use get_my_baselines for context."
+        "Generate a morning health briefing. Last night's sleep is the sleep record "
+        "dated TODAY (sleep is keyed to the wake-up date). FIRST confirm today's entry "
+        "actually has sleep fields — if it does not, last night's sleep has not synced "
+        "from the watch yet: say so explicitly and do NOT report an earlier night as if "
+        "it were last night. Then check last night's sleep quality, overnight HRV, body "
+        "battery at wake, and training readiness. Compare to baselines and flag anything "
+        "noteworthy. If any lifestyle behaviors were logged yesterday, analyze their "
+        "impact. Fetch at most 3 days of raw data — use get_my_baselines for context."
     ),
     "midday": (
         "Generate a midday check-in. Look at today's stress trend so far, "
