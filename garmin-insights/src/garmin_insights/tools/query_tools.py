@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import Any
 
 from garmin_insights.db.sqlite_repo import SqliteRepo
@@ -67,6 +68,18 @@ def _df_to_clean_json(df) -> str:
     return json.dumps(_clean_records(records))
 
 
+def _night_label(wake_date: str) -> str:
+    """Sleep is keyed to the wake-up date — a record dated X covers the night that
+    ENDED on the morning of X. Return a '<prev>→<wake>' span so the model never
+    misattributes a sleep record to the wrong night (e.g. presenting an earlier
+    night as 'last night')."""
+    try:
+        d = datetime.strptime(wake_date[:10], "%Y-%m-%d").date()
+        return f"{(d - timedelta(days=1)).isoformat()}→{d.isoformat()}"
+    except (TypeError, ValueError):
+        return wake_date
+
+
 class QueryToolHandler:
     """Dispatches Claude tool calls to the appropriate data functions."""
 
@@ -106,7 +119,15 @@ class QueryToolHandler:
             return json.dumps({"message": "No sleep data found for this range"})
         df = df.reset_index()
         df["time"] = df["time"].astype(str)
-        return _df_to_clean_json(df)
+        records = json.loads(df.to_json(orient="records"))
+        # Tag each night with the span it covers. The 'date' column is the wake-up
+        # date, so "last night" is the record dated today — this label keeps the
+        # model from shifting a record onto the wrong night.
+        for r in records:
+            d = r.get("date")
+            if isinstance(d, str) and len(d) >= 10:
+                r["night_of"] = _night_label(d)
+        return json.dumps(_clean_records(records))
 
     def get_lifestyle_behaviors(
         self,
