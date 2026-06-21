@@ -732,9 +732,18 @@ class HealthAgent:
 
         sep = "-" * 40
         header_note = (
-            "Full system prompt + pre-fetched Garmin data snapshot below. "
-            "You have NO tools — use only the inline data; say so honestly if a "
-            "question can't be answered from it."
+            "Full system prompt + pre-fetched Garmin data snapshot below.\n\n"
+            "IMPORTANT — READ FIRST: The SYSTEM CONTEXT below was written for a "
+            "tool-calling agent, so it refers to \"tools\" (get_daily_metrics, "
+            "get_my_baselines, compare_behavior_impact, get_last_session_summary, "
+            "save_user_note, save_daily_note, …) and to \"90 days of history.\" In "
+            "this chat you do NOT have any of those tools and cannot fetch, save, or "
+            "look anything up. Everything those tools would return has already been "
+            "fetched and is included inline in the DATA SNAPSHOT section — treat that "
+            "snapshot as the complete result of every tool the system prompt mentions. "
+            "Ignore any instruction to call a tool or save a note, and analyse only "
+            "the inline data. If a question genuinely can't be answered from it, say "
+            "so honestly rather than inventing values."
         )
 
         # Convert to date-keyed dict — removes the repeated "date" field from

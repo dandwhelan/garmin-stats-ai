@@ -6,6 +6,7 @@ proactive insight scanner to detect and explain patterns.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -1429,6 +1430,36 @@ def _abbrev_citation(citation: str) -> str:
     return f"[{', '.join(parts)}]" if parts else citation
 
 
+# A period is a sentence boundary only when it is NOT preceded by a digit
+# (so decimals / abbreviations like "PM2.5", ">1.5×", "0.9%" don't split) and
+# is followed by whitespace or end-of-string.
+_SENTENCE_BOUNDARY = re.compile(r"(?<!\d)\.(?=\s|$)")
+# Abbreviations whose trailing period must not be treated as a sentence end.
+_NON_TERMINAL_ABBREV = ("e.g.", "i.e.", "approx.", "vs.", "et al.", "incl.", "cf.")
+
+
+def _first_sentence(text: str) -> str:
+    """Return the first sentence of ``text``.
+
+    A naive ``text.split(".")[0]`` truncates mid-number on effect sizes and
+    abbreviations (e.g. "...short-term PM2.5 exposure" → "...short-term PM2."),
+    silently mangling research summaries injected into the system prompt. This
+    skips periods inside decimals and known abbreviations so the key claim
+    survives intact.
+    """
+    text = text.strip()
+    pos = 0
+    while True:
+        match = _SENTENCE_BOUNDARY.search(text, pos)
+        if not match:
+            return text  # no clean boundary — keep the whole thing
+        end = match.end()
+        if text[:end].rstrip().endswith(_NON_TERMINAL_ABBREV):
+            pos = end  # boundary fell on an abbreviation — keep scanning
+            continue
+        return text[:end]
+
+
 def get_rules_summary_for_llm() -> str:
     """Format all rules as a concise text block for the LLM system prompt.
 
@@ -1453,7 +1484,7 @@ def get_rules_summary_for_llm() -> str:
         meta = ", ".join(meta_parts)
         # First sentence only — mechanism detail is captured in the full rule
         # objects used by InsightScanner; the LLM only needs the key claim.
-        summary = rule.research_summary.split(".")[0] + "."
+        summary = _first_sentence(rule.research_summary)
         lines.append(
             f"- **{rule.name}** [{meta}]: {summary} "
             f"{_abbrev_citation(rule.research_citation)}"
