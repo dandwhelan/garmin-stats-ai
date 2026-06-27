@@ -86,6 +86,32 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+// ---- Floating chat drawer (launcher + slide-up panel) ----
+const chatLauncher = document.getElementById('chat-launcher');
+const chatDrawer = document.getElementById('chat-drawer');
+const chatDrawerClose = document.getElementById('chat-drawer-close');
+
+function openChatDrawer() {
+  if (!chatDrawer) return;
+  chatDrawer.classList.add('open');
+  chatDrawer.setAttribute('aria-hidden', 'false');
+  chatLauncher?.classList.add('hidden');
+  const msgs = document.getElementById('chat-messages');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  setTimeout(() => document.getElementById('chat-input')?.focus(), 60);
+}
+function closeChatDrawer() {
+  if (!chatDrawer) return;
+  chatDrawer.classList.remove('open');
+  chatDrawer.setAttribute('aria-hidden', 'true');
+  chatLauncher?.classList.remove('hidden');
+}
+chatLauncher?.addEventListener('click', openChatDrawer);
+chatDrawerClose?.addEventListener('click', closeChatDrawer);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && chatDrawer?.classList.contains('open')) closeChatDrawer();
+});
+
 // ---- Health check / status dot + user badge + last-sync badge ----
 const statusDot = document.getElementById('status-dot');
 const userBadge = document.getElementById('user-badge');
@@ -320,6 +346,32 @@ function destroyAux(key) {
     auxCharts[key].destroy();
     delete auxCharts[key];
   }
+}
+
+// Show a friendly "no data" note in place of a chart canvas when its source
+// table has nothing for the selected window (e.g. a device that doesn't report
+// training status, or body-comp readings older than the range). Without this,
+// the canvas renders an empty axes frame (or a blank card) that looks broken.
+// Returns `isEmpty` so callers can `if (setChartEmpty(...)) return;`.
+function setChartEmpty(canvasId, isEmpty, msg) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return isEmpty;
+  const parent = canvas.parentElement;
+  let note = parent.querySelector('.no-data-msg');
+  if (isEmpty) {
+    canvas.style.display = 'none';
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'no-data-msg';
+      parent.appendChild(note);
+    }
+    note.textContent = msg || 'No data in this window.';
+    note.style.display = '';
+  } else {
+    canvas.style.display = '';
+    if (note) note.style.display = 'none';
+  }
+  return isEmpty;
 }
 
 function lastNDays(summaries, n) {
@@ -888,6 +940,8 @@ function renderAcwrChart(training) {
   const labels = ts.map(r => r.date.slice(5));
 
   destroyAux('acwr');
+  if (setChartEmpty('acwr-chart', ts.length === 0,
+    'No training-load data — your device isn’t reporting training status.')) return;
   const ctx = document.getElementById('acwr-chart');
   if (!ctx) return;
   auxCharts.acwr = new Chart(ctx, {
@@ -938,6 +992,8 @@ function renderReadinessChart(training) {
   const labels = tr.map(r => r.date.slice(5));
 
   destroyAux('readiness');
+  if (setChartEmpty('readiness-chart', tr.length === 0,
+    'No training-readiness data — your device isn’t reporting it.')) return;
   const ctx = document.getElementById('readiness-chart');
   if (!ctx) return;
   auxCharts.readiness = new Chart(ctx, {
@@ -1193,17 +1249,10 @@ function renderBodyComposition(records) {
   const labels = data.map(r => r.date.slice(5));
 
   destroyAux('bodyComp');
+  if (setChartEmpty('body-comp-chart', data.length === 0,
+    'No body-composition readings in this window — try a longer range.')) return;
   const ctx = document.getElementById('body-comp-chart');
   if (!ctx) return;
-
-  if (!data.length) {
-    auxCharts.bodyComp = new Chart(ctx, {
-      type: 'line',
-      data: { labels: [], datasets: [] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
-    });
-    return;
-  }
 
   auxCharts.bodyComp = new Chart(ctx, {
     type: 'line',
@@ -1688,8 +1737,11 @@ document.getElementById('date-apply-btn').addEventListener('click', () => {
   dateEndInput.max = end.toISOString().slice(0, 10);
 })();
 
-loadDashboard();
-setInterval(loadDashboard, 5 * 60_000); // refresh every 5 min
+// Note: the initial loadDashboard() + 5-min refresh interval are registered
+// once near the top of this file (after the chart-toggle setup). They were
+// previously duplicated here, which fired the entire dashboard fan-out
+// (dashboard, lifestyle, visualizations, environment, …) twice on every load
+// and every refresh. Do not re-add a second registration here.
 
 // ---- AI Scan ----
 const scanDateStart = document.getElementById('scan-date-start');
@@ -1757,9 +1809,8 @@ let _pendingScanContext = null;
 
 function continueScanInChat(focus, report) {
   _pendingScanContext = { focus, report };
-  // Switch to the Chat tab
-  const chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
-  chatTabBtn?.click();
+  // Open the chat drawer
+  openChatDrawer();
   // Drop a visible assistant bubble showing the scan's questions section,
   // so the user knows what they're replying to.
   const questionsMatch = report.match(/(Three quick questions[\s\S]*)$/i)

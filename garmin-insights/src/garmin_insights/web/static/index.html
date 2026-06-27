@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Insights</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/style.css?v=20260619a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260627b" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -22,7 +22,6 @@
       <span id="sync-badge" class="sync-badge" title=""></span>
       <nav>
         <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-        <button class="tab-btn" data-tab="chat">Chat</button>
         <button class="tab-btn" data-tab="journal">Journal</button>
         <button class="tab-btn" data-tab="entities">Entities</button>
       </nav>
@@ -792,7 +791,17 @@
     </div>
   </main>
 
-  <main id="tab-chat" class="tab-panel">
+  <!-- Floating chat launcher + slide-up drawer (available on every tab) -->
+  <button id="chat-launcher" class="chat-launcher" aria-label="Open the Health Agent chat">
+    <span class="chat-launcher-icon" aria-hidden="true">✦</span>
+    <span class="chat-launcher-label">Ask the Health Agent</span>
+  </button>
+
+  <aside id="chat-drawer" class="chat-drawer" aria-hidden="true" aria-label="Health Agent chat">
+    <div class="chat-drawer-header" id="chat-drawer-header">
+      <span class="chat-drawer-title"><span aria-hidden="true">✦</span> Health Agent</span>
+      <button id="chat-drawer-close" class="chat-drawer-close" aria-label="Collapse chat" title="Collapse chat">▾</button>
+    </div>
     <div class="chat-container">
       <div class="chat-messages" id="chat-messages">
         <div class="message assistant welcome" id="chat-welcome">
@@ -817,8 +826,8 @@
         <button id="send-btn" class="send-btn">Send</button>
       </div>
     </div>
-  </main>
+  </aside>
 
-  <script src="/static/app.js?v=20260619a"></script>
+  <script src="/static/app.js?v=20260627b"></script>
 </body>
 </html>

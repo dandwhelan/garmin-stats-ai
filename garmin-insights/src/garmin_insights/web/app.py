@@ -528,6 +528,11 @@ async def lifestyle(
 
     tracks_cycle = _tracks_cycle(bundle.agent._settings)
 
+    # Warm the per-window load cache once, single-threaded, so the ~21
+    # analytics below (which each re-read daily_summaries / lifestyle_journal)
+    # all hit cache instead of racing to read the same tables concurrently.
+    await loop.run_in_executor(None, svc.prewarm, start, end)
+
     results = await asyncio.gather(
         _run(svc.behavior_dose_response, start, end),
         _run(svc.caffeine_cutoff, start, end),

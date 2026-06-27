@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
@@ -61,17 +62,50 @@ def _prime_start(start: str, days: int = _BASELINE_PRIME_DAYS) -> str:
         return start
 
 
+# A single /api/lifestyle request fans out to ~21 analytics, and each one
+# independently re-reads daily_summaries / lifestyle_journal for the same
+# window — ~13 summary reads + ~8 journal reads per request, each re-parsing
+# JSON row-by-row. That JSON parsing (not the SQLite I/O) is the bulk of the
+# ~1.2s endpoint cost on the Pi. A short-TTL per-(kind, start, end) memo
+# collapses those into one read+parse each, served to every analytic from
+# cache. TTL bounds staleness to match the dashboard's 60s cache-rebuild
+# throttle, so fresh fetcher data still appears promptly.
+_LOAD_CACHE_TTL_SECONDS = 60
+
+
 class LifestyleService:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
+        # {(kind, start, end): (monotonic_ts, DataFrame)}
+        self._load_cache: dict[tuple[str, str, str], tuple[float, pd.DataFrame]] = {}
 
     def _conn(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path, timeout=10)
+
+    def _cached_load(self, kind: str, start: str, end: str) -> pd.DataFrame:
+        """Return a cached DataFrame for (kind, start, end) within the TTL,
+        otherwise load it fresh. Callers get a copy so in-place mutations
+        (set_index, column assignment) never corrupt the shared cache entry."""
+        key = (kind, start, end)
+        hit = self._load_cache.get(key)
+        now = time.monotonic()
+        if hit is not None and (now - hit[0]) < _LOAD_CACHE_TTL_SECONDS:
+            return hit[1].copy()
+        df = self._read_summaries(start, end) if kind == "summaries" \
+            else self._read_journal(start, end)
+        self._load_cache[key] = (now, df)
+        return df.copy()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     def _load_summaries(self, start: str, end: str) -> pd.DataFrame:
+        return self._cached_load("summaries", start, end)
+
+    def _load_journal(self, start: str, end: str) -> pd.DataFrame:
+        return self._cached_load("journal", start, end)
+
+    def _read_summaries(self, start: str, end: str) -> pd.DataFrame:
         with self._conn() as conn:
             df = pd.read_sql_query(
                 "SELECT date, metric_json FROM daily_summaries "
@@ -90,13 +124,26 @@ class LifestyleService:
             records.append(m)
         return pd.DataFrame(records)
 
-    def _load_journal(self, start: str, end: str) -> pd.DataFrame:
+    def _read_journal(self, start: str, end: str) -> pd.DataFrame:
         with self._conn() as conn:
             return pd.read_sql_query(
                 "SELECT date, behavior, category, status, value "
                 "FROM lifestyle_journal WHERE date >= ? AND date <= ?",
                 conn, params=(start, end),
             )
+
+    def prewarm(self, start: str, end: str) -> None:
+        """Populate the load cache single-threaded before the analytics fan out
+        concurrently (asyncio.gather over ~21 tasks). Without this, a cold
+        request has many tasks racing to read the same two tables at once; with
+        it they all hit warm cache. Covers the three ranges the analytics use:
+        the requested window, the baseline-primed window, and the journal."""
+        try:
+            self._load_summaries(start, end)
+            self._load_summaries(_prime_start(start), end)
+            self._load_journal(start, end)
+        except Exception:
+            logger.debug("Lifestyle prewarm failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # 1. Alcohol dose-response (and any logged behavior with numeric value)
