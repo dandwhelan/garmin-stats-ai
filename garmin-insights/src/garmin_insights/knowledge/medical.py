@@ -6,6 +6,7 @@ proactive insight scanner to detect and explain patterns.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -1453,7 +1454,10 @@ def get_rules_summary_for_llm() -> str:
         meta = ", ".join(meta_parts)
         # First sentence only — mechanism detail is captured in the full rule
         # objects used by InsightScanner; the LLM only needs the key claim.
-        summary = rule.research_summary.split(".")[0] + "."
+        # Split only on ". " preceded by a letter so decimal numbers like
+        # "+0.08 bpm", "PM2.5", ">1.5×" are never truncated mid-number.
+        _parts = re.split(r'(?<=[a-zA-Z])\. ', rule.research_summary, maxsplit=1)
+        summary = _parts[0] + "."
         lines.append(
             f"- **{rule.name}** [{meta}]: {summary} "
             f"{_abbrev_citation(rule.research_citation)}"

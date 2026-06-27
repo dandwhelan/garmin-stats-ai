@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Generator
 
@@ -557,6 +558,20 @@ class HealthAgent:
                 )
             user_text = scan if not message else f"{scan}\n\nAdditional notes: {message}"
 
+        # Neutralise tool-call language in scan prompts — these instructions make no
+        # sense in a portable context where no tools are callable. Replace the most
+        # common patterns: "Fetch at most N days … get_my_baselines" lines.
+        user_text = re.sub(
+            r"Fetch at most \d+ days of raw data[^.]*\.",
+            "Use the Baselines section in the DATA SNAPSHOT for context.",
+            user_text or "",
+        )
+        user_text = re.sub(
+            r" — use get_my_baselines for [^\n.]+",
+            " — use the Baselines section in the DATA SNAPSHOT",
+            user_text,
+        )
+
         # Resolve snapshot window (default last 30 days; respect explicit bounds)
         today = datetime.utcnow().date()
         end = end_date or today.isoformat()
@@ -566,6 +581,7 @@ class HealthAgent:
             end_d = today
             end = end_d.isoformat()
         start = start_date or (end_d - timedelta(days=snapshot_days)).isoformat()
+        actual_days = (end_d - datetime.strptime(start, "%Y-%m-%d").date()).days + 1
 
         # Lazily build cache for any uncached dates in the requested window,
         # so historical ranges (older than the rolling 90-day refresh) get a
@@ -737,6 +753,24 @@ class HealthAgent:
             "question can't be answered from it."
         )
 
+        # The system text is written for a tool-calling agent ("you have access to
+        # tools…", "call get_my_baselines", etc.). This override block is prepended
+        # so the receiving model clearly understands it is in portable mode and must
+        # ignore those instructions. Also corrects the "90 days" history claim, which
+        # refers to the live agent's cache window, not the portable snapshot.
+        portable_override = (
+            "PORTABLE PROMPT — NO TOOLS AVAILABLE\n\n"
+            "You have NO tools in this context. Every tool-calling instruction in "
+            "the system text below (get_daily_metrics, get_my_baselines, "
+            "compare_behavior_impact, save_user_note, get_last_session_summary, "
+            "get_environment_data, save_daily_note, etc.) is non-callable here. "
+            "Ignore all such instructions — analyse only the pre-fetched data "
+            "in the DATA SNAPSHOT section that follows.\n\n"
+            f"The snapshot covers {actual_days} days ({start} → {end}). "
+            "The system text below refers to \"90 days\" of history — that is the "
+            "live agent's cache window, not this snapshot."
+        )
+
         # Convert to date-keyed dict — removes the repeated "date" field from
         # every row, plus a few fields that carry no extra signal in the
         # snapshot: bodyBattery charged/drained are derivable from
@@ -787,6 +821,8 @@ class HealthAgent:
             f"{header_note}\n\n"
             f"{sep}\n"
             f"SYSTEM CONTEXT\n"
+            f"{sep}\n\n"
+            f"{portable_override}\n\n"
             f"{sep}\n\n"
             f"{system_text}\n\n"
             f"{sep}\n"
