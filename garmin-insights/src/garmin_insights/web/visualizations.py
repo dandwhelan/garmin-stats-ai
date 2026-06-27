@@ -118,18 +118,35 @@ class VisualizationService:
     # 3. Body composition — weight + body fat % + muscle mass trend
     # ------------------------------------------------------------------
     def body_composition(self, start: str, end: str) -> list[dict]:
-        sql = """
-            SELECT substr(time, 1, 10) AS date,
-                   weight, bmi, body_fat, muscle_mass, body_water, visceral_fat
-            FROM body_composition
-            WHERE time >= ? AND time <= ?
-            ORDER BY time
-        """
+        cols = "weight, bmi, body_fat, muscle_mass, body_water, visceral_fat"
         with self._conn() as conn:
-            df = pd.read_sql_query(sql, conn, params=(f"{start}T00:00:00", f"{end}T23:59:59"))
+            df = pd.read_sql_query(
+                f"SELECT substr(time, 1, 10) AS date, {cols} FROM body_composition "
+                "WHERE time >= ? AND time <= ? ORDER BY time",
+                conn, params=(f"{start}T00:00:00", f"{end}T23:59:59"),
+            )
+            # Body composition is slow-moving and often logged irregularly (e.g.
+            # only when the user steps on the scale). If the requested window has
+            # no readings, fall back to the last ~year so a recent weight trend
+            # still shows instead of a blank card. The frontend labels real dates,
+            # so the older points stay honest.
+            if df.empty:
+                try:
+                    year_ago = (datetime.fromisoformat(end) - timedelta(days=365)).date().isoformat()
+                except ValueError:
+                    year_ago = start
+                df = pd.read_sql_query(
+                    f"SELECT substr(time, 1, 10) AS date, {cols} FROM body_composition "
+                    "WHERE time >= ? ORDER BY time",
+                    conn, params=(f"{year_ago}T00:00:00",),
+                )
         if df.empty:
             return []
         df = df.groupby("date", as_index=False).mean(numeric_only=True)
+        # Garmin Connect stores weight in GRAMS. Convert to kg for display; the
+        # >1000 guard avoids double-converting any row already in kg.
+        if "weight" in df.columns:
+            df["weight"] = df["weight"].where(df["weight"] <= 1000, df["weight"] / 1000.0)
         for col in ("weight", "bmi", "body_fat", "muscle_mass", "body_water", "visceral_fat"):
             if col in df.columns:
                 df[col] = df[col].round(2)

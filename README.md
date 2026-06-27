@@ -26,7 +26,7 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 ## Project Structure
 
 - **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
-- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab) and CLI, powered by Claude. Defaults to `claude-sonnet-4-6`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-7`. Multi-user aware: one web server can serve any number of users via a header dropdown, each backed by their own SQLite DB and AI agent instance.
+- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab) and CLI, powered by Claude. Defaults to `claude-sonnet-4-6`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-8`. Multi-user aware: one web server can serve any number of users via a header dropdown, each backed by their own SQLite DB and AI agent instance.
 - **`users/`** — Per-user `.env` files for multi-user mode (one Garmin account per file). Real `.env`s are git-ignored; `*.env.example` templates are checked in. Each file declares `DISPLAY_NAME`, `BIOLOGICAL_SEX`, `START_WEB`, plus its own DB / token paths.
 - **`scripts/`** — Launcher scripts (`run-user.sh`, `run-dan.sh`, `run-helen.sh`) that start a fetcher (and optionally a web server) for one user, suitable for `cron @reboot`. Honours `START_WEB=false` so only one user's launcher owns the shared dashboard while others run fetchers only.
 
@@ -78,7 +78,7 @@ TOKEN_DIR=/home/yourname/.garminconnect
 ANTHROPIC_API_KEY=sk-ant-...
 
 # Optional overrides
-CLAUDE_MODEL=claude-sonnet-4-6   # default; set to claude-opus-4-7 for Opus
+CLAUDE_MODEL=claude-sonnet-4-6   # default; set to claude-opus-4-8 for Opus
 WEB_PORT=8080
 DISPLAY_NAME=Alice
 BIOLOGICAL_SEX=Female            # Male / Female — applied to the AI prompt for sex-specific
@@ -281,7 +281,7 @@ Raw Garmin data           →  Daily summary cache    →  Statistical analysis 
 - **Multi-signal illness detector** — combines RHR + HRV + respiration z-scores against personal baseline (Quer 2021)
 - **Social jet lag detector** — compares weekday vs. weekend sleep duration variance
 
-**3. Claude AI agent** — Uses `claude-sonnet-4-6` by default (or `claude-opus-4-7` if `CLAUDE_MODEL` is set) with extended thinking. The agent has 18 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
+**3. Claude AI agent** — Uses `claude-sonnet-4-6` by default (or `claude-opus-4-8` if `CLAUDE_MODEL` is set) with extended thinking. The agent has 18 callable tools, can reason about multiple metrics together, cites research from a built-in knowledge base, and remembers conversation context across sessions.
 
 ### What the agent can answer
 
@@ -387,7 +387,7 @@ The agent enforces mandatory wording substitutions: never "diagnose"; "illness-l
 
 ## AI Architecture (technical)
 
-The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUDE_MODEL=claude-opus-4-7` to opt into Opus for deeper reasoning.
+The agent defaults to **`claude-sonnet-4-6`** (fast, cost-effective). Set `CLAUDE_MODEL=claude-opus-4-8` to opt into Opus for deeper reasoning.
 
 - **Per-model thinking** — Opus uses `adaptive` thinking (Claude decides depth); Sonnet uses `enabled` with an 8,000-token budget. Both reason about health patterns before responding.
 - **Prompt caching** — the medical knowledge system prompt (**~13.4k chars** after optimisation — down from ~27k; first-sentence rule summaries, abbreviated citations and tier tags) is cached, reducing API costs by ~80% on repeat queries. Dynamic per-call blocks (date, identity, cycle context, environment extremes, evidence-tier output rules) are appended uncached so they always reflect the latest state.
@@ -438,7 +438,7 @@ Rough costs at typical usage (Sonnet 4.6, the default model):
   (the ~12k-char medical knowledge base is cached, cutting ~80% of system-prompt
   tokens on repeat queries).
 - **Daily AI health scan**: a few cents per run.
-- **Opus** (`CLAUDE_MODEL=claude-opus-4-7`): roughly 5× more per call. Worth it
+- **Opus** (`CLAUDE_MODEL=claude-opus-4-8`): roughly 5× more per call. Worth it
   for deep weekly reports; overkill for everyday chat.
 - Set a monthly spend cap in the [Anthropic console](https://console.anthropic.com).
 

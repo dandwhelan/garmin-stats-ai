@@ -27,7 +27,7 @@ The AI reads all of that, then instead of answering straight away it often goes 
 | Model | When used | Input | Output |
 |-------|-----------|-------|--------|
 | `claude-sonnet-4-6` | Default | $3 / M tokens | $15 / M tokens |
-| `claude-opus-4-7` | Set `CLAUDE_MODEL=claude-opus-4-7` in `.env` | $15 / M tokens | $75 / M tokens |
+| `claude-opus-4-8` | Set `CLAUDE_MODEL=claude-opus-4-8` in `.env` | $15 / M tokens | $75 / M tokens |
 
 **Use Sonnet unless you specifically want deeper reasoning.** The cost difference is 5×.
 

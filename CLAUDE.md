@@ -5,7 +5,7 @@
 Two-module Python monorepo:
 
 - **`garmin-grafana/`** — Data ingestion: fetches Garmin Connect metrics → SQLite
-- **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI, powered by Claude (default `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-7` for Opus)
+- **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI, powered by Claude (default `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-8` for Opus)
 - **`users/`** — Per-user `.env` files for multi-user mode (`*.env` git-ignored; `*.env.example` templates checked in)
 - **`scripts/`** — Launchers for multi-user mode (`run-user.sh <username>`, `run-dan.sh`, `run-helen.sh`)
 
@@ -109,7 +109,7 @@ HOME_LON=-0.1278                    # longitude
 ENVIRONMENT_PAST_DAYS=92            # Open-Meteo lookback window per fetch (default 92, max 92)
 
 # Model (optional)
-CLAUDE_MODEL=claude-sonnet-4-6      # default; set claude-opus-4-7 for Opus
+CLAUDE_MODEL=claude-sonnet-4-6      # default; set claude-opus-4-8 for Opus
 
 # Web server (optional)
 WEB_HOST=0.0.0.0
@@ -140,7 +140,7 @@ QueryToolHandler (tools/query_tools.py)
 
 ## Claude API Design
 
-- **Model**: defaults to `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-7` to opt into Opus
+- **Model**: defaults to `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-8` to opt into Opus
 - **Per-model thinking**: Opus → `{"type": "adaptive"}`; Sonnet (and any non-Opus) → `{"type": "enabled", "budget_tokens": 8000}`
 - **Prompt caching**: System prompt (medical knowledge with tier badges + confounders, **~13.4k chars** after optimisation) has `cache_control: {"type": "ephemeral"}` — cached after the first call, saving ~80% of system prompt tokens on repeat queries. Dynamic per-call blocks (`_today_block`, `_evidence_tier_block`, `_identity_block`, `_cycle_context_block`) are appended uncached so identity, date, cycle phase, and tier-language rules always reflect the latest state. KB was reduced from ~27k: first-sentence summaries only, abbreviated citations (`[Author Year]`), abbreviated tier tags (`[A, strong]` not `[Tier A, strong_association]`).
 - **Tool loop**: Manual (not automatic function calling) — dispatches tool calls, appends results, loops until `stop_reason == "end_turn"` (max 10 rounds)

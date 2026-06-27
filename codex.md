@@ -13,7 +13,7 @@ Two-module Python monorepo:
   plus a daily Open-Meteo pipeline for weather / air quality / pollen.
 - **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI. The
   *user-facing* AI (the chat / scan / dashboard insights) is powered by Anthropic
-  Claude (`claude-sonnet-4-6` by default, opt into `claude-opus-4-7` via
+  Claude (`claude-sonnet-4-6` by default, opt into `claude-opus-4-8` via
   `CLAUDE_MODEL`). Your Codex assistant is a separate thing — it edits the code
   in this repo; it does not run inside the deployed product.
 - **`users/`** — Per-user `.env` files for multi-user mode. Real `.env`s are
@@ -115,7 +115,7 @@ ENVIRONMENT_PAST_DAYS=92             # Open-Meteo lookback per fetch (default 92
 START_WEB=true                       # exactly ONE user sets this true; others run fetcher only
 
 # Model selection
-CLAUDE_MODEL=claude-sonnet-4-6       # default; set claude-opus-4-7 for Opus
+CLAUDE_MODEL=claude-sonnet-4-6       # default; set claude-opus-4-8 for Opus
 
 # Web server
 WEB_HOST=0.0.0.0

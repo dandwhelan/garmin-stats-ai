@@ -4394,6 +4394,13 @@ async function loadBedroomSleep(start, end) {
     if (!res.ok) { section.style.display = 'none'; return; }
     const data = await res.json();
     if (!data.available || !data.entries?.length) { section.style.display = 'none'; return; }
+    // Overnight bedroom temp depends on the HA sensor logging samples between
+    // 22:00–08:00. Home Assistant's recorder only retains recent detailed
+    // history, so most days have a single daytime reading and no overnight
+    // value — collapsing the chart to a meaningless flat micro-range. Hide the
+    // section until there are enough real overnight points to plot a trend.
+    const overnightPts = data.entries.filter(e => e.bedroom_overnight_c != null).length;
+    if (overnightPts < 3) { section.style.display = 'none'; return; }
     section.style.display = '';
     renderBedroomSleep(data);
   } catch (e) {
