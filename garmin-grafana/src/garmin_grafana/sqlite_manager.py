@@ -226,7 +226,16 @@ class GarminDB:
                 hr_time_in_zone_2 REAL,
                 hr_time_in_zone_3 REAL,
                 hr_time_in_zone_4 REAL,
-                hr_time_in_zone_5 REAL
+                hr_time_in_zone_5 REAL,
+                avg_run_cadence REAL,
+                max_run_cadence REAL,
+                avg_stride_length REAL,
+                avg_vertical_oscillation REAL,
+                avg_vertical_ratio REAL,
+                avg_ground_contact_time REAL,
+                avg_power REAL,
+                max_power REAL,
+                norm_power REAL
             )
         """)
         
@@ -473,6 +482,17 @@ class GarminDB:
                 ("altitude_trend", "TEXT"),
                 ("current_altitude", "REAL"),
             ],
+            "activity_summary": [
+                ("avg_run_cadence", "REAL"),
+                ("max_run_cadence", "REAL"),
+                ("avg_stride_length", "REAL"),
+                ("avg_vertical_oscillation", "REAL"),
+                ("avg_vertical_ratio", "REAL"),
+                ("avg_ground_contact_time", "REAL"),
+                ("avg_power", "REAL"),
+                ("max_power", "REAL"),
+                ("norm_power", "REAL"),
+            ],
         }
         for _table, _cols in _added_columns.items():
             for _col, _type in _cols:
@@ -664,6 +684,15 @@ class GarminDB:
                         'hr_time_in_zone_3': fields.get('hrTimeInZone_3'),
                         'hr_time_in_zone_4': fields.get('hrTimeInZone_4'),
                         'hr_time_in_zone_5': fields.get('hrTimeInZone_5'),
+                        'avg_run_cadence': fields.get('averageRunningCadenceInStepsPerMinute'),
+                        'max_run_cadence': fields.get('maxRunningCadenceInStepsPerMinute'),
+                        'avg_stride_length': fields.get('avgStrideLength'),
+                        'avg_vertical_oscillation': fields.get('avgVerticalOscillation'),
+                        'avg_vertical_ratio': fields.get('avgVerticalRatio'),
+                        'avg_ground_contact_time': fields.get('avgGroundContactTime'),
+                        'avg_power': fields.get('avgPower'),
+                        'max_power': fields.get('maxPower'),
+                        'norm_power': fields.get('normPower'),
                     }, ['activity_id'])
                 
                 elif measurement == 'ActivityGPS':

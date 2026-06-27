@@ -720,15 +720,35 @@ async def activity_export(
     if g.get("elevation_gain_m") is not None:
         lines += ["", f"**Elevation:** +{g['elevation_gain_m']} m gain / {g['elevation_loss_m']} m loss"]
 
-    for metric, label in [
-        ("cadence_spm", "Cadence"),
-        ("power_w", "Power"),
-        ("temp_c", "Temperature"),
-    ]:
-        avg_k, max_k = f"avg_{metric}", f"max_{metric}"
-        if g.get(avg_k) is not None:
-            unit = {"cadence_spm": "spm", "power_w": "W", "temp_c": "°C"}[metric]
-            lines.append(f"**{label}:** avg {g[avg_k]} {unit} | max {g[max_k]} {unit}")
+    # Running dynamics — only populated for runs (avg_run_cadence et al.).
+    rd = []
+    if s.get("avg_run_cadence"):
+        max_rc = f" | max {int(s['max_run_cadence'])} spm" if s.get("max_run_cadence") else ""
+        rd.append(f"  Cadence: avg {int(s['avg_run_cadence'])} spm{max_rc}")
+    if s.get("avg_stride_length"):  # stored in cm → metres
+        rd.append(f"  Stride length: {s['avg_stride_length'] / 100:.2f} m")
+    if s.get("avg_vertical_oscillation") is not None:
+        rd.append(f"  Vertical oscillation: {s['avg_vertical_oscillation']:.1f} cm")
+    if s.get("avg_vertical_ratio") is not None:
+        rd.append(f"  Vertical ratio: {s['avg_vertical_ratio']:.1f} %")
+    if s.get("avg_ground_contact_time"):
+        rd.append(f"  Ground contact time: {int(s['avg_ground_contact_time'])} ms")
+    if rd:
+        lines += ["", "**Running Dynamics:**", *rd]
+
+    # Power — prefer the activity summary (incl. normalized power); fall back to
+    # GPS-track aggregates when the summary has none (e.g. older fetches).
+    if s.get("avg_power"):
+        norm = f" | norm {int(s['norm_power'])} W" if s.get("norm_power") else ""
+        max_p = f" | max {int(s['max_power'])} W" if s.get("max_power") else ""
+        lines.append(f"**Power:** avg {int(s['avg_power'])} W{max_p}{norm}")
+    elif g.get("avg_power_w") is not None:
+        lines.append(f"**Power:** avg {g['avg_power_w']} W | max {g['max_power_w']} W")
+
+    if g.get("avg_cadence_spm") is not None and not s.get("avg_run_cadence"):
+        lines.append(f"**Cadence:** avg {g['avg_cadence_spm']} spm | max {g['max_cadence_spm']} spm")
+    if g.get("avg_temp_c") is not None:
+        lines.append(f"**Temperature:** avg {g['avg_temp_c']} °C | max {g['max_temp_c']} °C")
 
     if s.get("lap_count"):
         lines.append(f"**Laps:** {int(s['lap_count'])}")

@@ -637,6 +637,16 @@ def get_activity_summary(date_str):
                     'hrTimeInZone_3': activity.get('hrTimeInZone_3'),
                     'hrTimeInZone_4': activity.get('hrTimeInZone_4'),
                     'hrTimeInZone_5': activity.get('hrTimeInZone_5'),
+                    # Running dynamics (only populated for runs) + power
+                    'averageRunningCadenceInStepsPerMinute': activity.get('averageRunningCadenceInStepsPerMinute'),
+                    'maxRunningCadenceInStepsPerMinute': activity.get('maxRunningCadenceInStepsPerMinute'),
+                    'avgStrideLength': activity.get('avgStrideLength'),
+                    'avgVerticalOscillation': activity.get('avgVerticalOscillation'),
+                    'avgVerticalRatio': activity.get('avgVerticalRatio'),
+                    'avgGroundContactTime': activity.get('avgGroundContactTime'),
+                    'avgPower': activity.get('avgPower'),
+                    'maxPower': activity.get('maxPower'),
+                    'normPower': activity.get('normPower'),
                 }
             })
             points_list.append({
