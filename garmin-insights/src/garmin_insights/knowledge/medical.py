@@ -36,6 +36,10 @@ class InsightRule:
     confounders: list[str] = field(default_factory=list)
     # True when rule only fires if user has logged the trigger behavior / context.
     requires_user_context: bool = False
+    # "female" when the rule only applies to menstruating users (cycle-phase
+    # physiology). None = applies to everyone. Filtered out of the LLM summary
+    # for non-female users so a male persona never receives cycle rules.
+    sex_specific: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +873,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "unless other clear symptoms are present."
         ),
         confounders=["alcohol", "illness", "heat", "travel", "training_strain", "poor_sleep"],
+        sex_specific="female",
     ),
 
     InsightRule(
@@ -896,6 +901,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         confounders=["sleep_loss", "alcohol", "stress", "training_load"],
         requires_user_context=True,
+        sex_specific="female",
     ),
     InsightRule(
         name="cycle_sleep_loss_confound",
@@ -919,6 +925,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "change to sleep debt first; cycle phase is an additive but separate driver."
         ),
         confounders=["alcohol", "illness", "heat", "travel", "training_strain"],
+        sex_specific="female",
     ),
     InsightRule(
         name="pms_sleep_architecture",
@@ -945,6 +952,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         measurement_confidence="medium",
         confounders=["sleep_loss", "alcohol", "stress", "illness", "heat"],
+        sex_specific="female",
     ),
 
     # ===== DOMS =====
@@ -1430,17 +1438,25 @@ def _abbrev_citation(citation: str) -> str:
     return f"[{', '.join(parts)}]" if parts else citation
 
 
-def get_rules_summary_for_llm() -> str:
+def get_rules_summary_for_llm(biological_sex: str | None = None) -> str:
     """Format all rules as a concise text block for the LLM system prompt.
 
     Each rule is emitted with its evidence tier, claim strength, measurement
     confidence (when not 'high'), and confounder list so the agent can match
     its output language to the strength of the evidence.
     Summaries are truncated to the first sentence; citations are abbreviated.
+
+    ``biological_sex`` filters the knowledge base: for non-female users the
+    cycle-phase rules (``sex_specific="female"``) are dropped entirely and the
+    ``luteal_phase`` confounder tag is stripped from every remaining rule, so a
+    male persona never receives menstrual-cycle context it is told it can't use.
     """
+    is_female = (biological_sex or "").strip().lower().startswith("f")
     lines = ["## Medical Evidence Knowledge Base\n"]
     current_cat = ""
     for rule in INSIGHT_RULES:
+        if rule.sex_specific == "female" and not is_female:
+            continue
         if rule.category != current_cat:
             current_cat = rule.category
             lines.append(f"\n### {current_cat.title()}")
@@ -1462,6 +1478,9 @@ def get_rules_summary_for_llm() -> str:
             f"- **{rule.name}** [{meta}]: {summary} "
             f"{_abbrev_citation(rule.research_citation)}"
         )
-        if rule.confounders:
-            lines.append(f"  Confounders: {', '.join(rule.confounders)}")
+        confounders = rule.confounders
+        if not is_female:
+            confounders = [c for c in confounders if c != "luteal_phase"]
+        if confounders:
+            lines.append(f"  Confounders: {', '.join(confounders)}")
     return "\n".join(lines)

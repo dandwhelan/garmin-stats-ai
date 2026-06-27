@@ -97,7 +97,9 @@ _SCAN_PROMPTS = {
         "actually has sleep fields — if it does not, last night's sleep has not synced "
         "from the watch yet: say so explicitly and do NOT report an earlier night as if "
         "it were last night. Then check last night's sleep quality, overnight HRV, body "
-        "battery at wake, and training readiness. Compare to baselines and flag anything "
+        "battery at wake, and training readiness (if your watch reports it — many models "
+        "don't, so skip it silently when no readiness data is present). Compare to "
+        "baselines and flag anything "
         "noteworthy. If any lifestyle behaviors were logged yesterday, analyze their "
         "impact. Fetch at most 3 days of raw data — use get_my_baselines for context."
     ),
@@ -165,7 +167,7 @@ class HealthAgent:
             self._thinking = {"type": "enabled", "budget_tokens": 8000}
 
         system_content = _SYSTEM_PROMPT.format(
-            medical_knowledge=get_rules_summary_for_llm(),
+            medical_knowledge=get_rules_summary_for_llm(settings.biological_sex),
         )
         # Static system prefix — identical for the life of this (per-user) agent.
         # Beyond the general instructions + KB, the evidence-tier rules and the
@@ -218,7 +220,7 @@ class HealthAgent:
         small system block so every reply is phase-aware without the model
         having to call a tool. Returns None when the user doesn't track cycles."""
         try:
-            today = datetime.utcnow().date()
+            today = datetime.now().date()
             start = (today - timedelta(days=7)).isoformat()
             end = today.isoformat()
             df = self._repo.query_menstrual_cycle(start, end)
@@ -252,7 +254,7 @@ class HealthAgent:
         a tool. Returns None when no environment data exists or nothing is
         out of range."""
         try:
-            today = datetime.utcnow().date()
+            today = datetime.now().date()
             start = (today - timedelta(days=2)).isoformat()
             end = today.isoformat()
             df = self._repo.query_environment(start, end)
@@ -297,7 +299,9 @@ class HealthAgent:
 
             text = (
                 "## Current Environmental Context (last 48h, user's home location)\n"
-                f"Active environmental confounders: {', '.join(flags)}.\n"
+                f"Active environmental confounders: {', '.join(flags)} "
+                "(48h peak values — today's actual reading may be lower than the "
+                "peak, so weight these by how close today is to the peak).\n"
                 "When ranking causes for RHR↑ / HRV↓ / respiration↑ / sleep "
                 "fragmentation, include these alongside training load, alcohol, "
                 "sleep loss and illness — they are research-validated wearable-cohort "
@@ -579,8 +583,12 @@ class HealthAgent:
             user_text,
         )
 
-        # Resolve snapshot window (default last 30 days; respect explicit bounds)
-        today = datetime.utcnow().date()
+        # Resolve snapshot window (default last 30 days; respect explicit bounds).
+        # Use the LOCAL calendar day (like _today_block) — daily_stats rows are
+        # keyed by local date, and a UTC "today" here desynced the snapshot end and
+        # baseline-anchor label from the printed "Today's Date" during the BST/UTC
+        # offset window just after local midnight.
+        today = datetime.now().date()
         end = end_date or today.isoformat()
         try:
             end_d = datetime.strptime(end, "%Y-%m-%d").date()
@@ -589,6 +597,14 @@ class HealthAgent:
             end = end_d.isoformat()
         start = start_date or (end_d - timedelta(days=snapshot_days)).isoformat()
         actual_days = (end_d - datetime.strptime(start, "%Y-%m-%d").date()).days + 1
+
+        # Baselines always anchor to the live "today" and EXCLUDE it (today is
+        # incomplete), so each metric's `latest_value` is in fact the last
+        # COMPLETE day — yesterday relative to today, not the snapshot end. We
+        # surface both dates so the reader doesn't mistake `latest_value` for
+        # today's overnight reading (which lives in the daily summaries instead).
+        today_iso = today.isoformat()
+        last_complete_day = (today - timedelta(days=1)).isoformat()
 
         # Lazily build cache for any uncached dates in the requested window,
         # so historical ranges (older than the rolling 90-day refresh) get a
@@ -745,6 +761,51 @@ class HealthAgent:
         except Exception as e:
             logger.debug("Portable prompt: body composition fetch failed: %s", e)
 
+        # Training readiness & status — device-dependent. Garmin performance
+        # watches report these; many models (e.g. the Venu series) do not, so
+        # the tables can be legitimately empty and the section is then omitted.
+        # The morning/weekly scans ask about training readiness, so embed it
+        # when present rather than asking the receiving model for data the
+        # snapshot lacks. Several readings land per day; we keep the latest one
+        # per date, which is the value relevant to a morning briefing.
+        def _latest_per_day(df, keys: tuple[str, ...]) -> dict:
+            if df is None or getattr(df, "empty", True):
+                return {}
+            d = df.reset_index() if df.index.name is not None else df
+            by_date: dict = {}
+            for row in sorted(d.to_dict(orient="records"),
+                              key=lambda r: str(r.get("time", ""))):
+                day = str(row.get("time", ""))[:10]
+                if not day:
+                    continue
+                vals = {k: row[k] for k in keys if row.get(k) is not None}
+                if vals:
+                    by_date[day] = vals
+            return dict(sorted(by_date.items()))
+
+        training: dict = {}
+        try:
+            readiness = _latest_per_day(
+                self._repo.query_training_readiness(start, end),
+                ("score", "level", "recovery_time", "acute_load",
+                 "hrv_factor_percent", "sleep_score_factor_percent"),
+            )
+            if readiness:
+                training["readiness"] = readiness
+        except Exception as e:
+            logger.debug("Portable prompt: training readiness fetch failed: %s", e)
+        try:
+            status = _latest_per_day(
+                self._repo.query_training_status(start, end),
+                ("training_status_feedback_phrase",
+                 "daily_acute_chronic_workload_ratio", "weekly_training_load",
+                 "heat_acclimation_percentage", "altitude_acclimation_percentage"),
+            )
+            if status:
+                training["status"] = status
+        except Exception as e:
+            logger.debug("Portable prompt: training status fetch failed: %s", e)
+
         # Concatenate every system block we'd send to the live API
         system_text_parts: list[str] = []
         for block in self._system_for_call():
@@ -752,6 +813,24 @@ class HealthAgent:
             if text:
                 system_text_parts.append(text)
         system_text = "\n\n".join(system_text_parts)
+
+        # The system text is written for the live tool-calling agent, which has a
+        # 90-day cache window. In portable mode the only history is the snapshot
+        # below, so rewrite the "90 days" claim to the real window rather than
+        # leaving a contradiction the reader has to mentally discount.
+        system_text = system_text.replace(
+            "You have access to **90 days** of history.",
+            f"You have access to a **{actual_days}-day** snapshot "
+            f"({start} → {end}) — the data below is all the history you have.",
+        ).replace("Use this longer window for finding", "Use it for finding")
+
+        # The environment block ends with a "Call get_environment_data …" hint
+        # aimed at the live agent. In portable mode no tools are callable, so drop
+        # that one live call-to-action (a no-op when no environment block fired).
+        system_text = system_text.replace(
+            " Call get_environment_data if you need the full per-day numbers.",
+            "",
+        )
 
         sep = "-" * 40
         header_note = (
@@ -763,19 +842,18 @@ class HealthAgent:
         # The system text is written for a tool-calling agent ("you have access to
         # tools…", "call get_my_baselines", etc.). This override block is prepended
         # so the receiving model clearly understands it is in portable mode and must
-        # ignore those instructions. Also corrects the "90 days" history claim, which
-        # refers to the live agent's cache window, not the portable snapshot.
+        # ignore those instructions — including the cross-session continuity ones,
+        # since a pasted prompt has no prior session to recall.
         portable_override = (
             "PORTABLE PROMPT — NO TOOLS AVAILABLE\n\n"
             "You have NO tools in this context. Every tool-calling instruction in "
             "the system text below (get_daily_metrics, get_my_baselines, "
             "compare_behavior_impact, save_user_note, get_last_session_summary, "
-            "get_environment_data, save_daily_note, etc.) is non-callable here. "
-            "Ignore all such instructions — analyse only the pre-fetched data "
-            "in the DATA SNAPSHOT section that follows.\n\n"
-            f"The snapshot covers {actual_days} days ({start} → {end}). "
-            "The system text below refers to \"90 days\" of history — that is the "
-            "live agent's cache window, not this snapshot."
+            "get_environment_data, save_daily_note, etc.) is non-callable here, and "
+            "there is no prior session to recall. Ignore all such instructions — "
+            "analyse only the pre-fetched data in the DATA SNAPSHOT section that "
+            "follows, which is the entire history available to you "
+            f"({actual_days} days, {start} → {end})."
         )
 
         # Convert to date-keyed dict — removes the repeated "date" field from
@@ -837,8 +915,11 @@ class HealthAgent:
             f"{sep}\n\n"
             f"## Date range: {start} → {end}\n\n"
             f"## Baselines ({len(clean_baselines)} metrics — rolling 7d/30d "
-            f"anchored to TODAY ({datetime.utcnow().date().isoformat()}), "
-            f"NOT the snapshot window above)\n"
+            f"averages anchored to TODAY ({today_iso}), NOT the snapshot window "
+            f"above. Each metric's `latest_value` is the last COMPLETE day "
+            f"({last_complete_day}) — today is excluded from baselines, so for "
+            f"today's overnight readings (sleep score, RHR, HRV, body battery at "
+            f"wake) use the {today_iso} row in Daily summaries, which will differ)\n"
             "```json\n"
             f"{json.dumps(clean_baselines, default=str)}\n"
             "```\n\n"
@@ -870,6 +951,17 @@ class HealthAgent:
                 f"{json.dumps(fitness_markers, default=str)}\n"
                 "```\n\n"
                 if fitness_markers else ""
+            )
+            + (
+                f"## Training readiness & status "
+                f"({len(training.get('readiness', {}))} readiness days, "
+                f"{len(training.get('status', {}))} status days — device-reported, "
+                f"latest reading per day; the most recent day is the one relevant "
+                f"to a morning briefing)\n"
+                "```json\n"
+                f"{json.dumps(_round_floats(training), default=str)}\n"
+                "```\n\n"
+                if training else ""
             )
             + f"{sep}\n"
             f"USER QUESTION\n"
