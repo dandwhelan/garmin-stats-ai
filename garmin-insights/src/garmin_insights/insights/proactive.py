@@ -35,16 +35,36 @@ logger = logging.getLogger(__name__)
 _STRAIN_TRIAD = ("restingHeartRate", "avgOvernightHrv", "averageRespirationValue")
 
 
-def _attach_rule_metadata(finding: dict[str, Any], rule) -> None:
+def _is_female(biological_sex: str | None) -> bool:
+    """Mirror the cycle-rule gate used in get_rules_summary_for_llm."""
+    return (biological_sex or "").strip().lower().startswith("f")
+
+
+def _visible_confounders(confounders, biological_sex: str | None) -> list[str]:
+    """Drop cycle-only confounders for non-female users.
+
+    Mirrors the logic in ``get_rules_summary_for_llm``: ``luteal_phase`` is
+    physiologically meaningless for male users, so it must never surface in
+    scanner output (composite ranked contributors or single-rule findings).
+    """
+    cs = list(confounders or [])
+    if not _is_female(biological_sex):
+        cs = [c for c in cs if c != "luteal_phase"]
+    return cs
+
+
+def _attach_rule_metadata(finding: dict[str, Any], rule, biological_sex: str | None = None) -> None:
     """Stamp tier + confounder fields onto a finding so the agent can decide
-    how strongly to phrase its reply."""
+    how strongly to phrase its reply. For non-female users ``luteal_phase`` is
+    stripped from the emitted confounder list (cycle physiology can't apply)."""
     finding["medical_context"] = rule.research_summary
     finding["citation"] = rule.research_citation
     finding["evidence_tier"] = rule.evidence_tier
     finding["claim_strength"] = rule.claim_strength
     finding["measurement_confidence"] = rule.measurement_confidence
-    if rule.confounders:
-        finding["confounders"] = list(rule.confounders)
+    confounders = _visible_confounders(rule.confounders, biological_sex)
+    if confounders:
+        finding["confounders"] = confounders
     if rule.requires_user_context:
         finding["requires_user_context"] = True
 
@@ -52,9 +72,17 @@ def _attach_rule_metadata(finding: dict[str, Any], rule) -> None:
 class InsightScanner:
     """Scans cached data for anomalies and behavior correlations."""
 
-    def __init__(self, memory: MemoryStore, analysis: AnalysisEngine) -> None:
+    def __init__(
+        self,
+        memory: MemoryStore,
+        analysis: AnalysisEngine,
+        biological_sex: str | None = None,
+    ) -> None:
         self._memory = memory
         self._analysis = analysis
+        # Used to strip cycle-only confounders (luteal_phase) from emitted
+        # findings for non-female users — same gate the LLM summary applies.
+        self._biological_sex = biological_sex
 
     def scan_anomalies(self) -> list[dict[str, Any]]:
         """Detect metric anomalies relative to baselines."""
@@ -67,7 +95,7 @@ class InsightScanner:
             ]
             finding = a.to_dict()
             if matching_rules:
-                _attach_rule_metadata(finding, matching_rules[0])
+                _attach_rule_metadata(finding, matching_rules[0], self._biological_sex)
             findings.append(finding)
         return findings
 
@@ -101,7 +129,9 @@ class InsightScanner:
         for env_factor in self._recent_environmental_extremes(days=2):
             ranked.append(f"environment: {env_factor}")
         # Append generic confounders from the rule, dedup against ranked list.
-        for c in composite_rule.confounders:
+        # luteal_phase is stripped here for non-female users so a male persona
+        # never sees cycle physiology ranked as a possible contributor.
+        for c in _visible_confounders(composite_rule.confounders, self._biological_sex):
             if not any(c in r for r in ranked):
                 ranked.append(c)
 
@@ -111,7 +141,7 @@ class InsightScanner:
             "z_scores": {m: a.z_score for m, a in by_metric.items()},
             "ranked_contributors": ranked,
         }
-        _attach_rule_metadata(finding, composite_rule)
+        _attach_rule_metadata(finding, composite_rule, self._biological_sex)
         # Annotate sparse-baseline guard so the agent can prepend the
         # "low-confidence" prefix when warranted.
         baseline_days = self._available_baseline_days()
@@ -228,7 +258,7 @@ class InsightScanner:
 
             finding = result.to_dict()
             finding["rule_name"] = rule.name
-            _attach_rule_metadata(finding, rule)
+            _attach_rule_metadata(finding, rule, self._biological_sex)
 
             if result.significant:
                 # Noteworthy — save this insight to prevent duplicate reporting
@@ -274,7 +304,7 @@ class InsightScanner:
                     if r.trigger_metric == metric and r.trigger_behavior is None
                 ]
                 if matching:
-                    _attach_rule_metadata(finding, matching[0])
+                    _attach_rule_metadata(finding, matching[0], self._biological_sex)
                 findings.append(finding)
 
         return findings

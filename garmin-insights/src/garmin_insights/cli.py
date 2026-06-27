@@ -151,7 +151,9 @@ def cmd_scan(args: argparse.Namespace) -> None:
     console.print(f"[info]Running {focus} scan...[/info]\n")
 
     # First run local detection
-    scanner = InsightScanner(agent._memory, agent._analysis)
+    scanner = InsightScanner(
+        agent._memory, agent._analysis, agent._settings.biological_sex
+    )
     findings = scanner.run_full_scan()
 
     # Show local findings summary & build context for LLM
