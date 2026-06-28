@@ -68,6 +68,41 @@ def _df_to_clean_json(df) -> str:
     return json.dumps(_clean_records(records))
 
 
+def _fmt_race_time(seconds: float | int | None) -> str | None:
+    """Format a race-prediction time (stored in seconds) as H:MM:SS / M:SS."""
+    if seconds is None or seconds <= 0:
+        return None
+    s = int(round(float(seconds)))
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: int = 8) -> dict | None:
+    """Collapse a time-indexed DataFrame column to a recent {date: value} dict.
+
+    Slow-moving fitness markers update infrequently, so we keep only the most
+    recent ``keep`` distinct readings (latest value per day wins).
+    """
+    if df is None or getattr(df, "empty", True) or value_col not in df.columns:
+        return None
+    d = df.reset_index() if df.index.name is not None else df
+    series: dict = {}
+    for row in d.to_dict(orient="records"):
+        v = row.get(value_col)
+        if v is None:
+            continue
+        date = str(row.get("time", ""))[:10]
+        if not date:
+            continue
+        try:
+            series[date] = round(float(v) * scale, ndp)
+        except (TypeError, ValueError):
+            continue
+    if not series:
+        return None
+    return dict(sorted(series.items())[-keep:])
+
+
 def _night_label(wake_date: str) -> str:
     """Sleep is keyed to the wake-up date — a record dated X covers the night that
     ENDED on the morning of X. Return a '<prev>→<wake>' span so the model never
@@ -263,6 +298,91 @@ class QueryToolHandler:
             for r in cleaned if "date" in r
         }
         return json.dumps({"available": True, "entries": by_date}, default=str)
+
+    def get_fitness_markers(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> str:
+        """Slow-moving fitness markers: VO2 max, fitness age, race predictions,
+        endurance score and hill score.
+
+        These update infrequently (the latest reading may be weeks old), so when
+        no range is given we look back a full year and return the most recent
+        trend per marker. Use this for questions about cardiorespiratory fitness,
+        running-performance trajectory, VO2 max plateaus, fitness vs chronological
+        age, and the grey-zone/endurance training rules in the knowledge base —
+        none of which are in get_daily_metrics.
+        """
+        end = end_date or datetime.utcnow().strftime("%Y-%m-%d")
+        if start_date:
+            start = start_date
+        else:
+            start = (datetime.utcnow() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+        out: dict[str, Any] = {}
+
+        vo2_run = _marker_series(self._repo.query_vo2_max(start, end), "vo2_max_value")
+        if vo2_run:
+            out["vo2_max_running"] = vo2_run
+        vo2_cyc = _marker_series(self._repo.query_vo2_max(start, end), "vo2_max_value_cycling")
+        if vo2_cyc:
+            out["vo2_max_cycling"] = vo2_cyc
+
+        fa_df = self._repo.query_fitness_age(start, end)
+        fa = _marker_series(fa_df, "fitness_age")
+        if fa:
+            out["fitness_age"] = fa
+            # Latest snapshot with chronological + achievable for context
+            d = fa_df.reset_index() if fa_df.index.name is not None else fa_df
+            latest = d.sort_values("time").iloc[-1] if "time" in d.columns and not d.empty else None
+            if latest is not None:
+                snap = {k: latest.get(k) for k in
+                        ("fitness_age", "chronological_age", "achievable_fitness_age")
+                        if latest.get(k) is not None}
+                if snap:
+                    out["fitness_age_latest"] = _round_floats(snap)
+
+        endurance = _marker_series(self._repo.query_endurance_score(start, end), "endurance_score", ndp=0)
+        if endurance:
+            out["endurance_score"] = endurance
+
+        hill_df = self._repo.query_hill_score(start, end)
+        if hill_df is not None and not hill_df.empty:
+            hill = {}
+            for col, label in (("overall_score", "overall"),
+                               ("strength_score", "strength"),
+                               ("endurance_score", "endurance")):
+                s = _marker_series(hill_df, col, ndp=0)
+                if s:
+                    hill[label] = s
+            if hill:
+                out["hill_score"] = hill
+
+        rp_df = self._repo.query_race_predictions(start, end)
+        if rp_df is not None and not rp_df.empty:
+            d = rp_df.reset_index() if rp_df.index.name is not None else rp_df
+            preds: dict = {}
+            for row in d.to_dict(orient="records"):
+                date = str(row.get("time", ""))[:10]
+                if not date:
+                    continue
+                day = {
+                    "5k": _fmt_race_time(row.get("time_5k")),
+                    "10k": _fmt_race_time(row.get("time_10k")),
+                    "half": _fmt_race_time(row.get("time_half_marathon")),
+                    "marathon": _fmt_race_time(row.get("time_marathon")),
+                }
+                day = {k: v for k, v in day.items() if v is not None}
+                if day:
+                    preds[date] = day
+            if preds:
+                out["race_predictions"] = dict(sorted(preds.items())[-8:])
+
+        if not out:
+            return json.dumps({"message": "No fitness-marker data (VO2 max / race "
+                               "predictions / endurance / hill) for this range"})
+        return json.dumps(out, default=str)
 
     # ------------------------------------------------------------------
     # Analysis tools
@@ -715,6 +835,30 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                     "note": {"type": "string", "description": "The free-text note content."},
                 },
                 "required": ["date", "note"],
+            },
+        },
+        {
+            "name": "get_fitness_markers",
+            "description": (
+                "Query slow-moving fitness markers Garmin updates infrequently: "
+                "VO2 max (running + cycling), fitness age (vs chronological and "
+                "achievable), race-time predictions (5k/10k/half/marathon), "
+                "endurance score and hill score. Both date arguments are OPTIONAL "
+                "— omit them to look back a full year and get the latest trend "
+                "(the most recent reading may be weeks old, so a short window can "
+                "return nothing). These metrics are NOT in get_daily_metrics. Use "
+                "for cardiorespiratory-fitness questions, VO2 max plateaus "
+                "(vo2_max_plateau rule), fitness-vs-chronological age "
+                "(fitness_age_vs_chronological rule), and running-performance "
+                "trajectory."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Optional start date YYYY-MM-DD. Defaults to 365 days ago."},
+                    "end_date": {**_DATE_PROP, "description": "Optional end date YYYY-MM-DD. Defaults to today."},
+                },
+                "required": [],
             },
         },
         {

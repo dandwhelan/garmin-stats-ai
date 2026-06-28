@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260627g" />
+  <link rel="stylesheet" href="/static/style.css?v=20260628d" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -593,6 +593,18 @@
       </div>
     </section>
 
+    <section class="chart-section" id="fitness-trajectory-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Fitness Trajectory <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Garmin's slow-moving performance estimates: VO2 max (running/cycling) and modelled race times for 5k / 10k / half / marathon, plus endurance and hill scores. These update infrequently, so the window auto-extends to ~180 days. Race predictions are <em>model estimates</em> from your training load and VO2 max, not test results.<br><br>Han 2024 (BJSM, &gt;20M observations): cardiorespiratory fitness is among the strongest predictors of all-cause mortality.</span></span></h2>
+        <span class="chart-sub">VO2 max trend, modelled race times, endurance &amp; hill score (~180-day lookback)</span>
+      </div>
+      <div class="charts-row">
+        <div class="chart-container"><canvas id="vo2-trajectory-chart"></canvas></div>
+        <div class="chart-container"><canvas id="race-prediction-chart"></canvas></div>
+      </div>
+      <div id="fitness-trajectory-stats" class="big-stat"></div>
+    </section>
+
     <section class="chart-section" id="cycle-phase-section" style="display:none;">
       <div class="chart-header">
         <h2>Vitals by Menstrual Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> RHR, overnight HRV, sleep score and morning Body Battery averaged within each menstrual phase. Expected pattern: RHR lowest in follicular, rising 2–5 bpm in luteal; HRV typically drops in late luteal — <em>normal physiology, not illness or overtraining</em>.<br><br>Use phase as a confounder before attributing changes to a single cause.<br><br>Sources: Shilaih 2017 (Sci Rep); Maijala 2022 (Oura); Alzueta 2022; Symons Downs 2025 (Sports Med SR); Nakagawa 2020.</span></span></h2>
@@ -832,6 +844,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260627g"></script>
+  <script src="/static/app.js?v=20260628d"></script>
 </body>
 </html>

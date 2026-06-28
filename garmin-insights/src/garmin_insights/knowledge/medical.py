@@ -704,27 +704,6 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
     ),
 
-    # ===== HYDRATION + RHR =====
-    InsightRule(
-        name="hydration_rhr_impact",
-        category="lifestyle",
-        trigger_behavior=None,
-        trigger_metric="hydration",
-        comparison_metric="restingHeartRate",
-        direction="correlation",
-        description_template=(
-            "Lower hydration days show RHR of {mean_low:.0f} bpm vs "
-            "{mean_high:.0f} bpm on well-hydrated days."
-        ),
-        research_citation="Watso & Farquhar, 2019, Nutrients",
-        research_summary=(
-            "Even mild dehydration (1-2% body mass loss) elevates resting heart rate "
-            "by 3-5 bpm and reduces cardiovascular efficiency. Chronic underhydration "
-            "is associated with elevated cortisol and lower HRV."
-        ),
-        evidence_tier="A",
-    ),
-
     # ===== VO2 MAX TRAJECTORY =====
     InsightRule(
         name="vo2_max_plateau",

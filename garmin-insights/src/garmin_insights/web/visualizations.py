@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from garmin_insights.stats_utils import correlate_pair, finalize_correlations
+
 logger = logging.getLogger(__name__)
 
 
@@ -151,6 +153,102 @@ class VisualizationService:
             if col in df.columns:
                 df[col] = df[col].round(2)
         return df.to_dict(orient="records")
+
+    # ------------------------------------------------------------------
+    # 3b. Fitness trajectory — VO2 max, race predictions, endurance, hill
+    # ------------------------------------------------------------------
+    def fitness_trajectory(self, start: str, end: str) -> dict:
+        """Slow-moving fitness markers for the Fitness Trajectory dashboard card.
+
+        These update infrequently, so a short dashboard window (e.g. 14 days)
+        would usually be blank. We extend the lookback to at least ~180 days
+        from ``end`` so the VO2 max / race-prediction trend is visible, while
+        still labelling real dates.
+        """
+        try:
+            series_start = (datetime.fromisoformat(end) - timedelta(days=180)).date().isoformat()
+        except ValueError:
+            series_start = start
+        if series_start > start:
+            series_start = start
+        lo, hi = f"{series_start}T00:00:00", f"{end}T23:59:59"
+        out: dict = {"available": False}
+
+        def _daily(sql: str) -> pd.DataFrame:
+            # Tables can be legitimately absent on older DBs / device models that
+            # don't report these markers — treat "no such table" as empty data.
+            try:
+                with self._conn() as conn:
+                    return pd.read_sql_query(sql, conn, params=(lo, hi))
+            except Exception as exc:
+                logger.debug("fitness_trajectory query skipped: %s", exc)
+                return pd.DataFrame()
+
+        # VO2 max (running + cycling) — one row per day, latest reading wins
+        vo2 = _daily(
+            "SELECT substr(time,1,10) AS date, vo2_max_value AS running, "
+            "vo2_max_value_cycling AS cycling FROM vo2_max "
+            "WHERE time >= ? AND time <= ? ORDER BY time"
+        )
+        if not vo2.empty:
+            vo2 = vo2.groupby("date", as_index=False).last()
+            out["vo2_max"] = [
+                {k: (round(float(v), 1) if isinstance(v, (int, float)) and pd.notna(v) else None)
+                 for k, v in r.items()}
+                for r in vo2.to_dict(orient="records")
+            ]
+            out["available"] = True
+
+        # Race predictions (seconds) — surfaced in minutes for the chart axis
+        rp = _daily(
+            "SELECT substr(time,1,10) AS date, time_5k, time_10k, "
+            "time_half_marathon, time_marathon FROM race_predictions "
+            "WHERE time >= ? AND time <= ? ORDER BY time"
+        )
+        if not rp.empty:
+            rp = rp.groupby("date", as_index=False).last()
+            recs = []
+            for r in rp.to_dict(orient="records"):
+                rec = {"date": r["date"]}
+                for src, dst in (("time_5k", "5k"), ("time_10k", "10k"),
+                                 ("time_half_marathon", "half"), ("time_marathon", "marathon")):
+                    v = r.get(src)
+                    rec[dst] = round(float(v) / 60.0, 1) if v and pd.notna(v) and v > 0 else None
+                recs.append(rec)
+            out["race_predictions"] = recs
+            out["available"] = True
+
+        # Endurance score — single integer per day
+        es = _daily(
+            "SELECT substr(time,1,10) AS date, endurance_score AS value "
+            "FROM endurance_score WHERE time >= ? AND time <= ? ORDER BY time"
+        )
+        if not es.empty:
+            es = es.groupby("date", as_index=False).last()
+            out["endurance"] = [
+                {"date": r["date"], "value": int(r["value"])}
+                for r in es.to_dict(orient="records") if pd.notna(r["value"])
+            ]
+            out["available"] = True
+
+        # Hill score — latest snapshot only (overall/strength/endurance)
+        hs = _daily(
+            "SELECT substr(time,1,10) AS date, overall_score, strength_score, "
+            "endurance_score FROM hill_score WHERE time >= ? AND time <= ? ORDER BY time"
+        )
+        if not hs.empty:
+            last = hs.dropna(subset=["overall_score"]).tail(1)
+            if not last.empty:
+                row = last.iloc[0]
+                out["hill_latest"] = {
+                    "date": row["date"],
+                    "overall": int(row["overall_score"]) if pd.notna(row["overall_score"]) else None,
+                    "strength": int(row["strength_score"]) if pd.notna(row["strength_score"]) else None,
+                    "endurance": int(row["endurance_score"]) if pd.notna(row["endurance_score"]) else None,
+                }
+                out["available"] = True
+
+        return out
 
     # ------------------------------------------------------------------
     # 4. HR-zone distribution by activity type
@@ -481,21 +579,13 @@ class VisualizationService:
                 if driver not in merged.columns or marker not in merged.columns:
                     continue
                 pair = merged[[driver, marker]].apply(pd.to_numeric, errors="coerce").dropna()
-                if len(pair) < 7:
-                    correlations.append({
-                        "driver": driver, "marker": marker, "lag": lag_label,
-                        "n": int(len(pair)), "r": None,
-                    })
-                    continue
-                try:
-                    r = float(pair[driver].corr(pair[marker]))
-                except Exception:
-                    r = None
-                correlations.append({
-                    "driver": driver, "marker": marker, "lag": lag_label,
-                    "n": int(len(pair)),
-                    "r": None if r is None or np.isnan(r) else round(r, 2),
-                })
+                correlations.append(correlate_pair(
+                    pair[driver], pair[marker],
+                    driver=driver, marker=marker, lag=lag_label,
+                ))
+        # FDR-correct across all env↔recovery pairs tested in this window so the
+        # UI can mark which r values survive multiple-comparison correction.
+        finalize_correlations(correlations)
 
         return {
             "available": True,
@@ -507,7 +597,9 @@ class VisualizationService:
                 "Pollen↔RHR uses next-day lag per Buekers 2023 (n=72, 2,497 days). "
                 "Heat/AQ/PM2.5↔HRV use same-day per Niu 2020 meta-analysis. "
                 "r values are Pearson; treat |r|<0.2 as noise, 0.2-0.4 as weak, "
-                ">0.4 as moderate."
+                ">0.4 as moderate. 'significant' is Benjamini-Hochberg FDR-"
+                "corrected (q=0.05) across all pairs; 'p' is the two-sided "
+                "Pearson p-value. Unmarked pairs are within-noise."
             ),
         }
 
@@ -622,18 +714,10 @@ class VisualizationService:
                 if driver not in df.columns or marker not in df.columns:
                     continue
                 pair = df[[driver, marker]].apply(pd.to_numeric, errors="coerce").dropna()
-                if len(pair) < 7:
-                    correlations.append({"driver": driver, "marker": marker, "n": int(len(pair)), "r": None})
-                    continue
-                try:
-                    rval = float(pair[driver].corr(pair[marker]))
-                except Exception:
-                    rval = None
-                correlations.append({
-                    "driver": driver, "marker": marker,
-                    "n": int(len(pair)),
-                    "r": None if rval is None or np.isnan(rval) else round(rval, 2),
-                })
+                correlations.append(correlate_pair(
+                    pair[driver], pair[marker], driver=driver, marker=marker,
+                ))
+        finalize_correlations(correlations)
 
         return {
             "available": True,
@@ -689,18 +773,10 @@ class VisualizationService:
         for driver in ("bedroom_overnight_c", "bedroom_mean_c"):
             for marker in ("sleepScore", "avgOvernightHrv", "awakeCount", "restingHeartRate"):
                 pair = df[[driver, marker]].apply(pd.to_numeric, errors="coerce").dropna()
-                if len(pair) < 7:
-                    correlations.append({"driver": driver, "marker": marker, "n": int(len(pair)), "r": None})
-                    continue
-                try:
-                    rval = float(pair[driver].corr(pair[marker]))
-                except Exception:
-                    rval = None
-                correlations.append({
-                    "driver": driver, "marker": marker,
-                    "n": int(len(pair)),
-                    "r": None if rval is None or np.isnan(rval) else round(rval, 2),
-                })
+                correlations.append(correlate_pair(
+                    pair[driver], pair[marker], driver=driver, marker=marker,
+                ))
+        finalize_correlations(correlations)
 
         return {
             "available": True,

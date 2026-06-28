@@ -16,6 +16,11 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 garmin-insights = "garmin_insights.cli:main"
 garmin-web = "garmin_insights.web.app:run_server"
@@ -26,3 +31,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

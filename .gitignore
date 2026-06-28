@@ -17,6 +17,9 @@ venv/
 garmin.db
 *.sqlite
 *.sqlite-journal
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Logs
 *.log

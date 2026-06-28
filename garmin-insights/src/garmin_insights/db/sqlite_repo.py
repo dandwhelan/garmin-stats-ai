@@ -199,8 +199,14 @@ class SqliteRepo:
         q = f"SELECT * FROM endurance_score WHERE {self._date_clause(start, end)}"
         return self._query(q)
 
-    def query_hydration(self, start: str, end: str) -> pd.DataFrame:
-        q = f"SELECT * FROM hydration WHERE {self._date_clause(start, end)}"
+    def query_race_predictions(self, start: str, end: str) -> pd.DataFrame:
+        """Garmin race-time predictions (5k/10k/half/marathon, in seconds)."""
+        q = f"SELECT * FROM race_predictions WHERE {self._date_clause(start, end)}"
+        return self._query(q)
+
+    def query_hill_score(self, start: str, end: str) -> pd.DataFrame:
+        """Garmin Hill Score — strength / endurance / overall climbing fitness."""
+        q = f"SELECT * FROM hill_score WHERE {self._date_clause(start, end)}"
         return self._query(q)
 
     def query_activities_with_gps(self, start: str, end: str) -> pd.DataFrame:

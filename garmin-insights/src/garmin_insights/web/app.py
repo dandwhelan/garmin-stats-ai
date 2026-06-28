@@ -480,7 +480,7 @@ async def visualizations(
     loop = asyncio.get_event_loop()
     viz = bundle.viz
     try:
-        training, body_comp, hr_zones, behavior, correlations, sleep_tl, anomalies = await asyncio.gather(
+        training, body_comp, hr_zones, behavior, correlations, sleep_tl, anomalies, fitness_traj = await asyncio.gather(
             loop.run_in_executor(None, viz.training, start, end),
             loop.run_in_executor(None, viz.body_composition, start, end),
             loop.run_in_executor(None, viz.hr_zones, start, end),
@@ -488,6 +488,7 @@ async def visualizations(
             loop.run_in_executor(None, viz.correlations, start, end),
             loop.run_in_executor(None, viz.sleep_timeline, start, end),
             loop.run_in_executor(None, viz.anomaly_calendar, start, end),
+            loop.run_in_executor(None, viz.fitness_trajectory, start, end),
         )
         return {
             "user": user,
@@ -499,6 +500,7 @@ async def visualizations(
             "correlations": correlations,
             "sleep_timeline": sleep_tl,
             "anomaly_calendar": anomalies,
+            "fitness_trajectory": fitness_traj,
         }
     except Exception as e:
         logger.exception("Visualizations query failed")

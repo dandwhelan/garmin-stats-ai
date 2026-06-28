@@ -919,6 +919,7 @@ async function loadVisualizations(start, end) {
     safeRender('anomalyCalendar', () => renderAnomalyCalendar(vizData.anomaly_calendar));
     safeRender('hrZones', () => renderHrZones(vizData.hr_zones));
     safeRender('correlationMatrix', () => renderCorrelationMatrix(vizData.correlations));
+    safeRender('fitnessTrajectory', () => renderFitnessTrajectory(vizData.fitness_trajectory));
   } catch (e) {
     console.error('Visualizations load failed:', e);
   }
@@ -3231,6 +3232,111 @@ function renderFitnessAge(rows) {
   });
 }
 
+// 16b. Fitness Trajectory — VO2 max + modelled race times + endurance/hill
+function renderFitnessTrajectory(payload) {
+  const section = document.getElementById('fitness-trajectory-section');
+  destroyAux('vo2Trajectory');
+  destroyAux('racePrediction');
+  if (!payload || payload.available === false) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  if (section) section.style.display = '';
+
+  // VO2 max (running + cycling)
+  const vo2 = payload.vo2_max || [];
+  const vctx = document.getElementById('vo2-trajectory-chart');
+  if (vctx) {
+    const series = [
+      { key: 'running', label: 'VO2 max (run)', color: '#4f9cf9' },
+      { key: 'cycling', label: 'VO2 max (cycle)', color: '#34d399' },
+    ].filter(s => vo2.some(r => r[s.key] != null));
+    auxCharts.vo2Trajectory = new Chart(vctx, {
+      type: 'line',
+      data: {
+        labels: vo2.map(r => r.date.slice(5)),
+        datasets: series.map(s => ({
+          label: s.label, data: vo2.map(r => r[s.key]),
+          borderColor: s.color, backgroundColor: 'transparent', tension: 0.3, spanGaps: true,
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { x: commonScales().x, y: { ...commonScales().y, title: { display: true, text: 'ml/kg/min', color: '#8892a4' } } },
+        plugins: { ...commonPlugins(), legend: { display: series.length > 1, labels: { color: '#8892a4' } } },
+      },
+    });
+  }
+
+  // Race predictions (minutes)
+  const rp = payload.race_predictions || [];
+  const rctx = document.getElementById('race-prediction-chart');
+  if (rctx) {
+    const dists = [
+      { key: '5k', label: '5k', color: '#4f9cf9' },
+      { key: '10k', label: '10k', color: '#34d399' },
+      { key: 'half', label: 'Half', color: '#fbbf24' },
+      { key: 'marathon', label: 'Marathon', color: '#7c6af7' },
+    ].filter(d => rp.some(r => r[d.key] != null));
+    auxCharts.racePrediction = new Chart(rctx, {
+      type: 'line',
+      data: {
+        labels: rp.map(r => r.date.slice(5)),
+        datasets: dists.map(d => ({
+          label: d.label, data: rp.map(r => r[d.key]),
+          borderColor: d.color, backgroundColor: 'transparent', tension: 0.3, spanGaps: true,
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { x: commonScales().x, y: { ...commonScales().y, title: { display: true, text: 'predicted minutes', color: '#8892a4' } } },
+        plugins: {
+          ...commonPlugins(),
+          legend: { display: dists.length > 0, labels: { color: '#8892a4' } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtMinutes(c.parsed.y)}` } },
+        },
+      },
+    });
+  }
+
+  // Endurance + hill score stat chips
+  const stats = document.getElementById('fitness-trajectory-stats');
+  if (stats) {
+    const bits = [];
+    const endu = payload.endurance || [];
+    if (endu.length) bits.push(`Endurance score: <b>${endu[endu.length - 1].value}</b>`);
+    if (payload.hill_latest && payload.hill_latest.overall != null) {
+      const h = payload.hill_latest;
+      bits.push(`Hill score: <b>${h.overall}</b> (str ${h.strength ?? '–'} / end ${h.endurance ?? '–'})`);
+    }
+    stats.innerHTML = bits.join(' &nbsp;·&nbsp; ');
+  }
+}
+
+// Render one Pearson correlation cell: r coloured by magnitude, with a
+// significance marker. 'significant' = survived Benjamini-Hochberg FDR
+// correction (q=0.05) across all pairs in that table. Non-significant r values
+// are de-emphasised so multiple-comparison noise doesn't read as signal.
+function corrCell(cell) {
+  const r = cell?.r;
+  if (r == null) return '<span class="muted">—</span>';
+  const cls = Math.abs(r) >= 0.4 ? 'corr-strong' : Math.abs(r) >= 0.2 ? 'corr-moderate' : 'corr-weak';
+  const val = `${r >= 0 ? '+' : ''}${r.toFixed(2)}`;
+  if (cell.significant) {
+    return `<span class="${cls}" title="p=${cell.p ?? '?'} · significant (FDR q=0.05)">${val}<sup>✓</sup></span>`;
+  }
+  const title = cell.p != null ? `p=${cell.p} · not significant (FDR q=0.05)` : 'too few points';
+  return `<span class="muted" title="${title}">${val}</span>`;
+}
+
+// Format predicted minutes (float) as H:MM:SS / M:SS for race-time tooltips.
+function fmtMinutes(min) {
+  if (min == null) return '–';
+  const total = Math.round(min * 60);
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
 // 17. Cycle Phase HRV / RHR / sleep + cycle-day curve
 function renderCycleHrv(payload) {
   const phaseSection = document.getElementById('cycle-phase-section');
@@ -3585,6 +3691,86 @@ function savePrefs(prefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
 }
 
+// Ordered semantic categories. A chart-section joins the FIRST category whose
+// `match` list contains the section's own id or any descendant element id. The
+// final 'more' category is a catch-all so a newly-added chart is never lost.
+const CHART_CATEGORIES = [
+  { id: 'overview',    name: 'Overview',              match: ['trend-chart', 'research-scorecard'] },
+  { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag'] },
+  { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart'] },
+  { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart'] },
+  { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
+  { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
+  { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },
+  { id: 'more',        name: 'More',                  match: [] },
+];
+
+function categoryForSection(section) {
+  const ids = new Set();
+  if (section.id) ids.add(section.id);
+  section.querySelectorAll('[id]').forEach(el => ids.add(el.id));
+  for (const cat of CHART_CATEGORIES) {
+    if (cat.match.length && cat.match.some(m => ids.has(m))) return cat;
+  }
+  return CHART_CATEGORIES[CHART_CATEGORIES.length - 1]; // 'more'
+}
+
+// Hide category panels that currently have no visible charts (e.g. Environment
+// when no home location is set, Menstrual Cycle for male users). A section
+// counts as visible when neither it nor a customize toggle has hidden it.
+function _sectionIsVisible(s) {
+  if (s.style.display === 'none' || s.classList.contains('chart-hidden')) return false;
+  // A kept two-up row (e.g. #environment-extra-row) is gated by id at the row
+  // level, so a section can be live while its parent row is hidden.
+  const row = s.closest('.charts-row');
+  if (row && row.style.display === 'none') return false;
+  return true;
+}
+
+function refreshCategoryVisibility() {
+  document.querySelectorAll('#tab-dashboard .chart-group').forEach(panel => {
+    let visible = 0;
+    panel.querySelectorAll('.chart-section').forEach(s => {
+      if (_sectionIsVisible(s)) visible++;
+    });
+    panel.classList.toggle('group-empty', visible === 0);
+    const cnt = panel.querySelector('.chart-group-count');
+    if (cnt) cnt.textContent = visible ? String(visible) : '';
+  });
+}
+window.refreshCategoryVisibility = refreshCategoryVisibility;
+
+// Lay a category's blocks into the group grid without leaving holes.
+// Cards from a two-up source row are tagged .chart-half, but the two halves
+// often belong to different categories — so within one category the half-cards
+// no longer fall two-by-two, and the rigid 2-col grid stranded the odd one out
+// next to an empty cell (the misaligned gaps on the dashboard). Pair
+// consecutive half-cards into .charts-row wrappers (equal-height, two-up); a
+// half-card with no partner is promoted to full width so it never sits beside a
+// blank cell. Full-width sections and kept rows pass through in document order.
+function appendCategoryBlocks(body, items) {
+  let pending = null; // a .chart-half awaiting a partner
+  const flushSolo = () => {
+    if (!pending) return;
+    pending.classList.remove('chart-half'); // lone card → full width, no empty cell
+    body.appendChild(pending);
+    pending = null;
+  };
+  items.forEach(({ el }) => {
+    const isHalf = el.classList.contains('chart-section') &&
+                   el.classList.contains('chart-half');
+    if (!isHalf) { flushSolo(); body.appendChild(el); return; }
+    if (!pending) { pending = el; return; }
+    const row = document.createElement('div');
+    row.className = 'charts-row';
+    row.append(pending, el);
+    body.appendChild(row);
+    pending = null;
+  });
+  flushSolo();
+}
+
 function initChartCustomization() {
   const dash = document.getElementById('tab-dashboard');
   if (!dash) return;
@@ -3609,56 +3795,105 @@ function initChartCustomization() {
     cardItems.push({ id, label, el: card });
   });
 
-  // Walk through every chart-section AND charts-row, assign an id, and
-  // group them by the most recent .section-divider.
-  let currentGroup = 'Recovery & Activity';
-  const groups = new Map(); // group label -> [{id, label, el}]
-  if (cardItems.length) groups.set('Summary Cards', cardItems);
-  groups.set(currentGroup, []);
-
-  const nodes = dash.querySelectorAll('h2.section-divider, .chart-section');
-  const idCounts = new Map();
-  nodes.forEach(node => {
-    if (node.classList.contains('section-divider')) {
-      currentGroup = node.textContent.trim();
-      if (!groups.has(currentGroup)) groups.set(currentGroup, []);
-      // Tag the divider too so the group itself can collapse
-      const gid = `group-${slugify(currentGroup)}`;
-      node.dataset.groupId = gid;
-      node.classList.add('collapsible-divider');
-      node.addEventListener('click', () => toggleGroup(gid, currentGroup));
-      return;
-    }
-    const h2 = node.querySelector('.chart-header h2');
-    const label = (h2 && h2.textContent.trim()) || 'Chart';
-    let id = slugify(label);
-    const n = (idCounts.get(id) || 0) + 1;
-    idCounts.set(id, n);
-    if (n > 1) id = `${id}-${n}`;
-    node.dataset.chartId = id;
-    groups.get(currentGroup).push({ id, label, el: node });
-
-    // Apply hidden pref
-    if (prefs[id] === false) node.classList.add('chart-hidden');
-
-    // Make header collapsible (independent of show/hide). Stale collapsed
-    // state from earlier exploration is wiped once on this version bump so
-    // charts default to expanded; clicking a header still toggles it.
-    const header = node.querySelector('.chart-header');
-    if (header) {
-      header.classList.add('collapsible-header');
-      const collapseKey = `collapsed:${id}`;
-      // Restore persisted collapsed state so it survives reloads.
-      if (prefs[collapseKey] === true) node.classList.add('chart-collapsed');
-      header.addEventListener('click', e => {
-        if (e.target.closest('button, input')) return;
-        node.classList.toggle('chart-collapsed');
-        const updated = loadPrefs();
-        updated[collapseKey] = node.classList.contains('chart-collapsed');
-        savePrefs(updated);
-      });
+  // Collect the top-level dashboard blocks to re-home, in document order.
+  // Anonymous two-up rows are unwrapped (their two cards often belong to
+  // different categories), and each child is tagged .chart-half so the category
+  // grid keeps it half-width. A row WITH an id (e.g. #environment-extra-row) is
+  // kept intact and moved as a unit, because render code toggles it by id.
+  const blocks = []; // { el, section } — `section` decides the category
+  Array.from(dash.children).forEach(child => {
+    if (child.classList.contains('chart-section')) {
+      blocks.push({ el: child, section: child });
+    } else if (child.classList.contains('charts-row')) {
+      if (child.id) {
+        const first = child.querySelector('.chart-section');
+        if (first) blocks.push({ el: child, section: first });
+      } else {
+        child.querySelectorAll(':scope > .chart-section').forEach(sec => {
+          sec.classList.add('chart-half');
+          blocks.push({ el: sec, section: sec });
+        });
+      }
     }
   });
+
+  // Bucket blocks into categories (document order preserved within each).
+  const buckets = new Map();
+  blocks.forEach(b => {
+    const cat = categoryForSection(b.section);
+    if (!buckets.has(cat.id)) buckets.set(cat.id, []);
+    buckets.get(cat.id).push(b);
+  });
+
+  // Build collapsible category panels and move blocks into them.
+  const anchor = dash.querySelector('.scan-section');
+  const groups = new Map(); // group label -> [{id, label, el}] for the customize panel
+  if (cardItems.length) groups.set('Summary Cards', cardItems);
+  const idCounts = new Map();
+
+  for (const cat of CHART_CATEGORIES) {
+    const items = buckets.get(cat.id);
+    if (!items || !items.length) continue;
+
+    const panel = document.createElement('section');
+    panel.className = 'chart-group';
+    panel.dataset.groupId = cat.id;
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.className = 'chart-group-header';
+    header.innerHTML =
+      `<span class="chart-group-chevron">▾</span>` +
+      `<span class="chart-group-title">${escapeHtml(cat.name)}</span>` +
+      `<span class="chart-group-count"></span>`;
+    const body = document.createElement('div');
+    body.className = 'chart-group-body';
+    appendCategoryBlocks(body, items); // pair halves cleanly; promote lone halves to full width
+    panel.appendChild(header);
+    panel.appendChild(body);
+    if (prefs[`groupCollapsed:${cat.id}`]) panel.classList.add('group-collapsed');
+    header.addEventListener('click', () => {
+      const collapsed = panel.classList.toggle('group-collapsed');
+      const updated = loadPrefs();
+      updated[`groupCollapsed:${cat.id}`] = collapsed;
+      savePrefs(updated);
+    });
+    if (anchor) dash.insertBefore(panel, anchor); else dash.appendChild(panel);
+
+    // Per-chart ids + collapse/hide, plus customize-panel entries for this group.
+    const groupItems = [];
+    body.querySelectorAll('.chart-section').forEach(node => {
+      const h2 = node.querySelector('.chart-header h2');
+      const label = (h2 && h2.textContent.trim()) || 'Chart';
+      let id = slugify(label);
+      const n = (idCounts.get(id) || 0) + 1;
+      idCounts.set(id, n);
+      if (n > 1) id = `${id}-${n}`;
+      node.dataset.chartId = id;
+      if (prefs[id] === false) node.classList.add('chart-hidden');
+
+      const chHeader = node.querySelector('.chart-header');
+      if (chHeader) {
+        chHeader.classList.add('collapsible-header');
+        const collapseKey = `collapsed:${id}`;
+        if (prefs[collapseKey] === true) node.classList.add('chart-collapsed');
+        chHeader.addEventListener('click', e => {
+          if (e.target.closest('button, input')) return;
+          node.classList.toggle('chart-collapsed');
+          const updated = loadPrefs();
+          updated[collapseKey] = node.classList.contains('chart-collapsed');
+          savePrefs(updated);
+        });
+      }
+      groupItems.push({ id, label, el: node });
+    });
+    groups.set(cat.name, groupItems);
+  }
+
+  // Remove now-empty leftover rows and the old section dividers.
+  dash.querySelectorAll('.charts-row').forEach(r => {
+    if (!r.querySelector('.chart-section')) r.remove();
+  });
+  dash.querySelectorAll('h2.section-divider').forEach(d => d.remove());
 
   // One-time cleanup: clear stray "collapsed:*" entries from earlier sessions
   // so the entire dashboard expands by default after this update.
@@ -3674,7 +3909,7 @@ function initChartCustomization() {
     localStorage.setItem(cleanupKey, '1');
   }
 
-  // Build the customize panel
+  // Build the customize panel (grouped by category)
   const list = document.getElementById('customize-list');
   if (list) {
     list.innerHTML = '';
@@ -3704,36 +3939,9 @@ function initChartCustomization() {
         const updated = loadPrefs();
         updated[id] = cb.checked;
         savePrefs(updated);
+        refreshCategoryVisibility();
       });
     });
-  }
-
-  function toggleGroup(gid, name) {
-    const sections = dash.querySelectorAll(`[data-chart-id]`);
-    // A group "owns" sections between its divider and the next divider
-    let active = false;
-    let allHidden = true;
-    const owned = [];
-    dash.querySelectorAll('h2.section-divider, .chart-section').forEach(node => {
-      if (node.classList.contains('section-divider')) {
-        active = node.dataset.groupId === gid;
-        return;
-      }
-      if (active) {
-        owned.push(node);
-        if (!node.classList.contains('chart-hidden')) allHidden = false;
-      }
-    });
-    // If any visible, hide all; if all hidden, show all
-    const newHidden = !allHidden;
-    const updated = loadPrefs();
-    owned.forEach(sec => {
-      sec.classList.toggle('chart-hidden', newHidden);
-      updated[sec.dataset.chartId] = !newHidden;
-      const cb = document.querySelector(`#customize-list input[data-chart-id="${sec.dataset.chartId}"]`);
-      if (cb) cb.checked = !newHidden;
-    });
-    savePrefs(updated);
   }
 
   // Wire panel buttons
@@ -3756,11 +3964,16 @@ function initChartCustomization() {
     setAllCollapsed(true);
   });
 
+  // Expand / collapse all — also toggles the category accordions.
   function setAllCollapsed(collapsed) {
     const updated = loadPrefs();
     dash.querySelectorAll('.chart-section').forEach(sec => {
       sec.classList.toggle('chart-collapsed', collapsed);
       if (sec.dataset.chartId) updated[`collapsed:${sec.dataset.chartId}`] = collapsed;
+    });
+    dash.querySelectorAll('.chart-group').forEach(panel => {
+      panel.classList.toggle('group-collapsed', collapsed);
+      if (panel.dataset.groupId) updated[`groupCollapsed:${panel.dataset.groupId}`] = collapsed;
     });
     savePrefs(updated);
   }
@@ -3775,7 +3988,25 @@ function initChartCustomization() {
       cb.checked = visible;
     });
     savePrefs(updated);
+    refreshCategoryVisibility();
   }
+
+  refreshCategoryVisibility();
+
+  // Gated sections (Environment, Menstrual Cycle, etc.) toggle their display
+  // asynchronously after data loads. Watch for those changes so a category that
+  // becomes empty is hidden — and one that gains data reappears — automatically.
+  let moTimer;
+  const observer = new MutationObserver(muts => {
+    const relevant = muts.some(m =>
+      m.target.nodeType === 1 &&
+      m.target.classList &&
+      (m.target.classList.contains('chart-section') || m.target.classList.contains('charts-row')));
+    if (!relevant) return;
+    clearTimeout(moTimer);
+    moTimer = setTimeout(refreshCategoryVisibility, 60);
+  });
+  observer.observe(dash, { attributes: true, attributeFilter: ['style', 'class'], subtree: true });
 }
 
 initChartCustomization();
@@ -4253,7 +4484,7 @@ function renderEnvironmentRecovery(data) {
         html += `<tr><td><b>${driverLabels[d] || d}</b> <span class="muted small">(${lag})</span></td>`;
         for (const m of markers) {
           const cell = rowCors.find(c => c.marker === m);
-          html += `<td>${fmtR(cell?.r ?? null)}</td>`;
+          html += `<td>${corrCell(cell)}</td>`;
         }
         html += `<td class="muted">${nMax}</td></tr>`;
       }
@@ -4503,7 +4734,7 @@ function renderBedroomSleep(data) {
       html += `<tr><td><b>${labelMap[d]}</b></td>`;
       for (const m of markers) {
         const cell = rowCors.find(c => c.marker === m);
-        html += `<td>${fmtR(cell?.r ?? null)}</td>`;
+        html += `<td>${corrCell(cell)}</td>`;
       }
       html += `<td class="muted">${nMax}</td></tr>`;
     }

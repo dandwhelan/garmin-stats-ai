@@ -30,12 +30,13 @@ def fetch_entity_history(
     ha_url: str, token: str, entity_id: str, past_days: int
 ) -> list[dict[str, Any]]:
     """Return a flat list of HA state objects for the entity."""
-    start = datetime.now(timezone.utc) - timedelta(days=past_days)
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=past_days)
     url = f"{ha_url}/api/history/period/{start.isoformat()}"
     r = requests.get(
         url,
         headers=_headers(token),
-        params={"filter_entity_id": entity_id, "minimal_response": "true"},
+        params={"filter_entity_id": entity_id, "minimal_response": "true", "end_time": now.isoformat()},
         timeout=30,
     )
     r.raise_for_status()

@@ -33,6 +33,10 @@ html, body {
   line-height: 1.6;
 }
 
+/* Safety net against horizontal scroll on mobile. `clip` (not `hidden`) does
+   not create a scroll container, so the sticky header keeps working. */
+body { overflow-x: clip; }
+
 /* ---- Header ---- */
 header {
   background: var(--surface);
@@ -45,11 +49,12 @@ header {
 .header-inner {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 20px;
-  height: 56px;
+  padding: 8px 20px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  gap: 24px;
+  flex-wrap: wrap;        /* wrap onto extra rows on narrow screens instead of overflowing */
+  gap: 12px 20px;
 }
 
 .logo {
@@ -357,7 +362,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   font-weight: 400;
   line-height: 1.55;
   padding: 10px 13px;
-  width: 270px;
+  width: min(270px, 92vw);   /* never wider than the viewport on small screens */
   bottom: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
@@ -694,11 +699,12 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .clock.delta.warn .clock-time { color: var(--red); }
 .clock.delta.ok .clock-time { color: var(--green); }
 
-.caffeine-grid { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; }
+.caffeine-grid { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; overflow-x: auto; }
 .caffeine-row {
   display: grid;
   grid-template-columns: 1.6fr 0.5fr 0.7fr 0.8fr 0.7fr 0.7fr 0.7fr;
   gap: 8px;
+  min-width: 480px;   /* keep the 7 columns legible; scroll inside the card on mobile */
   font-size: 0.85rem;
   padding: 6px 8px;
   border-radius: var(--radius-sm);
@@ -930,6 +936,70 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 
 @media (max-width: 880px) {
   .charts-row { grid-template-columns: 1fr; }
+}
+
+/* ---- Collapsible chart categories ---- */
+.chart-group { margin-bottom: 24px; }
+.chart-group.group-empty { display: none; }   /* hide categories with no visible charts */
+
+.chart-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 18px;
+  margin-bottom: 16px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: left;
+  transition: border-color .15s ease, background .15s ease;
+}
+.chart-group-header:hover { border-color: var(--accent2); background: var(--surface2); }
+
+.chart-group-chevron {
+  color: var(--accent2);
+  font-size: 0.85em;
+  transition: transform .15s ease;
+}
+.chart-group.group-collapsed .chart-group-chevron { transform: rotate(-90deg); }
+.chart-group.group-collapsed .chart-group-body { display: none; }
+
+.chart-group-count {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 10px;
+}
+
+/* Category body keeps the original full-width vs two-up density: sections that
+   were in a top-level two-up row get .chart-half (one column); everything else
+   spans the full width. */
+.chart-group-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 18px;
+  align-items: start;
+}
+.chart-group-body > .chart-section { grid-column: 1 / -1; margin-bottom: 0; }
+.chart-group-body > .chart-section.chart-half { grid-column: span 1; }
+/* A kept two-up row (e.g. #environment-extra-row) spans the category full width
+   and lays its own two cards out via the existing .charts-row grid. */
+.chart-group-body > .charts-row { grid-column: 1 / -1; margin-bottom: 0; }
+
+@media (max-width: 880px) {
+  .chart-group-body { grid-template-columns: 1fr; }
+  .chart-group-body > .chart-section.chart-half { grid-column: 1 / -1; }
 }
 
 /* Scan section */
@@ -1221,6 +1291,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   padding: 12px 16px;
   font-size: 0.93rem;
   line-height: 1.65;
+  overflow-wrap: anywhere;   /* break long URLs/tokens instead of widening the bubble */
 }
 
 .message.user .message-bubble {
@@ -1775,4 +1846,42 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   border-radius: 2px;
   background: rgba(79,156,249,0.55);
   flex-shrink: 0;
+}
+
+/* =========================================================
+   Mobile polish — prevent horizontal overflow, tighten layout
+   ========================================================= */
+
+/* Grid/flex items default to min-width:auto (= min-content), so a wide child —
+   a chart canvas, or a 600px data grid — can force its card (and the whole
+   page) wider than the viewport. min-width:0 lets cards shrink to their track,
+   keeping intrinsic-width content (heatmaps etc.) scrolling INSIDE the card
+   rather than blowing out the page. This is the core "missing sides" fix. */
+.chart-section,
+.chart-group-body > .charts-row,
+.chart-container,
+.chart-container-tall,
+.metric-card { min-width: 0; }
+canvas { max-width: 100%; }
+
+/* Wide markdown (AI scan / chat) scrolls within its own block, not the page. */
+.scan-output pre,
+.message-bubble pre { overflow-x: auto; }
+.scan-output table,
+.message-bubble table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; }
+
+@media (max-width: 640px) {
+  /* Header: drop the nav to its own full-width, swipeable row. */
+  .header-inner { gap: 8px 12px; padding: 8px 14px; }
+  nav { order: 5; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tab-btn { white-space: nowrap; }
+
+  /* Give charts more width back by trimming card chrome. */
+  #tab-dashboard { padding: 16px 12px 32px; }
+  .chart-section { padding: 16px 14px; }
+  .chart-group-header { padding: 11px 14px; font-size: 1rem; }
+
+  /* Stress-trigger leaderboard used 320px of fixed columns — make it flexible. */
+  .trigger-row { grid-template-columns: 76px 1fr 48px; gap: 8px; font-size: 0.8rem; }
+  .trigger-name { overflow-wrap: anywhere; }
 }

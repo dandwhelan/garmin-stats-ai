@@ -16,6 +16,7 @@ from scipy import stats
 import difflib
 
 from garmin_insights.db.memory import MemoryStore
+from garmin_insights.stats_utils import benjamini_hochberg, pearson_r_p
 
 logger = logging.getLogger(__name__)
 
@@ -318,25 +319,42 @@ class AnalysisEngine:
         if len(df) < 3:
             return {"error": "Not enough data points", "n": len(df)}
 
-        corr = df.corr(method="pearson")
-        # Return only off-diagonal pairs
+        # Off-diagonal pairs, each with a two-sided p-value. With k metrics there
+        # are k(k-1)/2 pairs tested at once, so a bare r over-reports — we attach
+        # a Benjamini-Hochberg FDR-corrected 'significant' flag across the set.
         pairs = []
+        raw_p: list[float | None] = []
         for i, m1 in enumerate(metrics):
             for j, m2 in enumerate(metrics):
                 if i < j:
-                    r = corr.loc[m1, m2]
+                    r, p, n = pearson_r_p(df[m1].to_numpy(), df[m2].to_numpy())
+                    if r is None:
+                        continue
+                    raw_p.append(p)
                     pairs.append({
                         "metric_a": m1,
                         "metric_b": m2,
                         "correlation": round(float(r), 3),
+                        "p_value": round(p, 4) if p is not None else None,
+                        "n": n,
                         "strength": (
                             "strong" if abs(r) > 0.7
                             else "moderate" if abs(r) > 0.4
                             else "weak"
                         ),
                     })
+        for pair, sig in zip(pairs, benjamini_hochberg(raw_p)):
+            pair["significant"] = sig
 
-        return {"n_days": len(df), "pairs": pairs}
+        return {
+            "n_days": len(df),
+            "pairs": pairs,
+            "note": (
+                "p_value is the two-sided Pearson p; 'significant' is "
+                "Benjamini-Hochberg FDR-corrected (q=0.05) across all pairs. "
+                "Correlation is not causation — treat non-significant pairs as noise."
+            ),
+        }
 
     def run_full_anomaly_scan(self) -> list[AnomalyResult]:
         """Run anomaly detection on all baselined metrics."""

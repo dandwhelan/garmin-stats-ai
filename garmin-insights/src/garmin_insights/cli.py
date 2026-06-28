@@ -209,6 +209,40 @@ def cmd_schedule(args: argparse.Namespace) -> None:
     start_scheduler(settings)
 
 
+def cmd_maintain(args: argparse.Namespace) -> None:
+    """Integrity-check the database and take a rotated online backup."""
+    from garmin_insights.db.maintenance import integrity_check, run_maintenance
+
+    console = Console(theme=_THEME)
+    settings = get_settings()
+    db_path = settings.sqlite_db_path
+
+    if args.check_only:
+        result = integrity_check(db_path)
+        if result["ok"]:
+            console.print(f"[success]✓ Integrity OK[/success] ({db_path})")
+        else:
+            console.print(f"[error]✗ Integrity FAILED[/error] ({db_path})")
+            for line in result["result"]:
+                console.print(f"  {line}")
+            raise SystemExit(1)
+        return
+
+    report = run_maintenance(db_path, backup_dir=args.backup_dir, keep=args.keep)
+    integ = report["integrity"]
+    if integ["ok"]:
+        console.print(f"[success]✓ Integrity OK[/success] ({db_path})")
+    else:
+        console.print(f"[error]✗ Integrity FAILED[/error]: {integ['result']}")
+    bk = report["backup"]
+    state = "[success]✓[/success]" if bk["ok"] else "[error]✗ corrupt copy[/error]"
+    console.print(f"{state} Backup → {bk['path']} ({bk['bytes'] / 1e6:.1f} MB)")
+    if bk["rotated"]:
+        console.print(f"[dim]  Rotated out {len(bk['rotated'])} old backup(s)[/dim]")
+    if not (integ["ok"] and bk["ok"]):
+        raise SystemExit(1)
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     """Show system health status."""
     from garmin_insights.db.sqlite_repo import SqliteRepo
@@ -235,6 +269,15 @@ def cmd_status(args: argparse.Namespace) -> None:
             if 'date_range' in repo_health:
                 dr = repo_health['date_range']
                 console.print(f"  Range: {dr.get('start')} → {dr.get('end')}")
+            try:
+                from garmin_insights.db.maintenance import integrity_check
+                integ = integrity_check(settings.sqlite_db_path, quick=True)
+                if integ["ok"]:
+                    console.print("  Integrity: [success]ok[/success]")
+                else:
+                    console.print(f"  Integrity: [error]{integ['result']}[/error]")
+            except Exception as exc:
+                console.print(f"  Integrity: [warning]check failed: {exc}[/warning]")
             console.print("[dim]Memory:[/dim]")
             console.print(f"  Daily summaries: {mem_health.get('daily_summaries', 0)}")
             console.print(f"  Baselines: {mem_health.get('baselines', 0)}")
@@ -285,6 +328,13 @@ def main() -> None:
     # status
     sub.add_parser("status", help="Check system connectivity")
 
+    # maintain
+    maint_p = sub.add_parser("maintain", help="Integrity-check DB + take a rotated backup")
+    maint_p.add_argument("--backup-dir", type=str, default=None,
+                         help="Where to write backups (default: backups/ next to the DB)")
+    maint_p.add_argument("--keep", type=int, default=7, help="How many backups to retain (default 7)")
+    maint_p.add_argument("--check-only", action="store_true", help="Run the integrity check only; no backup")
+
     args = parser.parse_args()
     _setup_logging(args.verbose)
 
@@ -298,6 +348,8 @@ def main() -> None:
         cmd_schedule(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "maintain":
+        cmd_maintain(args)
     else:
         parser.print_help()
 
