@@ -1890,7 +1890,7 @@ async function generateAndCopyPrompt(body, label = 'prompt') {
       const sizeNote = kb > 40
         ? ' Large prompt — if the AI says data is missing, use ⬇ to download and upload as a file instead.'
         : '';
-      showCopyToast(`✓ ${label} copied (${kb} KB, ~${(data.approx_tokens || 0).toLocaleString()} tokens). Paste into any LLM chat.${sizeNote}`);
+      showCopyToast(`✓ ${label} copied (${kb} KB, ~${(data.approx_tokens || 0).toLocaleString()} tokens). Contains your personal health data — paste only into an LLM you trust.${sizeNote}`);
     } else {
       showCopyToast('Copy failed — use ⬇ to download the prompt as a file instead.', true);
     }

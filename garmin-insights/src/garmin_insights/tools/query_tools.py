@@ -62,6 +62,89 @@ def _strip_zero_lifestyle(summaries: list[dict]) -> list[dict]:
     return result
 
 
+# Lifestyle-journal categories that represent self-reported STATES / outcomes /
+# confounders (things that happen TO the user — illness, injury, migraines,
+# allergy/asthma symptoms, low morning energy, work incidents, travel) rather
+# than interventions the user actively chose to do. Used to stop a downstream
+# LLM from treating an outcome like "Asthma symptoms" as a *cause* of other
+# metric deviations. LIFESTYLE / SELF_CARE / SLEEP_RELATED / TREATMENTS are
+# genuine actions and stay in the behaviour bucket.
+STATE_LIFESTYLE_CATEGORIES = frozenset({"LIFE_STATUS", "CUSTOM", "CUSTOM_SLEEP_RELATED"})
+
+
+def split_lifestyle_by_category(
+    summaries: list[dict],
+    category_map: dict[str, str],
+) -> list[dict]:
+    """Like ``_strip_zero_lifestyle`` but partition each day's active entries
+    into ``lifestyle`` (interventions the user did) and ``states_symptoms``
+    (outcomes / confounders), using each behaviour's lifestyle_journal category.
+
+    ``category_map`` maps behaviour name -> category string. Behaviours whose
+    category is in :data:`STATE_LIFESTYLE_CATEGORIES` go to ``states_symptoms``;
+    everything else (including unknown/missing categories) stays in
+    ``lifestyle``. Zero/absent entries are dropped exactly as
+    ``_strip_zero_lifestyle`` does.
+    """
+    result = []
+    for s in summaries:
+        lf = s.get("lifestyle")
+        s = {k: v for k, v in s.items() if k != "lifestyle"}
+        if lf:
+            actions, states = [], []
+            for behavior, v in lf.items():
+                if v.get("status") == 0 and v.get("value") == 0.0:
+                    continue
+                val = v.get("value", 0.0)
+                label = f"{behavior}: {val:g}" if val else behavior
+                if category_map.get(behavior, "") in STATE_LIFESTYLE_CATEGORIES:
+                    states.append(label)
+                else:
+                    actions.append(label)
+            if actions:
+                s["lifestyle"] = actions
+            if states:
+                s["states_symptoms"] = states
+        result.append(s)
+    return result
+
+
+def aggregate_workouts(activities: list[dict]) -> list[dict]:
+    """Collapse per-session workout entries into per-type totals — a compact
+    training-volume digest so a portable prompt doesn't depend on the model
+    summing dozens of raw sessions itself.
+
+    Each input entry is a ``build_portable_prompt`` activity dict
+    (``type`` / ``min`` / ``km`` / ``kcal``). Returns one row per activity type
+    with session count and summed duration / distance / calories, sorted by
+    total minutes descending. Empty distance/calorie totals are dropped.
+    """
+    by_type: dict[str, dict] = {}
+    for a in activities:
+        t = a.get("type") or "Unknown"
+        agg = by_type.setdefault(
+            t, {"type": t, "sessions": 0, "min": 0.0, "km": 0.0, "kcal": 0}
+        )
+        agg["sessions"] += 1
+        if a.get("min"):
+            agg["min"] += float(a["min"])
+        if a.get("km"):
+            agg["km"] += float(a["km"])
+        if a.get("kcal"):
+            agg["kcal"] += int(a["kcal"])
+    out = []
+    for agg in by_type.values():
+        agg["min"] = round(agg["min"], 1)
+        agg["km"] = round(agg["km"], 2)
+        if not agg["km"]:
+            agg.pop("km")
+        if not agg["kcal"]:
+            agg.pop("kcal")
+        out.append(agg)
+    out.sort(key=lambda r: r.get("min", 0), reverse=True)
+    return out
+
+
 def _df_to_clean_json(df) -> str:
     """Convert a DataFrame to compact JSON with nulls stripped and floats rounded."""
     records = json.loads(df.to_json(orient="records"))
