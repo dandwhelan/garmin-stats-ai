@@ -454,9 +454,17 @@ like" questions it works well.
 
 ## Privacy
 
-All data stays local. Nothing is sent to external servers except:
+By default all data stays local. Nothing is sent to external servers except:
 - Garmin Connect API (to fetch your own data)
 - Anthropic API (to generate AI responses — only the content of your queries and health summaries, not raw data)
+
+**Exception — the "Copy prompt" / "Download prompt" feature.** This is purpose-built
+to export a full snapshot of your health data (sleep, HRV, RHR, logged lifestyle
+behaviours and symptoms, free-text daily notes, and home-location-derived weather /
+air-quality / pollen) as plain text so you can paste it into a third-party LLM of your
+choice (ChatGPT, Gemini, a local model, …). When you use it, that data leaves your
+machine and is subject to whatever retention and training policies the receiving
+service has. Only use it with a provider you trust.
 
 ## Troubleshooting
 

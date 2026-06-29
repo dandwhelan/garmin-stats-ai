@@ -5,12 +5,15 @@ from __future__ import annotations
 import pandas as pd
 
 from garmin_insights.tools.query_tools import (
+    STATE_LIFESTYLE_CATEGORIES,
     _clean_records,
     _fmt_race_time,
     _marker_series,
     _night_label,
     _strip_zero_lifestyle,
+    aggregate_workouts,
     get_all_tools_anthropic,
+    split_lifestyle_by_category,
 )
 
 
@@ -68,6 +71,66 @@ def test_strip_zero_lifestyle_drops_zero_entries():
     assert "Caffeine: 2" in lf
     assert "Stretching" in lf  # binary occurrence → bare name
     assert all("Alcohol" not in item for item in lf)
+
+
+def test_split_lifestyle_partitions_actions_and_states():
+    summaries = [
+        {
+            "date": "2026-06-26",
+            "lifestyle": {
+                "Alcohol": {"status": 1, "value": 3.0},
+                "Morning Caffeine": {"status": 1, "value": 2.0},
+                "Asthma symptoms": {"status": 1, "value": 0.0},
+                "Allergy Severity": {"status": 1, "value": 3.0},
+                "Injured": {"status": 1, "value": 0.0},
+                "Sleep Sounds": {"status": 0, "value": 0.0},  # dropped
+            },
+        }
+    ]
+    cat_map = {
+        "Alcohol": "LIFESTYLE",
+        "Morning Caffeine": "LIFESTYLE",
+        "Asthma symptoms": "CUSTOM",
+        "Allergy Severity": "CUSTOM",
+        "Injured": "LIFE_STATUS",
+        "Sleep Sounds": "SLEEP_RELATED",
+    }
+    out = split_lifestyle_by_category(summaries, cat_map)[0]
+    assert out["lifestyle"] == ["Alcohol: 3", "Morning Caffeine: 2"]
+    assert out["states_symptoms"] == ["Asthma symptoms", "Allergy Severity: 3", "Injured"]
+    assert "Sleep Sounds" not in out.get("lifestyle", [])
+
+
+def test_split_lifestyle_unknown_category_defaults_to_action():
+    # A behaviour with no category mapping should NOT be treated as a state.
+    summaries = [{"date": "d", "lifestyle": {"Mystery": {"status": 1, "value": 0.0}}}]
+    out = split_lifestyle_by_category(summaries, {})[0]
+    assert out["lifestyle"] == ["Mystery"]
+    assert "states_symptoms" not in out
+
+
+def test_state_categories_are_the_expected_set():
+    assert STATE_LIFESTYLE_CATEGORIES == {"LIFE_STATUS", "CUSTOM", "CUSTOM_SLEEP_RELATED"}
+
+
+def test_aggregate_workouts_sums_per_type():
+    activities = [
+        {"date": "2026-06-01", "type": "walking", "min": 30.0, "km": 2.0, "kcal": 100},
+        {"date": "2026-06-01", "type": "walking", "min": 20.0, "km": 1.5, "kcal": 80},
+        {"date": "2026-06-02", "type": "strength_training", "min": 45.0, "kcal": 200},
+    ]
+    out = aggregate_workouts(activities)
+    walking = next(r for r in out if r["type"] == "walking")
+    strength = next(r for r in out if r["type"] == "strength_training")
+    assert walking == {"type": "walking", "sessions": 2, "min": 50.0, "km": 3.5, "kcal": 180}
+    # strength has no distance → km dropped; sorted by minutes desc keeps walking first
+    assert "km" not in strength
+    assert strength["sessions"] == 1 and strength["min"] == 45.0
+    assert out[0]["type"] == "walking"  # higher total minutes
+
+
+def test_aggregate_workouts_empty():
+    assert aggregate_workouts([]) == []
 
 
 def test_clean_records_strips_nulls_and_rounds():

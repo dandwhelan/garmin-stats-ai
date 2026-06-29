@@ -14,13 +14,18 @@ from garmin_insights.config import Settings, get_settings
 from garmin_insights.db.sqlite_repo import SqliteRepo
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.db.cache import CacheBuilder
-from garmin_insights.knowledge.medical import get_rules_summary_for_llm
+from garmin_insights.knowledge.medical import (
+    get_rules_summary_for_llm,
+    select_relevant_rule_names,
+    count_visible_rules,
+)
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
     QueryToolHandler,
     get_all_tools_anthropic,
     _round_floats,
-    _strip_zero_lifestyle,
+    split_lifestyle_by_category,
+    aggregate_workouts,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,6 +69,15 @@ trends and correlations, and recall/save context from previous sessions.
   metrics that are actually present — do NOT pull an earlier night's sleep and present \
   it as last night's. You may mention the most recent night on record, but label it with \
   its real date.
+- **Align behaviors to the night they affect.** Lifestyle entries are logged on the \
+  calendar day they happened, but a date's sleep/overnight metrics describe the night that \
+  *ended* that morning. So an evening behavior logged on date X (alcohol, late caffeine, \
+  late/heavy meal, late or pre-bed exercise, screens before bed) shows up in the sleep score, \
+  overnight HRV, sleep-derived RHR and body-battery-at-wake keyed to **X+1** — the NEXT day's \
+  record. When estimating how a behavior affected sleep or overnight recovery, compare it \
+  against the following morning's record, never the same date's (that row is the night *before* \
+  the behavior). Same-day metrics like daytime stress or steps still line up with the behavior's \
+  own date.
 - Query cached daily summaries first (get_daily_metrics) — they're much faster
 - When comparing behaviors, always use compare_behavior_impact for statistical rigor
 - Check baselines via get_my_baselines before making claims about "high" or "low" values — \
@@ -116,20 +130,41 @@ _SCAN_PROMPTS = {
         "Fetch at most 3 days of raw data — use get_my_baselines for context."
     ),
     "general": (
-        "Run a comprehensive health scan. Check all baselines for anomalies, "
-        "analyze recent trends (7-day) for all key metrics, and identify "
-        "the top 3 most noteworthy findings. Prioritize actionable insights. "
+        "Run a focused health scan. Surface the top 3 most noteworthy findings, in "
+        "priority order: recovery strain (RHR / HRV / respiration) > sleep disruption > "
+        "training load > environment & lifestyle confounders > long-term fitness markers. "
+        "Lead with the precomputed anomaly/trend findings if they are provided, rather than "
+        "re-deriving them from the raw daily rows; check all baselines for anything they miss, "
+        "and analyze recent trends (7-day) for the key metrics. Prioritize actionable insights. "
         "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
     ),
     "weekly": (
         "Generate a weekly health summary. Analyze the last 7 days: "
         "1) Overall trends in sleep, stress, HRV, and body battery. "
-        "2) Impact of each logged lifestyle behavior on key metrics. "
-        "3) Training load and recovery balance. "
+        "2) Impact of lifestyle behaviors that have BOTH present and absent days in the window "
+        "— note the on/off day counts and skip behaviors logged every day (no comparator) or "
+        "on only 1-2 days (too sparse). Treat symptoms/states (illness, injury, allergy/asthma, "
+        "low energy) as outcomes/confounders to explain, not causes. "
+        "3) Training load and recovery balance (frame as approximate if detailed Garmin load / "
+        "ACWR / HR-zone data isn't available). "
         "4) Top 3 actionable recommendations for next week. "
         "Compare this week to the 30-day baseline. "
         "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
     ),
+}
+
+# Per-focus default snapshot window for the portable prompt. A morning brief
+# only needs the last few days (last night's sleep is keyed to today; yesterday
+# carries the relevant lifestyle/workouts), whereas a weekly/general scan wants
+# more trend context. Anomaly detection still runs over its own longer internal
+# window (InsightScanner), so a short raw window does not blind the scan. Used
+# only when the caller passes no explicit snapshot_days and no explicit dates.
+_FOCUS_SNAPSHOT_DAYS = {
+    "morning": 5,
+    "midday": 5,
+    "evening": 5,
+    "general": 14,
+    "weekly": 14,
 }
 
 
@@ -347,6 +382,10 @@ class HealthAgent:
             "prediction\".\n"
             "- For SpO2 patterns, say \"screening signal worth discussing with a "
             "clinician\" — never \"sleep apnoea\".\n"
+            "\n"
+            "For any persistent or concerning symptom, recommend the user discuss it "
+            "with a clinician. This analysis detects deviations from personal baselines "
+            "and is not medical advice or a diagnosis.\n"
         )
         return {"type": "text", "text": text}
 
@@ -545,7 +584,7 @@ class HealthAgent:
         focus: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
-        snapshot_days: int = 30,
+        snapshot_days: int | None = None,
     ) -> str:
         """Build a single self-contained text prompt the user can paste into
         any LLM chat (Claude.ai, ChatGPT, Gemini, ...). Combines the full
@@ -558,6 +597,12 @@ class HealthAgent:
         """
         if not message and not focus:
             raise ValueError("build_portable_prompt requires a message or focus")
+
+        # Tailor the default raw-data window to the task: a morning brief needs
+        # only the last few days, a weekly/general scan a bit more. Explicit
+        # snapshot_days or an explicit start/end always win.
+        if snapshot_days is None:
+            snapshot_days = _FOCUS_SNAPSHOT_DAYS.get(focus or "", 30)
 
         user_text = message
         if focus:
@@ -606,6 +651,20 @@ class HealthAgent:
         today_iso = today.isoformat()
         last_complete_day = (today - timedelta(days=1)).isoformat()
 
+        # Pin the scan prompts' relative "last 7 days" / "7-day" phrasing to the
+        # concrete last 7 COMPLETE days (ending yesterday — today is incomplete),
+        # so the receiving model isn't left to guess the window against a
+        # date-stamped snapshot that may span more days than the question implies.
+        seven_start = (today - timedelta(days=7)).isoformat()
+        user_text = user_text.replace(
+            "Analyze the last 7 days:",
+            f"Analyze the last 7 complete days ({seven_start} → {last_complete_day}) "
+            f"— treat {today_iso} as incomplete (overnight/morning metrics only):",
+        ).replace(
+            "analyze recent trends (7-day) for the key metrics",
+            f"analyze recent trends ({seven_start} → {last_complete_day}) for the key metrics",
+        )
+
         # Lazily build cache for any uncached dates in the requested window,
         # so historical ranges (older than the rolling 90-day refresh) get a
         # snapshot built on demand from the raw daily_stats table.
@@ -625,6 +684,22 @@ class HealthAgent:
         except Exception as e:
             baselines = {}
             logger.warning("Portable prompt: baselines fetch failed: %s", e)
+
+        # Map each logged behaviour to its lifestyle_journal category so the
+        # snapshot can separate genuine actions from self-reported states /
+        # symptoms / confounders (the cache drops the category column). Behaviour
+        # names are byte-identical across both code paths (both read the journal),
+        # so the join below is exact.
+        behavior_category: dict[str, str] = {}
+        try:
+            lj = self._repo.query_lifestyle_journal(start, end)
+            if lj is not None and not lj.empty:
+                for row in lj.reset_index().to_dict(orient="records"):
+                    b, c = row.get("behavior"), row.get("category")
+                    if b is not None and c is not None:
+                        behavior_category[str(b)] = str(c)
+        except Exception as e:
+            logger.debug("Portable prompt: lifestyle category map failed: %s", e)
 
         # Merge menstrual cycle fields directly into daily summaries (keyed by date)
         try:
@@ -806,6 +881,44 @@ class HealthAgent:
         except Exception as e:
             logger.debug("Portable prompt: training status fetch failed: %s", e)
 
+        # Precomputed anomaly / trend / behaviour-impact findings — the same
+        # deterministic local detection the CLI `scan` command runs before the
+        # LLM. Embedding it means the receiving model can lead with code-computed
+        # findings instead of hunting for anomalies in the raw rows itself (and
+        # it runs over InsightScanner's own internal window, so a short snapshot
+        # window does not blind it).
+        scan_findings: dict = {}
+        try:
+            from garmin_insights.insights.proactive import InsightScanner
+
+            scanner = InsightScanner(
+                self._memory, self._analysis, self._settings.biological_sex
+            )
+            # Drop the per-finding prose (medical_context / citation / confounders /
+            # claim_strength / measurement_confidence) — it duplicates the medical
+            # KB already embedded in the system text above and was ~75% of this
+            # section's bytes. Keep the numeric facts, the rule name, the evidence
+            # tier, and (for behaviour impacts) the code-computed n / p_value /
+            # significant fields the model can legitimately cite.
+            _drop_finding_keys = {
+                "medical_context", "citation", "confounders",
+                "claim_strength", "measurement_confidence",
+            }
+            scan_findings = {
+                category: [
+                    {k: v for k, v in item.items() if k not in _drop_finding_keys}
+                    for item in items
+                ]
+                for category, items in scanner.run_full_scan().items()
+                if items
+            }
+        except Exception as e:
+            logger.debug("Portable prompt: local scan failed: %s", e)
+
+        # Per-type workout aggregate (sessions / minutes / km / kcal) so the model
+        # gets a training-volume digest without summing dozens of raw sessions.
+        workout_summary = aggregate_workouts(activities) if activities else []
+
         # Concatenate every system block we'd send to the live API
         system_text_parts: list[str] = []
         for block in self._system_for_call():
@@ -832,6 +945,66 @@ class HealthAgent:
             "",
         )
 
+        # The live prompt tells the agent to report statistical significance and
+        # to lean on compare_behavior_impact "for statistical rigor". In portable
+        # mode no correlation/p-value data is computed and that tool is gone, so
+        # soften both — otherwise the receiving model is invited to invent
+        # significance it cannot ground.
+        system_text = system_text.replace(
+            "When discussing correlations, mention sample size (N days) and statistical significance",
+            "When discussing correlations, mention sample size (N days); do NOT compute your "
+            "own p-values or significance from the raw rows — cite only the precomputed "
+            "`p_value`/`significant` fields in the snapshot, if any",
+        ).replace(
+            "When comparing behaviors, always use compare_behavior_impact for statistical rigor",
+            "When comparing behaviors, rely only on the daily data provided and report "
+            "on/off day counts — do not imply statistical significance",
+        )
+
+        # Subset the embedded medical KB to the rules relevant to THIS snapshot
+        # (deviating metrics + logged behaviours + rules that actually fired +
+        # the environmental cluster when env data exists). This is portable-only:
+        # the live agent keeps the full KB in its cached prefix, so caching is
+        # untouched. Fall back to the full KB when the relevant set is tiny (a
+        # quiet window) so we never strip context we can't confidently exclude.
+        try:
+            sex = self._settings.biological_sex
+            kb_metrics: set[str] = set()
+            kb_behaviors: set[str] = set(behavior_category.keys())
+            kb_rule_names: set[str] = set()
+            for items in scan_findings.values():
+                for it in items:
+                    if it.get("metric"):
+                        kb_metrics.add(it["metric"])
+                    for m in it.get("deviating_metrics") or []:
+                        kb_metrics.add(m)
+                    if it.get("behavior"):
+                        kb_behaviors.add(it["behavior"])
+                    if it.get("rule_name"):
+                        kb_rule_names.add(it["rule_name"])
+            keep = select_relevant_rule_names(
+                metrics=kb_metrics,
+                behaviors=kb_behaviors,
+                rule_names=kb_rule_names,
+                include_environmental=bool(environment_by_date),
+                biological_sex=sex,
+            )
+            visible = count_visible_rules(sex)
+            # Only swap when it genuinely shrinks the KB and keeps a sensible floor.
+            if 8 <= len(keep) < visible:
+                full_kb = get_rules_summary_for_llm(sex)
+                if full_kb not in system_text:
+                    raise ValueError("KB block not found verbatim; skipping subset")
+                subset_kb = get_rules_summary_for_llm(
+                    sex, only_rules=keep, subset_note=True
+                )
+                system_text = system_text.replace(full_kb, subset_kb)
+                logger.debug(
+                    "Portable prompt: KB subset to %d/%d rules", len(keep), visible
+                )
+        except Exception as e:
+            logger.debug("Portable prompt: KB subset skipped: %s", e)
+
         sep = "-" * 40
         header_note = (
             "Full system prompt + pre-fetched Garmin data snapshot below. "
@@ -856,6 +1029,40 @@ class HealthAgent:
             f"({actual_days} days, {start} → {end})."
         )
 
+        # Portable-mode analytic guardrails, shown immediately before the user
+        # question — the one spot the live system text gives no portable-specific
+        # guidance. Counters the failure modes a tool-less paste is prone to:
+        # off-by-one behaviour↔sleep alignment, treating outcomes as causes,
+        # false-precision impact claims, and invented statistics.
+        analytic_guardrails = (
+            "ANALYSIS GUARDRAILS (read before answering)\n"
+            "- Lag behaviours to the night they affect: a behaviour logged the evening of "
+            "date X (alcohol, late caffeine/meal, late or pre-bed exercise, screens) shows up "
+            "in the sleep score / overnight HRV / sleep-derived RHR / body-battery-at-wake "
+            "keyed to X+1, because those overnight metrics describe the night that ended the "
+            "next morning. Never pair an evening behaviour with the SAME date's overnight "
+            "metrics — that is the night before it happened.\n"
+            "- Each day separates `lifestyle` (things the user actively did) from "
+            "`states_symptoms` (self-reported outcomes / confounders — illness, injury, "
+            "allergy/asthma, low morning energy, work incidents, travel). Treat "
+            "`states_symptoms` as outcomes to explain or confounders to weigh, NOT as causes "
+            "you attribute other metric changes to.\n"
+            "- Only estimate a behaviour's impact when it has BOTH present and absent days in "
+            "the window; state the on/off day counts. A behaviour logged every day (no "
+            "comparator) or on only 1-2 days (too sparse) cannot support an effect estimate — "
+            "say so rather than asserting one.\n"
+            "- Statistics: the Precomputed findings section may carry code-computed "
+            "`n_with`/`n_without`, `p_value` and `significant` flags for some behaviours — you "
+            "may cite those as given. Do NOT compute or invent your OWN p-values, correlation "
+            "coefficients or significance claims from the raw daily rows; for anything the "
+            "precomputed findings don't cover, describe associations qualitatively with the "
+            "sample size (N days) and flag small N.\n"
+            "- Training load: unless a 'Training readiness & status' section appears below, you "
+            "do NOT have Garmin training load / ACWR / HR-zone data — keep any training-load or "
+            "recovery-balance assessment qualitative and approximate, based on the workout "
+            "volume provided.\n"
+        )
+
         # Convert to date-keyed dict — removes the repeated "date" field from
         # every row, plus a few fields that carry no extra signal in the
         # snapshot: bodyBattery charged/drained are derivable from
@@ -871,20 +1078,21 @@ class HealthAgent:
                 for s in rows
             }
 
-        clean_summaries = _round_floats(_to_date_dict(_strip_zero_lifestyle(summaries)))
+        clean_summaries = _round_floats(
+            _to_date_dict(split_lifestyle_by_category(summaries, behavior_category))
+        )
         clean_baselines = _round_floats({
             m: {k: v for k, v in vals.items() if v is not None}
             for m, vals in baselines.items()
             if any(v is not None for v in vals.values())
         })
 
-        # When the user picked an explicit historical window, compute window-
-        # local stats so the LLM has something to compare against — the rolling
-        # baselines above are always anchored to today and so are misleading
-        # for older ranges.
-        explicit_window = bool(start_date and end_date)
+        # Always compute window-local avg/min/max/n per metric so the model has a
+        # code-computed digest of the snapshot beside the raw rows (and a valid
+        # comparator for explicit historical windows, where the rolling baselines
+        # — anchored to today — would be misleading).
         window_stats: dict = {}
-        if explicit_window and summaries:
+        if summaries:
             numeric_keys: set[str] = set()
             for s in summaries:
                 for k, v in s.items():
@@ -931,16 +1139,45 @@ class HealthAgent:
                 "```\n\n"
                 if window_stats else ""
             )
-            + f"## Daily summaries ({len(clean_summaries)} days, keyed by date)\n"
+            + (
+                f"## Precomputed findings (code-computed local detection — "
+                f"anomalies vs baseline, composite recovery strain, behaviour "
+                f"impacts, and trends; lead with these rather than re-deriving "
+                f"from the raw rows)\n"
+                "```json\n"
+                f"{json.dumps(_round_floats(scan_findings), default=str)}\n"
+                "```\n\n"
+                if scan_findings else ""
+            )
+            + f"## Daily summaries ({len(clean_summaries)} days, keyed by date — "
+            f"`lifestyle` = actions the user did, `states_symptoms` = "
+            f"outcomes/confounders, not causes)\n"
             "```json\n"
             f"{json.dumps(clean_summaries, default=str)}\n"
             "```\n\n"
             + (
-                f"## Workouts ({len(activities)} sessions in window — "
-                f"km / min / HR / kcal per session)\n"
+                f"## Workout summary (per-type totals across {len(activities)} "
+                f"sessions in window)\n"
                 "```json\n"
-                f"{json.dumps(activities, default=str)}\n"
+                f"{json.dumps(workout_summary, default=str)}\n"
                 "```\n\n"
+                if workout_summary else ""
+            )
+            + (
+                (
+                    f"## Workouts ({len(activities)} sessions in window — "
+                    f"km / min / HR / kcal per session)\n"
+                    "```json\n"
+                    f"{json.dumps(activities[-30:], default=str)}\n"
+                    "```\n\n"
+                    if len(activities) <= 30 else
+                    f"## Workouts (most recent 30 of {len(activities)} sessions — "
+                    f"km / min / HR / kcal per session; see Workout summary above "
+                    f"for full-window totals)\n"
+                    "```json\n"
+                    f"{json.dumps(activities[-30:], default=str)}\n"
+                    "```\n\n"
+                )
                 if activities else ""
             )
             + (
@@ -964,6 +1201,9 @@ class HealthAgent:
                 if training else ""
             )
             + f"{sep}\n"
+            f"{analytic_guardrails}"
+            f"{sep}\n\n"
+            f"{sep}\n"
             f"USER QUESTION\n"
             f"{sep}\n\n"
             f"{user_text}\n"
