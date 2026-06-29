@@ -7,6 +7,7 @@ proactive insight scanner to detect and explain patterns.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 
@@ -1396,6 +1397,78 @@ def get_behavior_rules() -> list[InsightRule]:
     return [r for r in INSIGHT_RULES if r.trigger_behavior is not None]
 
 
+# Meta-rules that frame how findings are interpreted (ranked-contributor view,
+# baseline-confidence guard). They carry no specific deviating metric, so they
+# must be force-kept whenever the KB is subset.
+_ALWAYS_KEEP_RULES = frozenset({
+    "multi_cause_recovery_strain",
+    "baseline_reliability_guard",
+})
+
+# The environmental-confounder cluster — kept together when the snapshot has any
+# environment data, since heat / air-quality / pollen are cross-cutting
+# confounders for RHR / HRV / respiration / sleep.
+_ENVIRONMENTAL_RULES = frozenset({
+    "heat_recovery_confounder",
+    "air_quality_recovery_confounder",
+    "high_pollen_sleep_confounder",
+    "allergy_next_day_rhr_systemic",
+    "asthma_environmental_hr_marker",
+})
+
+
+def select_relevant_rule_names(
+    metrics: Iterable[str] = (),
+    behaviors: Iterable[str] = (),
+    rule_names: Iterable[str] = (),
+    include_environmental: bool = False,
+    biological_sex: str | None = None,
+) -> set[str]:
+    """Names of the rules relevant to a snapshot's actual signals.
+
+    Used to subset the knowledge base for the portable prompt so the receiving
+    model sees only the evidence tied to what shows up in the data (rather than
+    all 52 rules every time). Errs toward inclusion — a rule is kept when:
+
+    * it is an always-keep meta-rule (:data:`_ALWAYS_KEEP_RULES`), or
+    * its ``name`` appears in ``rule_names`` (a rule that actually fired), or
+    * its ``trigger_metric`` / ``comparison_metric`` is in ``metrics``, or
+    * its ``trigger_behavior`` matches one of ``behaviors`` (case-insensitive), or
+    * ``include_environmental`` and it belongs to the environmental cluster.
+
+    Cycle rules (``sex_specific="female"``) are excluded for non-female users, to
+    stay consistent with :func:`get_rules_summary_for_llm`.
+    """
+    is_female = (biological_sex or "").strip().lower().startswith("f")
+    metric_set = {m for m in metrics if m}
+    behavior_set = {b.strip().lower() for b in behaviors if b}
+    name_set = set(rule_names)
+    keep: set[str] = set()
+    for r in INSIGHT_RULES:
+        if r.sex_specific == "female" and not is_female:
+            continue
+        if (
+            r.name in _ALWAYS_KEEP_RULES
+            or r.name in name_set
+            or r.trigger_metric in metric_set
+            or (r.comparison_metric and r.comparison_metric in metric_set)
+            or (r.trigger_behavior and r.trigger_behavior.strip().lower() in behavior_set)
+            or (include_environmental and r.name in _ENVIRONMENTAL_RULES)
+        ):
+            keep.add(r.name)
+    return keep
+
+
+def count_visible_rules(biological_sex: str | None = None) -> int:
+    """How many rules the full KB would render for this user (after the sex
+    filter) — lets a caller decide whether a subset is worth applying."""
+    is_female = (biological_sex or "").strip().lower().startswith("f")
+    return sum(
+        1 for r in INSIGHT_RULES
+        if not (r.sex_specific == "female" and not is_female)
+    )
+
+
 def _abbrev_citation(citation: str) -> str:
     """Compress a citation string to [Author Year, Author Year] format.
 
@@ -1417,8 +1490,12 @@ def _abbrev_citation(citation: str) -> str:
     return f"[{', '.join(parts)}]" if parts else citation
 
 
-def get_rules_summary_for_llm(biological_sex: str | None = None) -> str:
-    """Format all rules as a concise text block for the LLM system prompt.
+def get_rules_summary_for_llm(
+    biological_sex: str | None = None,
+    only_rules: set[str] | None = None,
+    subset_note: bool = False,
+) -> str:
+    """Format the rules as a concise text block for the LLM system prompt.
 
     Each rule is emitted with its evidence tier, claim strength, measurement
     confidence (when not 'high'), and confounder list so the agent can match
@@ -1429,12 +1506,25 @@ def get_rules_summary_for_llm(biological_sex: str | None = None) -> str:
     cycle-phase rules (``sex_specific="female"``) are dropped entirely and the
     ``luteal_phase`` confounder tag is stripped from every remaining rule, so a
     male persona never receives menstrual-cycle context it is told it can't use.
+
+    ``only_rules`` (a set of rule names, e.g. from
+    :func:`select_relevant_rule_names`) restricts the output to those rules —
+    used to subset the KB for the portable prompt. ``subset_note`` adds a one-line
+    header note when the KB has been filtered.
     """
     is_female = (biological_sex or "").strip().lower().startswith("f")
-    lines = ["## Medical Evidence Knowledge Base\n"]
+    header = "## Medical Evidence Knowledge Base"
+    if only_rules is not None and subset_note:
+        header += (
+            "\n_(Filtered to the rules relevant to this snapshot's metrics, "
+            "behaviours and environment — not the full rule set.)_"
+        )
+    lines = [header + "\n"]
     current_cat = ""
     for rule in INSIGHT_RULES:
         if rule.sex_specific == "female" and not is_female:
+            continue
+        if only_rules is not None and rule.name not in only_rules:
             continue
         if rule.category != current_cat:
             current_cat = rule.category

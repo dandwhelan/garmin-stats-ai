@@ -14,7 +14,11 @@ from garmin_insights.config import Settings, get_settings
 from garmin_insights.db.sqlite_repo import SqliteRepo
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.db.cache import CacheBuilder
-from garmin_insights.knowledge.medical import get_rules_summary_for_llm
+from garmin_insights.knowledge.medical import (
+    get_rules_summary_for_llm,
+    select_relevant_rule_names,
+    count_visible_rules,
+)
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
     QueryToolHandler,
@@ -956,6 +960,50 @@ class HealthAgent:
             "When comparing behaviors, rely only on the daily data provided and report "
             "on/off day counts — do not imply statistical significance",
         )
+
+        # Subset the embedded medical KB to the rules relevant to THIS snapshot
+        # (deviating metrics + logged behaviours + rules that actually fired +
+        # the environmental cluster when env data exists). This is portable-only:
+        # the live agent keeps the full KB in its cached prefix, so caching is
+        # untouched. Fall back to the full KB when the relevant set is tiny (a
+        # quiet window) so we never strip context we can't confidently exclude.
+        try:
+            sex = self._settings.biological_sex
+            kb_metrics: set[str] = set()
+            kb_behaviors: set[str] = set(behavior_category.keys())
+            kb_rule_names: set[str] = set()
+            for items in scan_findings.values():
+                for it in items:
+                    if it.get("metric"):
+                        kb_metrics.add(it["metric"])
+                    for m in it.get("deviating_metrics") or []:
+                        kb_metrics.add(m)
+                    if it.get("behavior"):
+                        kb_behaviors.add(it["behavior"])
+                    if it.get("rule_name"):
+                        kb_rule_names.add(it["rule_name"])
+            keep = select_relevant_rule_names(
+                metrics=kb_metrics,
+                behaviors=kb_behaviors,
+                rule_names=kb_rule_names,
+                include_environmental=bool(environment_by_date),
+                biological_sex=sex,
+            )
+            visible = count_visible_rules(sex)
+            # Only swap when it genuinely shrinks the KB and keeps a sensible floor.
+            if 8 <= len(keep) < visible:
+                full_kb = get_rules_summary_for_llm(sex)
+                if full_kb not in system_text:
+                    raise ValueError("KB block not found verbatim; skipping subset")
+                subset_kb = get_rules_summary_for_llm(
+                    sex, only_rules=keep, subset_note=True
+                )
+                system_text = system_text.replace(full_kb, subset_kb)
+                logger.debug(
+                    "Portable prompt: KB subset to %d/%d rules", len(keep), visible
+                )
+        except Exception as e:
+            logger.debug("Portable prompt: KB subset skipped: %s", e)
 
         sep = "-" * 40
         header_note = (
