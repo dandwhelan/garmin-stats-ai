@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_VALID_EFFORT = {"low", "medium", "high", "xhigh", "max"}
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -43,6 +46,24 @@ class Settings(BaseSettings):
     # Claude / Anthropic
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-5"
+    # Reasoning depth / cost lever for adaptive-thinking models: one of
+    # low | medium | high | xhigh | max. Lower effort = fewer thinking/output
+    # tokens = lower cost (output tokens are the pricey side), at the cost of
+    # shallower analysis. Ignored on the legacy budget-thinking models, which
+    # don't support the effort parameter.
+    #
+    # Env var is INSIGHTS_EFFORT, NOT CLAUDE_EFFORT: Claude Code sets
+    # CLAUDE_EFFORT=xhigh in its own shell, so a CLAUDE_EFFORT-named setting
+    # would be silently overridden to xhigh whenever the server is (re)started
+    # from a Claude Code session — the opposite of the intended low default.
+    claude_effort: str = Field(default="low", validation_alias="INSIGHTS_EFFORT")
+
+    @field_validator("claude_effort")
+    @classmethod
+    def _normalize_effort(cls, v: str) -> str:
+        # Coerce a bad/typo'd value to "low" rather than 400 every API call.
+        v = (v or "").strip().lower()
+        return v if v in _VALID_EFFORT else "low"
 
     # Web server
     web_host: str = "0.0.0.0"

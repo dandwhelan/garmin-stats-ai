@@ -125,6 +125,10 @@ ENVIRONMENT_PAST_DAYS=92            # Open-Meteo lookback window per fetch (defa
 
 # Model (optional)
 CLAUDE_MODEL=claude-sonnet-5        # default; set claude-opus-4-8 for Opus
+INSIGHTS_EFFORT=low                 # reasoning effort: low|medium|high|xhigh|max
+                                    # (default low). NOT named CLAUDE_EFFORT —
+                                    # Claude Code sets that to xhigh in its own
+                                    # shell and would silently override this.
 
 # Web server (optional)
 WEB_HOST=0.0.0.0
@@ -157,6 +161,7 @@ QueryToolHandler (tools/query_tools.py)
 
 - **Model**: defaults to `claude-sonnet-5`; set `CLAUDE_MODEL=claude-opus-4-8` to opt into Opus
 - **Per-model thinking**: current models (Opus 4.6+, Sonnet 4.6, and the "5" generation like Sonnet 5) → `{"type": "adaptive"}`; only the legacy Sonnet 4.5 / 4.0 / 3.x line falls back to `{"type": "enabled", "budget_tokens": 8000}` (adaptive is rejected there, and `enabled` is rejected on the current models)
+- **Reasoning effort**: on the adaptive-thinking models the agent passes `output_config={"effort": settings.claude_effort}` (default `low` — the cheapest, fewest thinking/output tokens; env `INSIGHTS_EFFORT`, `low|medium|high|xhigh|max`). Not sent on the legacy budget models, which don't support `effort`. The env var is deliberately `INSIGHTS_EFFORT`, not `CLAUDE_EFFORT`, to avoid Claude Code's own `CLAUDE_EFFORT=xhigh` silently overriding it on restarts launched from a Claude Code session.
 - **Prompt caching**: Two cache breakpoints. The static prefix — base instructions + medical knowledge (tier badges + confounders, **~13.4k chars** after optimisation) + the evidence-tier rules (`_evidence_tier_block`) + the user-identity block (`_identity_block`) — never changes for the life of a per-user agent, so it carries one `cache_control: {"type": "ephemeral"}` on its last block and is cached after the first call (saving ~80% of system-prompt tokens on repeat queries). The genuinely day-varying blocks (`_today_block`, `_cycle_context_block`, `_environment_context_block`) are appended per call in `_system_for_call()` with a second breakpoint on the last one, so the whole prompt stays warm across the rounds of a single turn while date, cycle phase, and environmental extremes still reflect the latest state. KB was reduced from ~27k: first-sentence summaries only, abbreviated citations (`[Author Year]`), abbreviated tier tags (`[A, strong]` not `[Tier A, strong_association]`).
 - **Tool loop**: Manual (not automatic function calling) — dispatches tool calls, appends results, loops until `stop_reason == "end_turn"` (max 10 rounds)
 - **Streaming**: `chat_stream()` generator used by the SSE endpoint; yields status messages during tool calls, final text when done
