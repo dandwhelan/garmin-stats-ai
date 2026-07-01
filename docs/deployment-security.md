@@ -48,7 +48,7 @@ http://localhost:8081   ← garmin-insights FastAPI (Helen's env owns the web; S
 | Dashboard target | garmin web server at **`http://localhost:8081`** |
 | Web owner | `users/helen.env` (`START_WEB=true`, `WEB_PORT=8081`). `users/dan.env` is fetcher-only (`START_WEB=false`) |
 | Health endpoint | `GET /api/health?user=helen` (the bare `/api/health` returns 404 — it needs a real `?user=`) |
-| AI provider | Anthropic (`claude-sonnet-4-6`) — `/api/chat` spends real Anthropic credits |
+| AI provider | Anthropic (`claude-sonnet-5`) — `/api/chat` spends real Anthropic credits |
 | Stale leftovers | `~/.cloudflared/cert.pem` + `~/.cloudflared/<UUID>.json` are from an old (2024) locally-managed tunnel and are **not used** by the running service. Leave them or delete them; they don't affect the token tunnel. |
 
 ---

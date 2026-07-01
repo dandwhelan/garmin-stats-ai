@@ -194,12 +194,20 @@ class HealthAgent:
 
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-        # Thinking config differs per model: Opus supports adaptive; Sonnet
-        # needs an explicit budget.
-        if "opus" in settings.claude_model.lower():
-            self._thinking = {"type": "adaptive"}
-        else:
+        # Thinking config differs per model. Current models (Opus 4.6+,
+        # Sonnet 4.6, and the "5" generation such as Sonnet 5) use adaptive
+        # thinking — enabled+budget_tokens is rejected (400) on them. Only the
+        # legacy Sonnet 4.5 / 4.0 / 3.x line still needs an explicit budget.
+        # The effort parameter (output_config) tunes thinking depth / token
+        # spend on the adaptive models; it is unsupported on the legacy budget
+        # models, so we only send it there.
+        _model = settings.claude_model.lower()
+        self._extra_call_params: dict = {}
+        if any(tag in _model for tag in ("sonnet-4-5", "sonnet-4-0", "sonnet-3")):
             self._thinking = {"type": "enabled", "budget_tokens": 8000}
+        else:
+            self._thinking = {"type": "adaptive"}
+            self._extra_call_params["output_config"] = {"effort": settings.claude_effort}
 
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(settings.biological_sex),
@@ -469,6 +477,7 @@ class HealthAgent:
                     tools=self._tools_cache,
                     messages=history,
                     thinking=self._thinking,
+                    **self._extra_call_params,
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
@@ -532,6 +541,7 @@ class HealthAgent:
                     tools=self._tools_cache,
                     messages=history,
                     thinking=self._thinking,
+                    **self._extra_call_params,
                 ) as stream:
                     # Stream text deltas as they arrive
                     for event in stream:
