@@ -244,9 +244,18 @@ class LifestyleService:
     # 3. Sleep regularity index (proxy)
     # ------------------------------------------------------------------
     def sleep_regularity(self, start: str, end: str) -> dict:
-        """Proxy SRI: 100 - (std of sleep midpoint in hours over a 7-day window) * 25.
-        A perfectly regular sleeper scores 100, every hour of variance ~ -25 pts.
-        Plot 7-day rolling SRI day-by-day.
+        """Sleep-midpoint consistency (a PROXY for the Sleep Regularity Index).
+
+        Score: 100 - (std of sleep midpoint in hours over a 7-day window) * 25.
+        A perfectly regular sleeper scores 100; every hour of midpoint variance
+        costs ~25 pts. Plotted as a 7-day rolling value.
+
+        NOTE: this is NOT the validated Sleep Regularity Index (Phillips 2017 /
+        Windred 2024), which is a probabilistic epoch-matching metric (the
+        probability of being in the same sleep/wake state 24h apart) and needs
+        epoch-level hypnograms we don't store. Midpoint-consistency correlates
+        with SRI but is a coarser summary — the payload advertises this so the
+        UI / agent don't attach the Tier-A SRI evidence to it verbatim.
         """
         with self._conn() as conn:
             df = pd.read_sql_query(
@@ -280,7 +289,15 @@ class LifestyleService:
         series = [{"date": r["date"], "sri": (None if pd.isna(r["sri"]) else float(r["sri"]))}
                   for _, r in m.iterrows()]
         current = float(m["sri"].iloc[-1]) if not pd.isna(m["sri"].iloc[-1]) else None
-        return {"series": series, "current": current}
+        return {
+            "series": series,
+            "current": current,
+            "method": "sleep_midpoint_consistency_proxy",
+            "note": (
+                "Proxy for the Sleep Regularity Index based on 7-day sleep-"
+                "midpoint variance — not the epoch-matching validated SRI."
+            ),
+        }
 
     # ------------------------------------------------------------------
     # 4. Social jet lag — weekday vs weekend midpoint

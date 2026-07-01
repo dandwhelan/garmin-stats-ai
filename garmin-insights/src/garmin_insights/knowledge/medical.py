@@ -1023,7 +1023,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation=(
             "Waterhouse et al., 2007, J Sleep Research; "
-            "Lechat et al., 2025, SLEEP (Oura cohort, ~1.5M nights — sleep takes >1 week "
+            "Willoughby et al., 2025, SLEEP (Oura cohort, ~1.5M nights — sleep takes >1 week "
             "to adjust after time-zone crossings)"
         ),
         research_summary=(
@@ -1188,7 +1188,7 @@ INSIGHT_RULES: list[InsightRule] = [
             ">7 days."
         ),
         research_citation=(
-            "Lechat et al., 2025, SLEEP (Oura cohort, ~1.5M nights)"
+            "Willoughby et al., 2025, SLEEP (Oura cohort, ~1.5M nights)"
         ),
         research_summary=(
             "Large wearable cohort confirms multi-day disruption to sleep timing, "
@@ -1245,7 +1245,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation=(
             "Baniak 2023, Sci Total Environ (n=50 older adults, in-home sensors); "
-            "Minor 2025, SLEEP (n=317,758 wearable cohort); "
+            "Lechat 2025, SLEEP (n=317,758 wearable cohort, outdoor temperature); "
             "Buguet 2007, Sleep Med Rev; Okamoto-Mizuno 2012, J Physiol Anthropol"
         ),
         research_summary=(

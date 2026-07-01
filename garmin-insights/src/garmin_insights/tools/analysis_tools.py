@@ -33,6 +33,7 @@ class ComparisonResult:
     pct_change: float | None
     p_value: float | None
     significant: bool
+    cohens_d: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +46,8 @@ class ComparisonResult:
             "difference": round(self.difference, 2) if self.difference is not None else None,
             "pct_change": round(self.pct_change, 1) if self.pct_change is not None else None,
             "p_value": round(self.p_value, 4) if self.p_value is not None else None,
+            "cohens_d": round(self.cohens_d, 2) if self.cohens_d is not None else None,
+            "effect_size": _effect_size_label(self.cohens_d),
             "significant": self.significant,
         }
 
@@ -87,6 +90,56 @@ class AnomalyResult:
             "z_score": round(self.z_score, 2),
             "direction": self.direction,
         }
+
+
+def _cohens_d(a: list[float], b: list[float]) -> float | None:
+    """Standardised mean difference between two samples (pooled SD).
+
+    A p-value says "is there an effect"; Cohen's d says "how big" on a
+    baseline-independent scale, so the agent can distinguish a reliable-but-
+    trivial 2-point sleep-score shift from a meaningful one. Returns ``None``
+    when either group has <2 points or the pooled SD is zero.
+    """
+    if len(a) < 2 or len(b) < 2:
+        return None
+    va, vb = np.var(a, ddof=1), np.var(b, ddof=1)
+    na, nb = len(a), len(b)
+    pooled = ((na - 1) * va + (nb - 1) * vb) / (na + nb - 2)
+    if pooled <= 0:
+        return None
+    return float((np.mean(a) - np.mean(b)) / np.sqrt(pooled))
+
+
+def _effect_size_label(d: float | None) -> str | None:
+    """Cohen's conventional magnitude bands for |d|."""
+    if d is None:
+        return None
+    ad = abs(d)
+    if ad < 0.2:
+        return "negligible"
+    if ad < 0.5:
+        return "small"
+    if ad < 0.8:
+        return "medium"
+    return "large"
+
+
+def _baseline_scale(baseline: dict[str, Any]) -> float | None:
+    """Pick the standard deviation to normalise a deviation against.
+
+    A z-score must divide by the spread of the SAME window its mean comes from.
+    Baselines are compared against ``avg_30d``, so the matching scale is
+    ``std_30d``. The 7-day std was previously used here — with only 7 points it
+    is very noisy and shrinks during a stable week, so identical deviations
+    swung between "1.2σ" and "2.5σ" purely from denominator instability. Fall
+    back to ``std_7d`` only when the 30-day std is missing (sparse history).
+    """
+    std = baseline.get("std_30d")
+    if std is None or std == 0:
+        std = baseline.get("std_7d")
+    if std is None or std == 0:
+        return None
+    return float(std)
 
 
 # Metrics that accumulate throughout the day — incomplete days give false readings
@@ -165,23 +218,38 @@ class AnalysisEngine:
         
         canonical_behavior = self.find_matching_behavior(behavior, list(all_behaviors))
         if not canonical_behavior:
-            logger.warning("Behavior '%s' not found in recent data (checked %d behaviors).", 
+            logger.warning("Behavior '%s' not found in recent data (checked %d behaviors).",
                            behavior, len(all_behaviors))
             return None
 
-        for i, s in enumerate(summaries):
-            # Apply shift: Behavior at [i] affects Metric at [i + shift]
-            metric_idx = i + shift_days
-            if metric_idx >= len(summaries):
+        # Map each calendar day to its summary so the behavior→metric lag is
+        # joined on the ACTUAL next date, not the next row. With a positional
+        # +1 shift, any missing day (unworn watch / sync gap) pairs a behavior
+        # with the wrong night's sleep. Look the target date up explicitly.
+        by_date = {s["date"]: s for s in summaries if s.get("date")}
+
+        for s in summaries:
+            behavior_date = s.get("date")
+            if behavior_date is None:
                 continue
-                
-            metric_val = summaries[metric_idx].get(metric)
+            if shift_days:
+                try:
+                    target = datetime.strptime(behavior_date, "%Y-%m-%d") + timedelta(days=shift_days)
+                except ValueError:
+                    continue
+                metric_row = by_date.get(target.strftime("%Y-%m-%d"))
+            else:
+                metric_row = s
+            if metric_row is None:
+                continue
+
+            metric_val = metric_row.get(metric)
             if metric_val is None:
                 continue
-            
+
             lifestyle = s.get("lifestyle", {})
             behavior_data = lifestyle.get(canonical_behavior)
-            
+
             # Check if behavior was present (status=1)
             if behavior_data and behavior_data.get("status") == 1:
                 vals_with.append(float(metric_val))
@@ -220,6 +288,7 @@ class AnalysisEngine:
             n_with=len(vals_with), n_without=len(vals_without),
             difference=diff, pct_change=pct,
             p_value=float(p_val), significant=bool(p_val < 0.05),
+            cohens_d=_cohens_d(vals_with, vals_without),
         )
 
     def detect_trend(
@@ -233,16 +302,29 @@ class AnalysisEngine:
         summaries = self._memory.get_daily_summaries_range(start, today)
         summaries = self._filter_summaries(summaries, metric)
 
-        values = []
+        # Regress against actual day offsets, not row positions — otherwise a
+        # missing day (unworn watch, sync gap) silently compresses the x-axis and
+        # mislabels "slope per day". Anchor day 0 at the first available reading.
+        day0: datetime | None = None
+        x_days: list[float] = []
+        values: list[float] = []
         for s in summaries:
             val = s.get(metric)
-            if val is not None:
-                values.append(float(val))
+            if val is None:
+                continue
+            try:
+                d = datetime.strptime(s["date"], "%Y-%m-%d")
+            except (KeyError, ValueError):
+                continue
+            if day0 is None:
+                day0 = d
+            x_days.append((d - day0).days)
+            values.append(float(val))
 
         if len(values) < 3:
             return None
 
-        x = np.arange(len(values), dtype=float)
+        x = np.asarray(x_days, dtype=float)
         slope, intercept, r_val, p_val, std_err = stats.linregress(x, values)
 
         if abs(r_val) > 0.3:
@@ -263,12 +345,12 @@ class AnalysisEngine:
     ) -> list[AnomalyResult]:
         """Flag recent values that deviate from the 30-day baseline."""
         baseline = self._memory.get_baseline(metric)
-        if not baseline or baseline.get("avg_30d") is None or baseline.get("std_7d") is None:
+        if not baseline or baseline.get("avg_30d") is None:
             return []
 
         mean = baseline["avg_30d"]
-        std = baseline["std_7d"]
-        if std == 0 or std is None:
+        std = _baseline_scale(baseline)
+        if std is None:
             return []
 
         from datetime import datetime, timedelta
@@ -389,9 +471,9 @@ class AnalysisEngine:
                 "message": "Need at least 30 days of baselines for RHR, HRV, and respiration."
             }
 
-        rhr_mean, rhr_std = rhr_b.get("avg_30d"), rhr_b.get("std_7d")
-        hrv_mean, hrv_std = hrv_b.get("avg_30d"), hrv_b.get("std_7d")
-        resp_mean, resp_std = resp_b.get("avg_30d"), resp_b.get("std_7d")
+        rhr_mean, rhr_std = rhr_b.get("avg_30d"), _baseline_scale(rhr_b)
+        hrv_mean, hrv_std = hrv_b.get("avg_30d"), _baseline_scale(hrv_b)
+        resp_mean, resp_std = resp_b.get("avg_30d"), _baseline_scale(resp_b)
 
         if not all([rhr_mean, hrv_mean, resp_mean, rhr_std, hrv_std, resp_std]):
             return {"verdict": "insufficient_baseline", "message": "Baseline statistics incomplete."}
@@ -445,43 +527,77 @@ class AnalysisEngine:
         }
 
     def detect_social_jet_lag(self, days: int = 21) -> dict[str, Any] | None:
-        """Compare weekday vs weekend sleep timing variance."""
+        """Weekday vs weekend sleep-MIDPOINT shift (Wittmann 2006 definition).
+
+        Social jet lag is the shift in the *centre* of the sleep window between
+        work and free days — NOT a change in duration. Someone who sleeps 7h on
+        both a 02:00→09:00 weekend and a 23:00→06:00 weekday has large social jet
+        lag and zero duration variance, so the old duration-based proxy measured
+        the wrong construct. We reconstruct the midpoint from each night's wake
+        time (``sleep_summary.time``) minus half the sleep duration. The
+        dashboard's ``LifestyleService.social_jet_lag`` computes this same way.
+        """
+        import sqlite3
         from datetime import datetime, timedelta
 
         yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
         start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-        summaries = self._memory.get_daily_summaries_range(start, yesterday)
 
-        # We only have sleep duration, not start/end times — so this is approximate
-        weekday_sleep = []
-        weekend_sleep = []
-        for s in summaries:
-            sleep_secs = s.get("sleepingSeconds") or s.get("sleepTimeSeconds")
-            if sleep_secs is None:
-                continue
+        try:
+            db_path = self._memory.db_path
+        except AttributeError:
+            return None
+        rows: list[tuple] = []
+        try:
+            conn = sqlite3.connect(db_path, timeout=10)
             try:
-                day = datetime.strptime(s["date"], "%Y-%m-%d").weekday()
-            except ValueError:
-                continue
-            (weekend_sleep if day >= 5 else weekday_sleep).append(float(sleep_secs))
-
-        if len(weekday_sleep) < 3 or len(weekend_sleep) < 2:
+                rows = conn.execute(
+                    "SELECT date, time, sleep_time_seconds FROM sleep_summary "
+                    "WHERE date >= ? AND date <= ? ORDER BY date",
+                    (start, yesterday),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            logger.debug("social jet lag sleep query failed: %s", exc)
             return None
 
-        weekday_mean = float(np.mean(weekday_sleep))
-        weekend_mean = float(np.mean(weekend_sleep))
-        diff_hours = abs(weekend_mean - weekday_mean) / 3600
+        weekday_mids: list[float] = []
+        weekend_mids: list[float] = []
+        for date_str, wake_time, sleep_secs in rows:
+            if not wake_time or not sleep_secs:
+                continue
+            try:
+                wake = datetime.fromisoformat(str(wake_time).replace("Z", "").split(".")[0])
+                bed = wake - timedelta(seconds=int(sleep_secs))
+                mid = bed + (wake - bed) / 2
+                # Hour-of-day on a wrap-safe scale where 02:00 reads as 26.
+                h = mid.hour + mid.minute / 60
+                if h < 12:
+                    h += 24
+                dow = datetime.strptime(date_str, "%Y-%m-%d").weekday()
+            except (ValueError, TypeError):
+                continue
+            (weekend_mids if dow >= 5 else weekday_mids).append(h)
+
+        if len(weekday_mids) < 3 or len(weekend_mids) < 2:
+            return None
+
+        weekday_mid = float(np.mean(weekday_mids))
+        weekend_mid = float(np.mean(weekend_mids))
+        diff_hours = abs(weekend_mid - weekday_mid)
 
         return {
-            "weekday_sleep_hours": round(weekday_mean / 3600, 2),
-            "weekend_sleep_hours": round(weekend_mean / 3600, 2),
+            "weekday_midpoint_h": round(weekday_mid, 2),
+            "weekend_midpoint_h": round(weekend_mid, 2),
             "diff_hours": round(diff_hours, 2),
-            "n_weekdays": len(weekday_sleep),
-            "n_weekends": len(weekend_sleep),
+            "n_weekdays": len(weekday_mids),
+            "n_weekends": len(weekend_mids),
             "social_jet_lag": diff_hours > 1.0,
             "interpretation": (
-                "Significant weekday/weekend variance — possible social jet lag impact"
+                "Sleep midpoint shifts >1h between weekdays and weekends — "
+                "social jet lag associated with metabolic and mood impact"
                 if diff_hours > 1.0
-                else "Sleep duration is consistent across the week"
+                else "Sleep timing is consistent across the week"
             ),
         }
