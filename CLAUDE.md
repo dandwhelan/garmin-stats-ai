@@ -5,7 +5,7 @@
 Two-module Python monorepo:
 
 - **`garmin-grafana/`** — Data ingestion: fetches Garmin Connect metrics → SQLite
-- **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI, powered by Claude (default `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-8` for Opus)
+- **`garmin-insights/`** — AI analysis agent: FastAPI web server + CLI, powered by Claude (default `claude-sonnet-5`; set `CLAUDE_MODEL=claude-opus-4-8` for Opus)
 - **`users/`** — Per-user `.env` files for multi-user mode (`*.env` git-ignored; `*.env.example` templates checked in)
 - **`scripts/`** — Launchers for multi-user mode (`run-user.sh <username>`, `run-dan.sh`, `run-helen.sh`)
 
@@ -124,7 +124,7 @@ HOME_LON=-0.1278                    # longitude
 ENVIRONMENT_PAST_DAYS=92            # Open-Meteo lookback window per fetch (default 92, max 92)
 
 # Model (optional)
-CLAUDE_MODEL=claude-sonnet-4-6      # default; set claude-opus-4-8 for Opus
+CLAUDE_MODEL=claude-sonnet-5        # default; set claude-opus-4-8 for Opus
 
 # Web server (optional)
 WEB_HOST=0.0.0.0
@@ -155,8 +155,8 @@ QueryToolHandler (tools/query_tools.py)
 
 ## Claude API Design
 
-- **Model**: defaults to `claude-sonnet-4-6`; set `CLAUDE_MODEL=claude-opus-4-8` to opt into Opus
-- **Per-model thinking**: Opus → `{"type": "adaptive"}`; Sonnet (and any non-Opus) → `{"type": "enabled", "budget_tokens": 8000}`
+- **Model**: defaults to `claude-sonnet-5`; set `CLAUDE_MODEL=claude-opus-4-8` to opt into Opus
+- **Per-model thinking**: current models (Opus 4.6+, Sonnet 4.6, and the "5" generation like Sonnet 5) → `{"type": "adaptive"}`; only the legacy Sonnet 4.5 / 4.0 / 3.x line falls back to `{"type": "enabled", "budget_tokens": 8000}` (adaptive is rejected there, and `enabled` is rejected on the current models)
 - **Prompt caching**: Two cache breakpoints. The static prefix — base instructions + medical knowledge (tier badges + confounders, **~13.4k chars** after optimisation) + the evidence-tier rules (`_evidence_tier_block`) + the user-identity block (`_identity_block`) — never changes for the life of a per-user agent, so it carries one `cache_control: {"type": "ephemeral"}` on its last block and is cached after the first call (saving ~80% of system-prompt tokens on repeat queries). The genuinely day-varying blocks (`_today_block`, `_cycle_context_block`, `_environment_context_block`) are appended per call in `_system_for_call()` with a second breakpoint on the last one, so the whole prompt stays warm across the rounds of a single turn while date, cycle phase, and environmental extremes still reflect the latest state. KB was reduced from ~27k: first-sentence summaries only, abbreviated citations (`[Author Year]`), abbreviated tier tags (`[A, strong]` not `[Tier A, strong_association]`).
 - **Tool loop**: Manual (not automatic function calling) — dispatches tool calls, appends results, loops until `stop_reason == "end_turn"` (max 10 rounds)
 - **Streaming**: `chat_stream()` generator used by the SSE endpoint; yields status messages during tool calls, final text when done

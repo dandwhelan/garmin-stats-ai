@@ -194,12 +194,15 @@ class HealthAgent:
 
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-        # Thinking config differs per model: Opus supports adaptive; Sonnet
-        # needs an explicit budget.
-        if "opus" in settings.claude_model.lower():
-            self._thinking = {"type": "adaptive"}
-        else:
+        # Thinking config differs per model. Current models (Opus 4.6+,
+        # Sonnet 4.6, and the "5" generation such as Sonnet 5) use adaptive
+        # thinking — enabled+budget_tokens is rejected (400) on them. Only the
+        # legacy Sonnet 4.5 / 4.0 / 3.x line still needs an explicit budget.
+        _model = settings.claude_model.lower()
+        if any(tag in _model for tag in ("sonnet-4-5", "sonnet-4-0", "sonnet-3")):
             self._thinking = {"type": "enabled", "budget_tokens": 8000}
+        else:
+            self._thinking = {"type": "adaptive"}
 
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(settings.biological_sex),

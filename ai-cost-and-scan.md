@@ -26,10 +26,10 @@ The AI reads all of that, then instead of answering straight away it often goes 
 
 | Model | When used | Input | Output |
 |-------|-----------|-------|--------|
-| `claude-sonnet-4-6` | Default | $3 / M tokens | $15 / M tokens |
-| `claude-opus-4-8` | Set `CLAUDE_MODEL=claude-opus-4-8` in `.env` | $15 / M tokens | $75 / M tokens |
+| `claude-sonnet-5` | Default | $3 / M tokens ($2 intro, through 2026-08-31) | $15 / M tokens ($10 intro) |
+| `claude-opus-4-8` | Set `CLAUDE_MODEL=claude-opus-4-8` in `.env` | $5 / M tokens | $25 / M tokens |
 
-**Use Sonnet unless you specifically want deeper reasoning.** The cost difference is 5×.
+**Use Sonnet unless you specifically want deeper reasoning.** Opus costs roughly 1.7× more per token (~2.5× while Sonnet 5's introductory pricing lasts).
 
 ---
 
