@@ -370,6 +370,7 @@ class MemoryStore:
                     "avg_7d": row["avg_7d"],
                     "avg_30d": row["avg_30d"],
                     "std_7d": row["std_7d"],
+                    "std_30d": row["std_30d"],
                     "latest_value": row["latest_value"],
                 }
             return None

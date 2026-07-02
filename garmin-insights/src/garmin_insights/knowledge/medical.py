@@ -155,7 +155,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Your overnight HRV has been {direction} over the last {days_analyzed} days "
             "(slope: {slope_per_day:+.1f} ms/day, R²={r_squared:.2f})."
         ),
-        research_citation="Plews et al., 2013, International Journal of Sports Physiology & Performance",
+        research_citation="Plews et al., 2013, Sports Medicine",
         research_summary=(
             "A declining HRV trend over 5+ days indicates accumulated physiological strain "
             "and incomplete recovery. Athletes showing this pattern are at higher risk "
@@ -179,7 +179,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation=(
             "Radin et al., 2020, Lancet Digital Health; "
-            "Aune et al., 2017, CMAJ (dose-response meta-analysis on RHR and mortality)"
+            "Aune et al., 2017, Nutr Metab Cardiovasc Dis (dose-response meta-analysis on RHR and mortality)"
         ),
         research_summary=(
             "Elevated resting heart rate (>5 bpm above personal baseline for 3+ days) "
@@ -327,7 +327,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Allergy symptom days show RHR of {mean_with:.0f} bpm "
             "vs {mean_without:.0f} bpm without ({difference:+.1f} bpm)."
         ),
-        research_citation="Shaaban et al., 2008, European Respiratory Journal; Togias, 2000, Journal of Allergy and Clinical Immunology",
+        research_citation="Shaaban et al., 2008, The Lancet; Togias, 2000, Journal of Allergy and Clinical Immunology",
         research_summary=(
             "Allergic inflammation can elevate RHR and impair sleep via histamine-mediated "
             "arousal and nasal congestion. Garmin signals alone cannot distinguish allergy "
@@ -517,8 +517,8 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Quer et al., 2021, Nature Medicine; "
             "Radin et al., 2020, Lancet Digital Health; "
-            "Natarajan et al., 2020, BMJ Open; "
-            "Mishra et al., 2022, Lancet Digital Health (systematic review)"
+            "Natarajan et al., 2020, npj Digital Medicine; "
+            "Mitratza et al., 2022, Lancet Digital Health (systematic review)"
         ),
         research_summary=(
             "The combination of elevated RHR, depressed HRV, and elevated respiration for "
@@ -544,7 +544,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Overnight respiration rate is {value:.1f} br/min — "
             "{z_score:+.1f}σ above your baseline of {baseline_mean:.1f}."
         ),
-        research_citation="Natarajan et al., 2020, BMJ Open",
+        research_citation="Natarajan et al., 2020, npj Digital Medicine",
         research_summary=(
             "Resting respiration rate above 16 br/min, or >1 br/min above personal "
             "baseline for 2+ nights, can be a marker for systemic inflammation, "
@@ -571,7 +571,7 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Gabbett, 2016, BJSM (original concept); "
             "Impellizzeri et al., 2020, BJSM (critique of ACWR as injury predictor); "
-            "Wang et al., 2024, BJSM (training-load injury research limitations)"
+            "Wang et al., 2020, Sports Medicine (acute:chronic workload ratio lessons learned)"
         ),
         research_summary=(
             "Gabbett 2016 popularised the idea that a 7-day load >1.5× the 28-day load "
@@ -719,7 +719,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation=(
             "Bacon et al., 2013, PLOS ONE (training meta-analysis); "
-            "Han et al., 2024, BJSM (overview of meta-analyses, >20M observations, "
+            "Lang et al., 2024, BJSM (overview of meta-analyses, >20M observations, "
             "199 cohorts on cardiorespiratory fitness and mortality)"
         ),
         research_summary=(
@@ -744,7 +744,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Lower-step days correlate with {pct_change:+.0f}% higher stress — "
             "stillness, not just absence of exercise, is loading you up."
         ),
-        research_citation="Choi et al., 2019, JAMA Internal Medicine",
+        research_citation="Zaffalon Junior et al., 2018, Physiological Reports",
         research_summary=(
             "Days with fewer than 5,000 steps tend to show higher physiological strain "
             "markers — independent of formal exercise. Likely mechanism: reduced "
@@ -787,8 +787,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "while VO2 max is unchanged — possible cardiovascular reserve loss."
         ),
         research_citation=(
-            "Cooney et al., 2010, American Journal of Cardiology; "
-            "Aune et al., 2017, CMAJ (dose-response meta-analysis)"
+            "Cooney et al., 2010, American Heart Journal; "
+            "Aune et al., 2017, Nutr Metab Cardiovasc Dis (dose-response meta-analysis)"
         ),
         research_summary=(
             "An RHR drift upward of 3-5 bpm over weeks, without a matching VO2 max "
@@ -812,7 +812,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Visceral fat trending up correlates with HRV trending down "
             "(r={correlation:.2f} over {days_analyzed} days)."
         ),
-        research_citation="Felber Dietrich et al., 2006, European Heart Journal",
+        research_citation="Felber Dietrich et al., 2006, Europace",
         research_summary=(
             "Visceral adipose tissue is metabolically active and may suppress "
             "parasympathetic (vagal) tone, lowering HRV. The relationship is dose-dependent "
@@ -838,9 +838,9 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Shilaih et al., 2017, Scientific Reports (wrist wearable, cycle pulse rate); "
             "Alzueta/de Zambotti/Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); "
-            "Symons Downs et al., 2025, Sports Medicine (systematic review, "
+            "de Jager et al., 2026, Sports Medicine (living systematic review, "
             "wearable-derived HRV across reproductive life stages); "
-            "Nakagawa et al., 2020, J Clin Med; Brar et al., 2015, J Women's Health"
+            "Schmalenberger et al., 2020, J Clin Med; Brar et al., 2015, J Clin Diagn Res"
         ),
         research_summary=(
             "In the luteal phase (post-ovulation through menstruation), progesterone "
@@ -870,7 +870,7 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Janse de Jonge 2019, Med Sci Sports Exerc; "
             "J Appl Physiol systematic review 2025 (doi:10.1152/japplphysiol.00223.2025); "
-            "Symons Downs et al., 2025, Sports Medicine (wearable HRV across cycle SR)"
+            "de Jager et al., 2026, Sports Medicine (wearable HRV across cycle living SR)"
         ),
         research_summary=(
             "Low-oestrogen follicular days (post-menses through ovulation) are commonly "
@@ -895,8 +895,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "on well-rested luteal nights."
         ),
         research_citation=(
-            "Symons Downs et al., 2025, Sports Medicine "
-            "(systematic review — wearable HRV across reproductive life stages)"
+            "de Jager et al., 2026, Sports Medicine "
+            "(living systematic review — wearable HRV across reproductive life stages)"
         ),
         research_summary=(
             "Reduced sleep duration raises RHR INDEPENDENT of cycle phase. Before "
@@ -919,7 +919,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "on follicular nights."
         ),
         research_citation=(
-            "Baker, 2007, Sleep Medicine Reviews (PMC2266284); "
+            "Baker, 2007, Sleep (PMC2266284); "
             "PMS & sleep quality cross-sectional, 2025 (PMC11842786)"
         ),
         research_summary=(
@@ -946,7 +946,7 @@ INSIGHT_RULES: list[InsightRule] = [
         description_template=(
             "DOMS days show RHR of {mean_with:.0f} bpm vs {mean_without:.0f} bpm baseline."
         ),
-        research_citation="Cheung et al., 2003, Sports Medicine; Twist & Eston, 2005, Journal of Sports Sciences",
+        research_citation="Cheung et al., 2003, Sports Medicine; Twist & Eston, 2005, European Journal of Applied Physiology",
         research_summary=(
             "Delayed Onset Muscle Soreness (DOMS) from intense or novel exercise causes "
             "localised inflammation that can elevate resting heart rate by 3-8 bpm and "
@@ -1022,8 +1022,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "Travel days show sleep score of {mean_with:.0f} vs {mean_without:.0f} at home."
         ),
         research_citation=(
-            "Waterhouse et al., 2007, J Sleep Research; "
-            "Lechat et al., 2025, SLEEP (Oura cohort, ~1.5M nights — sleep takes >1 week "
+            "Waterhouse et al., 2007, The Lancet; "
+            "Willoughby et al., 2025, SLEEP (Oura cohort, ~1.5M nights — sleep takes >1 week "
             "to adjust after time-zone crossings)"
         ),
         research_summary=(
@@ -1077,8 +1077,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "(achievable: {achievable_fitness_age:.0f})."
         ),
         research_citation=(
-            "Nes et al., 2013, Medicine & Science in Sports & Exercise; "
-            "Han et al., 2024, BJSM (overview of meta-analyses, >20M observations)"
+            "Nes et al., 2011, Medicine & Science in Sports & Exercise; "
+            "Lang et al., 2024, BJSM (overview of meta-analyses, >20M observations)"
         ),
         research_summary=(
             "Garmin's fitness age is derived from VO2 max relative to age-sex norms. "
@@ -1104,7 +1104,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "vs {mean_without:.0f} bpm on other mornings ({difference:+.0f} bpm)."
         ),
         research_citation=(
-            "Sagawa et al., 2011, Alcohol & Alcoholism; "
+            "Sagawa et al., 2011, Alcoholism: Clin & Exp Res; "
             "PLOS Digital Health, 2026 (~21k-adult wearable cohort, dose-dependent)"
         ),
         research_summary=(
@@ -1188,7 +1188,7 @@ INSIGHT_RULES: list[InsightRule] = [
             ">7 days."
         ),
         research_citation=(
-            "Lechat et al., 2025, SLEEP (Oura cohort, ~1.5M nights)"
+            "Willoughby et al., 2025, SLEEP (Oura cohort, ~1.5M nights)"
         ),
         research_summary=(
             "Large wearable cohort confirms multi-day disruption to sleep timing, "
@@ -1244,14 +1244,17 @@ INSIGHT_RULES: list[InsightRule] = [
             "elevate overnight RHR and suppress HRV regardless of training load."
         ),
         research_citation=(
-            "Baniak 2023, Sci Total Environ (n=50 older adults, in-home sensors); "
-            "Minor 2025, SLEEP (n=317,758 wearable cohort); "
-            "Buguet 2007, Sleep Med Rev; Okamoto-Mizuno 2012, J Physiol Anthropol"
+            "Baniassadi et al. 2023, Sci Total Environ (n=50 older adults, in-home sensors); "
+            "Lechat 2025, SLEEP (n=317,758 wearable cohort, outdoor temperature); "
+            "Buguet 2007, J Neurol Sci; Okamoto-Mizuno 2012, J Physiol Anthropol"
         ),
         research_summary=(
-            "Bedroom nighttime temperature outside ~20-25°C is associated with "
-            "a clinically relevant 5-10% drop in sleep efficiency; a 317k-person "
-            "wearable cohort confirms dose-response sleep loss as outdoor T rises. "
+            "Bedroom nighttime temperature outside a roughly 18-25°C comfort range "
+            "is associated with a clinically relevant 5-10% drop in sleep efficiency "
+            "(cooler ~18°C is common sleep-hygiene guidance; Baniassadi 2023 found "
+            "20-25°C optimal in older adults, with efficiency falling as temperature "
+            "rises above ~25°C); a 317k-person wearable cohort confirms dose-response "
+            "sleep loss as outdoor T rises. "
             "Daytime apparent T above ~28°C increases sweat-loss, dehydration risk, "
             "and sympathetic tone, raising RHR and reducing HRV the following night. "
             "Treat as a confounder for recovery deviations: when a heat day precedes "
