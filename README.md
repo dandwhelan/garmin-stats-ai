@@ -307,12 +307,12 @@ The agent has **48 evidence-tier-graded insight rules** in `garmin-insights/src/
 | **HRV decline as overtraining marker** | Plews et al., 2013, *International Journal of Sports Physiology & Performance* |
 | **Wearable RHR for early illness detection** | Radin et al., 2020, *The Lancet Digital Health* |
 | **Illness-like recovery strain pattern (RHR + HRV + respiration) — non-diagnostic** | Quer et al., 2021, *Nature Medicine*; Mishra et al., 2022, *Lancet Digital Health* (systematic review) |
-| **Respiration rate as inflammation/illness signal** | Natarajan et al., 2020, *BMJ Open* |
+| **Respiration rate as inflammation/illness signal** | Natarajan et al., 2020, *npj Digital Medicine* |
 | **ACWR as load-spike context signal (NOT an injury predictor)** | Gabbett, 2016, *BJSM* (original concept); Impellizzeri et al., 2020, *BJSM* (critique); Wang et al., 2024, *BJSM* (training-load research limitations) |
 | **Overreaching: rising load + falling HRV** | Bellenger et al., 2016, *Sports Medicine* |
 | **Polarized vs. grey-zone training** | Seiler, 2010, *International Journal of Sports Physiology* |
 | **VO2 max plateau dynamics & cardiorespiratory fitness ↔ mortality** | Bacon et al., 2013, *PLOS ONE* (training meta-analysis); Han et al., 2024, *BJSM* (overview of meta-analyses, >20M observations, 199 cohorts) |
-| **RHR and all-cause / CV mortality** | Cooney et al., 2010, *American Journal of Cardiology*; Aune et al., 2017, *CMAJ* (dose-response meta-analysis) |
+| **RHR and all-cause / CV mortality** | Cooney et al., 2010, *American Heart Journal*; Aune et al., 2017, *Nutr Metab Cardiovasc Dis* (dose-response meta-analysis) |
 | **Cortisol, stress, and sleep quality** | Adam et al., 2017, *Psychoneuroendocrinology* |
 | **Allostatic load and burnout** | McEwen, 2007, *Physiological Reviews* |
 | **Exercise and sleep quality (meta-analysis)** | Kredlow et al., 2015, *Journal of Behavioral Medicine* |
@@ -331,13 +331,13 @@ The agent has **48 evidence-tier-graded insight rules** in `garmin-insights/src/
 | **Social jet lag and metabolic health** | Wittmann et al., 2006, *Chronobiology International* |
 | **Sedentary behaviour and stress** | Choi et al., 2019, *JAMA Internal Medicine* |
 | **Sleep fragmentation and HRV recovery** | Stein & Pu, 2012, *Sleep Medicine Reviews* |
-| **Visceral fat and HRV** | Felber Dietrich et al., 2006, *European Heart Journal* |
+| **Visceral fat and HRV** | Felber Dietrich et al., 2006, *Europace* |
 | **Hydration and resting heart rate** | Watso & Farquhar, 2019, *Nutrients* |
 | **Overnight SpO2 — clinician-screening signal only, NOT a diagnostic sleep study** | Kapur et al., 2017, *Journal of Clinical Sleep Medicine* (AASM Clinical Practice Guideline for Adult OSA Diagnostic Testing) |
-| **Period-day RHR/HRV shift (luteal phase physiology — use as confounder, not single cause)** | Shilaih et al., 2017, *Scientific Reports* (wrist wearable); Alzueta / de Zambotti / Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); de Jager et al., 2026, *Sports Medicine* (living systematic review — wearable HRV across reproductive life stages); Nakagawa et al., 2020, *J Clin Med*; Brar et al., 2015, *J Women's Health* |
+| **Period-day RHR/HRV shift (luteal phase physiology — use as confounder, not single cause)** | Shilaih et al., 2017, *Scientific Reports* (wrist wearable); Alzueta / de Zambotti / Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); de Jager et al., 2026, *Sports Medicine* (living systematic review — wearable HRV across reproductive life stages); Nakagawa et al., 2020, *J Clin Med*; Brar et al., 2015, *J Clin Diagn Res* |
 | **Temperature / HR / HRV across the menstrual cycle (Oura)** *(dashboard tooltip)* | Maijala et al., 2022, *International Journal of Women's Health* |
 | **ML classification of cycle phase from sleeping HR** | Masuda et al., 2025 |
-| **Cycle phase × sleep architecture (device-estimated, personal-trend framing)** | Baker & Driver, 2007, *Sleep Medicine Reviews*; PMS &amp; sleep quality cross-sectional, 2025 (PMC11842786) |
+| **Cycle phase × sleep architecture (device-estimated, personal-trend framing)** | Baker, 2007, *Sleep* (PMC2266284); PMS &amp; sleep quality cross-sectional, 2025 (PMC11842786) |
 | **Follicular-phase training window** | Janse de Jonge, 2019, *Sports Medicine* |
 | **Travel & time-zone disruption (wearable cohort)** | Lechat et al., 2025, *SLEEP* (Oura cohort, ~1.5M nights) |
 | **HRV/RHR baseline reliability** | Plews et al., 2013, *Sports Medicine* (requires ~21-30 days of continuous data) |

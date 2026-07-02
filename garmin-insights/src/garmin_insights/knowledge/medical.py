@@ -179,7 +179,7 @@ INSIGHT_RULES: list[InsightRule] = [
         ),
         research_citation=(
             "Radin et al., 2020, Lancet Digital Health; "
-            "Aune et al., 2017, CMAJ (dose-response meta-analysis on RHR and mortality)"
+            "Aune et al., 2017, Nutr Metab Cardiovasc Dis (dose-response meta-analysis on RHR and mortality)"
         ),
         research_summary=(
             "Elevated resting heart rate (>5 bpm above personal baseline for 3+ days) "
@@ -327,7 +327,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Allergy symptom days show RHR of {mean_with:.0f} bpm "
             "vs {mean_without:.0f} bpm without ({difference:+.1f} bpm)."
         ),
-        research_citation="Shaaban et al., 2008, European Respiratory Journal; Togias, 2000, Journal of Allergy and Clinical Immunology",
+        research_citation="Shaaban et al., 2008, The Lancet; Togias, 2000, Journal of Allergy and Clinical Immunology",
         research_summary=(
             "Allergic inflammation can elevate RHR and impair sleep via histamine-mediated "
             "arousal and nasal congestion. Garmin signals alone cannot distinguish allergy "
@@ -517,7 +517,7 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Quer et al., 2021, Nature Medicine; "
             "Radin et al., 2020, Lancet Digital Health; "
-            "Natarajan et al., 2020, BMJ Open; "
+            "Natarajan et al., 2020, npj Digital Medicine; "
             "Mishra et al., 2022, Lancet Digital Health (systematic review)"
         ),
         research_summary=(
@@ -544,7 +544,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Overnight respiration rate is {value:.1f} br/min — "
             "{z_score:+.1f}σ above your baseline of {baseline_mean:.1f}."
         ),
-        research_citation="Natarajan et al., 2020, BMJ Open",
+        research_citation="Natarajan et al., 2020, npj Digital Medicine",
         research_summary=(
             "Resting respiration rate above 16 br/min, or >1 br/min above personal "
             "baseline for 2+ nights, can be a marker for systemic inflammation, "
@@ -787,8 +787,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "while VO2 max is unchanged — possible cardiovascular reserve loss."
         ),
         research_citation=(
-            "Cooney et al., 2010, American Journal of Cardiology; "
-            "Aune et al., 2017, CMAJ (dose-response meta-analysis)"
+            "Cooney et al., 2010, American Heart Journal; "
+            "Aune et al., 2017, Nutr Metab Cardiovasc Dis (dose-response meta-analysis)"
         ),
         research_summary=(
             "An RHR drift upward of 3-5 bpm over weeks, without a matching VO2 max "
@@ -812,7 +812,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Visceral fat trending up correlates with HRV trending down "
             "(r={correlation:.2f} over {days_analyzed} days)."
         ),
-        research_citation="Felber Dietrich et al., 2006, European Heart Journal",
+        research_citation="Felber Dietrich et al., 2006, Europace",
         research_summary=(
             "Visceral adipose tissue is metabolically active and may suppress "
             "parasympathetic (vagal) tone, lowering HRV. The relationship is dose-dependent "
@@ -840,7 +840,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "Alzueta/de Zambotti/Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); "
             "de Jager et al., 2026, Sports Medicine (living systematic review, "
             "wearable-derived HRV across reproductive life stages); "
-            "Nakagawa et al., 2020, J Clin Med; Brar et al., 2015, J Women's Health"
+            "Nakagawa et al., 2020, J Clin Med; Brar et al., 2015, J Clin Diagn Res"
         ),
         research_summary=(
             "In the luteal phase (post-ovulation through menstruation), progesterone "
@@ -919,7 +919,7 @@ INSIGHT_RULES: list[InsightRule] = [
             "on follicular nights."
         ),
         research_citation=(
-            "Baker, 2007, Sleep Medicine Reviews (PMC2266284); "
+            "Baker, 2007, Sleep (PMC2266284); "
             "PMS & sleep quality cross-sectional, 2025 (PMC11842786)"
         ),
         research_summary=(
