@@ -785,7 +785,7 @@ class VisualizationService:
             "correlations": correlations,
             "notes": (
                 "Bedroom T from Home Assistant. Overnight mean is 22:00–08:00. "
-                "Baniak 2023: cooler bedroom T (16–19°C) associated with better sleep efficiency."
+                "Baniassadi 2023: cooler bedroom T (16–19°C) associated with better sleep efficiency."
             ),
         }
 

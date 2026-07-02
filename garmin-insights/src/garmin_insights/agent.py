@@ -349,7 +349,7 @@ class HealthAgent:
                 "fragmentation, include these alongside training load, alcohol, "
                 "sleep loss and illness — they are research-validated wearable-cohort "
                 "confounders (Buekers 2023 next-day RHR; Niu 2020 PM2.5↔HRV "
-                "meta-analysis; Baniak 2023 + Minor 2025 heat↔sleep; Cokorudy 2024 "
+                "meta-analysis; Baniassadi 2023 + Lechat 2025 heat↔sleep; Cokorudy 2024 "
                 "asthma digital-marker SR). Call get_environment_data if you need "
                 "the full per-day numbers."
             )

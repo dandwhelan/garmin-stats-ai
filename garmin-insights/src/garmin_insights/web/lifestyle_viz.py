@@ -695,7 +695,7 @@ class LifestyleService:
     # ------------------------------------------------------------------
     # Research citations surfaced in the UI tooltip:
     #   - Shilaih 2017 (Sci Rep) — sleeping HR rises in luteal phase
-    #   - Maijala 2022 (Dovepress IJWH, Oura ring) — temp/HR/HRV across cycle
+    #   - Maijala 2019 (BMC Womens Health, Oura ring) — temp/HR/HRV across cycle
     #   - Alzueta/de Zambotti/Baker 2022 (Oura) — luteal HR↑, skin temp↑, RMSSD↓
     #   - de Jager 2026 (Sports Medicine living SR) — wearable HRV across cycle
     #   - Masuda 2025 — ML phase classification from sleeping HR
