@@ -17,6 +17,7 @@ from typing import Any
 
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.knowledge.medical import INSIGHT_RULES, get_behavior_rules
+from garmin_insights.stats_utils import benjamini_hochberg
 from garmin_insights.tools.analysis_tools import AnalysisEngine, AnomalyResult, ComparisonResult
 
 # Thresholds above which environmental factors warrant inclusion as ranked
@@ -237,10 +238,21 @@ class InsightScanner:
             return None
 
     def scan_behavior_impacts(self, days: int = 30) -> list[dict[str, Any]]:
-        """Analyze the impact of all logged lifestyle behaviors on key metrics."""
-        behavior_rules = get_behavior_rules()
-        findings = []
+        """Analyze the impact of all logged lifestyle behaviors on key metrics.
 
+        Significance is decided with a Benjamini-Hochberg FDR correction across
+        the whole behavior battery, not a per-test ``p<0.05``. With ~20 rules
+        each Welch-tested independently, an uncorrected threshold surfaces ~1
+        false-positive "significant" behavior per scan — the same multiple-
+        comparisons trap that ``compute_correlation_matrix`` already guards
+        against. The per-test ``p_value`` is preserved; only the ``significant``
+        flag (which gates insight persistence) becomes FDR-aware.
+        """
+        behavior_rules = get_behavior_rules()
+
+        # First pass: compute every comparison so BH can see the full set of
+        # p-values before deciding which clear the corrected threshold.
+        candidates: list[tuple[Any, ComparisonResult, dict[str, Any]]] = []
         for rule in behavior_rules:
             # Skip if we've already reported this recently
             if self._memory.is_insight_suppressed(rule.name):
@@ -259,8 +271,18 @@ class InsightScanner:
             finding = result.to_dict()
             finding["rule_name"] = rule.name
             _attach_rule_metadata(finding, rule, self._biological_sex)
+            candidates.append((rule, result, finding))
 
-            if result.significant:
+        # BH correction across the battery. None p-values (n too small for a
+        # t-test) are treated as not-significant by benjamini_hochberg.
+        flags = benjamini_hochberg([r.p_value for _, r, _ in candidates])
+
+        findings = []
+        for (rule, result, finding), significant in zip(candidates, flags):
+            finding["significant"] = significant
+            finding["significant_correction"] = "benjamini_hochberg_q0.05"
+
+            if significant:
                 # Noteworthy — save this insight to prevent duplicate reporting
                 try:
                     description = rule.description_template.format(**finding)

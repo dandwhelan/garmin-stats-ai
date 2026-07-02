@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260629a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260702a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -206,7 +206,7 @@
     <section class="chart-section" id="ha-bedroom-section" style="display:none;">
       <div class="chart-header">
         <h2>Bedroom Temperature</h2>
-        <span class="chart-sub">Overnight mean (10 PM–8 AM) from Home Assistant · optimal sleep range 16–19 °C (Okamoto-Mizuno 2012)</span>
+        <span class="chart-sub">Overnight mean (10 PM–8 AM) from Home Assistant · optimal sleep range ≈18–24 °C (Okamoto-Mizuno 2012; Baniassadi 2023)</span>
       </div>
       <div class="chart-container">
         <canvas id="ha-bedroom-chart"></canvas>
@@ -313,7 +313,7 @@
 
     <section class="chart-section" id="menstrual-section" style="display:none;">
       <div class="chart-header">
-        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Luteal phase typically shows +2–5 bpm RHR and lower rMSSD HRV; late-luteal/PMS days are associated with reduced device-estimated deep/REM and more awakenings. <em>Use cycle phase as a confounder/context label, not a single cause</em> — the same pattern can resemble illness, alcohol, training strain or sleep debt.<br><br>Sources: Shilaih 2017 (Sci Rep); Brar 2015 (J Women's Health); Baker 2007; Alzueta 2022 (Oura); Symons Downs 2025 (Sports Med SR).</span></span></h2>
+        <h2>Menstrual Cycle <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Current cycle phase, day-of-cycle and predicted length from Garmin's Women's Health tracking. Luteal phase typically shows +2–5 bpm RHR and lower rMSSD HRV; late-luteal/PMS days are associated with reduced device-estimated deep/REM and more awakenings. <em>Use cycle phase as a confounder/context label, not a single cause</em> — the same pattern can resemble illness, alcohol, training strain or sleep debt.<br><br>Sources: Shilaih 2017 (Sci Rep); Brar 2015 (J Clin Diagn Res); Baker 2007; Alzueta 2022 (Oura); de Jager 2026 (Sports Med SR).</span></span></h2>
         <span class="chart-sub">Phase, day-of-cycle and flow (last 90 days)</span>
       </div>
       <div id="menstrual-summary" class="alert-list"></div>
@@ -325,7 +325,7 @@
     <h2 class="section-divider">Environmental Context</h2>
     <section class="chart-section" id="environment-section" style="display:none;">
       <div class="chart-header">
-        <h2>Weather &amp; Air Quality <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Daily temperature, precipitation, European AQI and pollen at your configured home location (HOME_LAT/HOME_LON), via the free <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> API. Heat (apparent T &gt; ~28&nbsp;°C overnight), high PM2.5 / O&#8323;, and high pollen counts can each elevate RHR, suppress HRV, and disrupt sleep — treat as confounders when interpreting recovery deviations, not as a primary cause.<br><br>Sources: Buguet 2007 (Sleep Med Rev, heat &amp; sleep); Liu 2018 (Environ Int, PM2.5 &amp; HRV meta-analysis); Hadjipanayis 2021 (allergic rhinitis &amp; sleep).</span></span></h2>
+        <h2>Weather &amp; Air Quality <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Daily temperature, precipitation, European AQI and pollen at your configured home location (HOME_LAT/HOME_LON), via the free <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> API. Heat (apparent T &gt; ~28&nbsp;°C overnight), high PM2.5 / O&#8323;, and high pollen counts can each elevate RHR, suppress HRV, and disrupt sleep — treat as confounders when interpreting recovery deviations, not as a primary cause.<br><br>Sources: Buguet 2007 (J Neurol Sci, heat &amp; sleep); Liu 2018 (Environ Int, PM2.5 &amp; HRV meta-analysis); Hadjipanayis 2021 (allergic rhinitis &amp; sleep).</span></span></h2>
         <span class="chart-sub">Temperature, AQI and pollen for the selected window</span>
       </div>
       <div id="environment-summary" class="alert-list"></div>
@@ -357,7 +357,7 @@
 
     <section class="chart-section" id="env-recovery-section" style="display:none;">
       <div class="chart-header">
-        <h2>Environment &harr; Recovery <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overlays daily heat (apparent T), European AQI, PM2.5 and pollen peak against the physiological recovery markers Garmin records the same / next morning — RHR, overnight HRV, respiration rate, sleep score. Pollen uses a <em>next-day</em> lag because Buekers 2023 (n=72, 2,497 person-days, wearable telemonitoring of allergic rhinitis) found a +0.08 bpm next-day RHR rise per symptom-point, demonstrating systemic autonomic load beyond the respiratory tract. Heat / AQ / PM2.5 use same-day per Niu 2020 PM2.5↔HRV meta-analysis. Treat the table below as confounder-ranking evidence, not causation.<br><br>Sources: Buekers 2023 (Clin Transl Allergy); Niu 2020 (Environ Pollut); Cokorudy 2024 (ERJ Open Res, asthma digital-marker SR); Baniak 2023 (Sci Total Environ, bedroom T &amp; sleep); Lin 2022 (Biosensors, 24-study wearable env review); Matzke 2024 (JMIR mHealth, heat &amp; activity in rural Kenya).</span></span></h2>
+        <h2>Environment &harr; Recovery <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overlays daily heat (apparent T), European AQI, PM2.5 and pollen peak against the physiological recovery markers Garmin records the same / next morning — RHR, overnight HRV, respiration rate, sleep score. Pollen uses a <em>next-day</em> lag because Buekers 2023 (n=72, 2,497 person-days, wearable telemonitoring of allergic rhinitis) found a +0.08 bpm next-day RHR rise per symptom-point, demonstrating systemic autonomic load beyond the respiratory tract. Heat / AQ / PM2.5 use same-day per Niu 2020 PM2.5↔HRV meta-analysis. Treat the table below as confounder-ranking evidence, not causation.<br><br>Sources: Buekers 2023 (Clin Transl Allergy); Niu 2020 (Environ Pollut); Cokorudy 2024 (ERJ Open Res, asthma digital-marker SR); Baniassadi 2023 (Sci Total Environ, bedroom T &amp; sleep); Lin 2022 (Biosensors, 24-study wearable env review); Matzke 2024 (JMIR mHealth, heat &amp; activity in rural Kenya).</span></span></h2>
         <span class="chart-sub">Daily environmental drivers vs RHR / HRV / respiration / sleep, with Pearson r per pair</span>
       </div>
       <div class="chart-container">
@@ -391,7 +391,7 @@
 
     <section class="chart-section" id="bedroom-sleep-section" style="display:none;">
       <div class="chart-header">
-        <h2>Bedroom Temperature &harr; Sleep <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overnight bedroom temperature (22:00–08:00 mean from Home Assistant) vs sleep score, overnight HRV, awakening count, and RHR. Baniak 2023 (Sci Total Environ): bedroom T in the 16–19 °C range is associated with better sleep efficiency; >24 °C with fragmentation.</span></span></h2>
+        <h2>Bedroom Temperature &harr; Sleep <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overnight bedroom temperature (22:00–08:00 mean from Home Assistant) vs sleep score, overnight HRV, awakening count, and RHR. A cool room aids sleep, but the optimal range is roughly 18–24 °C: general guidance favours ~18 °C (Okamoto-Mizuno 2012), while Baniassadi 2023 (Sci Total Environ) found 20–25 °C optimal in older adults, with sleep efficiency falling as temperature rises above ~25 °C.</span></span></h2>
         <span class="chart-sub">Overnight bedroom T vs sleep score / HRV / awakenings; Pearson r per pair</span>
       </div>
       <div class="chart-container">
@@ -419,7 +419,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>Pre-symptom Illness Radar <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> <em>Illness-like recovery strain pattern</em> — composite z-score of elevated RHR, suppressed HRV and elevated respiration vs your 30-day baseline. <em>Not diagnostic.</em> The same pattern can follow alcohol, heat, poor sleep, late training, travel, DOMS, emotional stress or luteal-phase physiology.<br><br>Sources: Quer 2021 (Nat Med); Radin 2020, Mishra 2022 (Lancet Digital Health systematic review — performance varies, treat as screening, not diagnosis).</span></span></h2>
+        <h2>Pre-symptom Illness Radar <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> <em>Illness-like recovery strain pattern</em> — composite z-score of elevated RHR, suppressed HRV and elevated respiration vs your 30-day baseline. <em>Not diagnostic.</em> The same pattern can follow alcohol, heat, poor sleep, late training, travel, DOMS, emotional stress or luteal-phase physiology.<br><br>Sources: Quer 2021 (Nat Med); Radin 2020, Mitratza 2022 (Lancet Digital Health systematic review — performance varies, treat as screening, not diagnosis).</span></span></h2>
         <span class="chart-sub">RHR + HRV-inverted + respiration z-scores (Quer 2021)</span>
       </div>
       <div class="chart-container">
@@ -586,7 +586,7 @@
 
     <section class="chart-section">
       <div class="chart-header">
-        <h2>VO2 Max / Fitness Age <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Garmin estimates biological fitness age from VO2 max (your body's maximum oxygen uptake). Below your real age = above-average aerobic capacity for your demographic. "Achievable fitness age" is Garmin's modelled ceiling — surpassing it is a good sign.<br><br>Han 2024 (BJSM overview of meta-analyses, &gt;20M observations) confirms cardiorespiratory fitness is one of the strongest predictors of all-cause mortality.</span></span></h2>
+        <h2>VO2 Max / Fitness Age <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Garmin estimates biological fitness age from VO2 max (your body's maximum oxygen uptake). Below your real age = above-average aerobic capacity for your demographic. "Achievable fitness age" is Garmin's modelled ceiling — surpassing it is a good sign.<br><br>Lang 2024 (BJSM overview of meta-analyses, &gt;20M observations) confirms cardiorespiratory fitness is one of the strongest predictors of all-cause mortality.</span></span></h2>
       </div>
       <div class="chart-container">
         <canvas id="fitness-age-chart"></canvas>
@@ -595,7 +595,7 @@
 
     <section class="chart-section" id="fitness-trajectory-section" style="display:none;">
       <div class="chart-header">
-        <h2>Fitness Trajectory <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Garmin's slow-moving performance estimates: VO2 max (running/cycling) and modelled race times for 5k / 10k / half / marathon, plus endurance and hill scores. These update infrequently, so the window auto-extends to ~180 days. Race predictions are <em>model estimates</em> from your training load and VO2 max, not test results.<br><br>Han 2024 (BJSM, &gt;20M observations): cardiorespiratory fitness is among the strongest predictors of all-cause mortality.</span></span></h2>
+        <h2>Fitness Trajectory <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier A]</b> Garmin's slow-moving performance estimates: VO2 max (running/cycling) and modelled race times for 5k / 10k / half / marathon, plus endurance and hill scores. These update infrequently, so the window auto-extends to ~180 days. Race predictions are <em>model estimates</em> from your training load and VO2 max, not test results.<br><br>Lang 2024 (BJSM, &gt;20M observations): cardiorespiratory fitness is among the strongest predictors of all-cause mortality.</span></span></h2>
         <span class="chart-sub">VO2 max trend, modelled race times, endurance &amp; hill score (~180-day lookback)</span>
       </div>
       <div class="charts-row">
@@ -607,7 +607,7 @@
 
     <section class="chart-section" id="cycle-phase-section" style="display:none;">
       <div class="chart-header">
-        <h2>Vitals by Menstrual Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> RHR, overnight HRV, sleep score and morning Body Battery averaged within each menstrual phase. Expected pattern: RHR lowest in follicular, rising 2–5 bpm in luteal; HRV typically drops in late luteal — <em>normal physiology, not illness or overtraining</em>.<br><br>Use phase as a confounder before attributing changes to a single cause.<br><br>Sources: Shilaih 2017 (Sci Rep); Maijala 2022 (Oura); Alzueta 2022; Symons Downs 2025 (Sports Med SR); Nakagawa 2020.</span></span></h2>
+        <h2>Vitals by Menstrual Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> RHR, overnight HRV, sleep score and morning Body Battery averaged within each menstrual phase. Expected pattern: RHR lowest in follicular, rising 2–5 bpm in luteal; HRV typically drops in late luteal — <em>normal physiology, not illness or overtraining</em>.<br><br>Use phase as a confounder before attributing changes to a single cause.<br><br>Sources: Shilaih 2017 (Sci Rep); Maijala 2019 (Oura); Alzueta 2022; de Jager 2026 (Sports Med SR); Schmalenberger 2020.</span></span></h2>
         <span class="chart-sub">Per-phase averages over the selected window (only phases with data shown)</span>
       </div>
       <div class="chart-container">
@@ -618,7 +618,7 @@
 
     <section class="chart-section" id="cycle-day-section" style="display:none;">
       <div class="chart-header">
-        <h2>Cycle-Day Curve (RHR &amp; HRV) <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Your sleeping RHR and overnight HRV averaged at each day-of-cycle. Look for the biphasic pattern: follicular trough (days 6–13), ovulatory inflection, luteal rise (days 18–28). ML models can classify cycle phase from sleeping HR alone.<br><br>Caveat: reduced sleep raises RHR independent of phase — control for sleep duration before attributing changes to your cycle.<br><br>Sources: Shilaih 2017 (Sci Rep); Symons Downs 2025 (Sports Med SR); Masuda 2025 (cycle-phase classification from sleeping HR).</span></span></h2>
+        <h2>Cycle-Day Curve (RHR &amp; HRV) <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Your sleeping RHR and overnight HRV averaged at each day-of-cycle. Look for the biphasic pattern: follicular trough (days 6–13), ovulatory inflection, luteal rise (days 18–28). ML models can classify cycle phase from sleeping HR alone.<br><br>Caveat: reduced sleep raises RHR independent of phase — control for sleep duration before attributing changes to your cycle.<br><br>Sources: Shilaih 2017 (Sci Rep); de Jager 2026 (Sports Med SR); Masuda 2025 (cycle-phase classification from sleeping HR).</span></span></h2>
         <span class="chart-sub">Averaged across recent cycles in window</span>
       </div>
       <div class="chart-container">
@@ -652,7 +652,7 @@
 
     <section class="chart-section" id="cycle-stress-section" style="display:none;">
       <div class="chart-header">
-        <h2>Stress &amp; Body Battery by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Average daily autonomic-strain ("stress") %, high-strain %, lowest Body Battery and Body Battery drained per day within each phase. Autonomic strain often elevates in late-luteal/PMS alongside lower Body Battery recovery. Garmin "stress" is HRV-derived, not validated mental stress.<br><br>Sources: Schmalenberger 2020 (Front Endocrinol — HRV across cycle); Symons Downs 2025 (Sports Med SR — wearable HRV across reproductive life stages).</span></span></h2>
+        <h2>Stress &amp; Body Battery by Phase <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Average daily autonomic-strain ("stress") %, high-strain %, lowest Body Battery and Body Battery drained per day within each phase. Autonomic strain often elevates in late-luteal/PMS alongside lower Body Battery recovery. Garmin "stress" is HRV-derived, not validated mental stress.<br><br>Sources: Schmalenberger 2020 (Front Endocrinol — HRV across cycle); de Jager 2026 (Sports Med SR — wearable HRV across reproductive life stages).</span></span></h2>
         <span class="chart-sub">Per-phase averages (only phases with data shown)</span>
       </div>
       <div class="chart-container">
@@ -844,6 +844,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260629a"></script>
+  <script src="/static/app.js?v=20260702a"></script>
 </body>
 </html>

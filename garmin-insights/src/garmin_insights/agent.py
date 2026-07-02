@@ -280,7 +280,7 @@ class HealthAgent:
                 f"User is in the **{phase}** phase ({day_txt}{len_txt}).\n"
                 "Use cycle phase as a CONFOUNDER / CONTEXT LABEL, not a single cause. "
                 "Luteal-phase RHR↑/HRV↓ is normal physiology (Shilaih 2017; Brar 2015; "
-                "Alzueta 2022; Symons Downs 2025 SR) — do NOT flag this as illness or "
+                "Alzueta 2022; de Jager 2026 SR) — do NOT flag this as illness or "
                 "overtraining unless other clear symptoms are present. Before attributing "
                 "any change to cycle phase, check sleep duration, alcohol, late training, "
                 "heat, and travel — these are often stronger same-day drivers."
@@ -349,7 +349,7 @@ class HealthAgent:
                 "fragmentation, include these alongside training load, alcohol, "
                 "sleep loss and illness — they are research-validated wearable-cohort "
                 "confounders (Buekers 2023 next-day RHR; Niu 2020 PM2.5↔HRV "
-                "meta-analysis; Baniak 2023 + Minor 2025 heat↔sleep; Cokorudy 2024 "
+                "meta-analysis; Baniassadi 2023 + Lechat 2025 heat↔sleep; Cokorudy 2024 "
                 "asthma digital-marker SR). Call get_environment_data if you need "
                 "the full per-day numbers."
             )

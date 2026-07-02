@@ -4147,20 +4147,21 @@ function renderHABedroom(entries) {
   const maxVals  = entries.map(e => e.max_value);
   const unit     = entries[0]?.unit || '°C';
 
-  // Reference band plugin: 16–19 °C optimal sleep temperature.
+  // Reference band plugin: ≈18–24 °C optimal sleep temperature
+  // (cooler ~18 °C general guidance; Baniassadi 2023 found 20–25 °C optimal in older adults).
   const optimalBand = {
     id: 'bedroomOptimal',
     beforeDraw(chart) {
       const { ctx: c, scales: { x, y }, chartArea } = chart;
-      const y1 = y.getPixelForValue(19);
-      const y2 = y.getPixelForValue(16);
+      const y1 = y.getPixelForValue(24);
+      const y2 = y.getPixelForValue(18);
       c.save();
       c.fillStyle = 'rgba(34,197,94,0.08)';
       c.fillRect(chartArea.left, Math.min(y1, y2), chartArea.width, Math.abs(y2 - y1));
       // label
       c.fillStyle = 'rgba(34,197,94,0.5)';
       c.font = '11px sans-serif';
-      c.fillText('Optimal 16–19 °C', chartArea.left + 6, Math.min(y1, y2) - 4);
+      c.fillText('Optimal ≈18–24 °C', chartArea.left + 6, Math.min(y1, y2) - 4);
       c.restore();
     },
   };
