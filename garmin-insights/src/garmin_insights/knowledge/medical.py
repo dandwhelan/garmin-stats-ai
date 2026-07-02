@@ -838,7 +838,7 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Shilaih et al., 2017, Scientific Reports (wrist wearable, cycle pulse rate); "
             "Alzueta/de Zambotti/Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); "
-            "Symons Downs et al., 2025, Sports Medicine (systematic review, "
+            "de Jager et al., 2026, Sports Medicine (living systematic review, "
             "wearable-derived HRV across reproductive life stages); "
             "Nakagawa et al., 2020, J Clin Med; Brar et al., 2015, J Women's Health"
         ),
@@ -870,7 +870,7 @@ INSIGHT_RULES: list[InsightRule] = [
         research_citation=(
             "Janse de Jonge 2019, Med Sci Sports Exerc; "
             "J Appl Physiol systematic review 2025 (doi:10.1152/japplphysiol.00223.2025); "
-            "Symons Downs et al., 2025, Sports Medicine (wearable HRV across cycle SR)"
+            "de Jager et al., 2026, Sports Medicine (wearable HRV across cycle living SR)"
         ),
         research_summary=(
             "Low-oestrogen follicular days (post-menses through ovulation) are commonly "
@@ -895,8 +895,8 @@ INSIGHT_RULES: list[InsightRule] = [
             "on well-rested luteal nights."
         ),
         research_citation=(
-            "Symons Downs et al., 2025, Sports Medicine "
-            "(systematic review — wearable HRV across reproductive life stages)"
+            "de Jager et al., 2026, Sports Medicine "
+            "(living systematic review — wearable HRV across reproductive life stages)"
         ),
         research_summary=(
             "Reduced sleep duration raises RHR INDEPENDENT of cycle phase. Before "
