@@ -95,7 +95,7 @@ Run `maintain` from cron nightly given the Pi's power-instability corruption ris
 | `garmin-insights/src/garmin_insights/db/memory.py` | Memory store — baselines, insights, session history, and user-authored `daily_notes` (free-text note per day, merged into `get_daily_summaries_range`/`get_daily_summary` under a `note` key so it rides into the dashboard, the AI's `get_daily_metrics` tool, and the portable prompt) |
 | `garmin-insights/src/garmin_insights/db/cache.py` | Daily summary + baseline cache builder |
 | `garmin-insights/src/garmin_insights/config.py` | Settings via pydantic-settings + `.env`. `settings_for_user(user_id)` overlays `display_name`, `garminconnect_email`, and `biological_sex` from `users/<id>.env` so each user gets their own UI badge + AI persona |
-| `garmin-grafana/src/garmin_grafana/garmin_fetch.py` | Garmin Connect poller — daily stats, intraday, activities, etc. |
+| `garmin-grafana/src/garmin_grafana/garmin_fetch.py` | Garmin Connect poller — daily stats, intraday, activities, etc. Token-store ownership guard: after every token login it verifies the tokens in `TOKEN_DIR` belong to `GARMINCONNECT_EMAIL` (via the profile `userName` when email-form, else an `account_owner.txt` marker written at credential login) and re-authenticates as the configured account on mismatch — so a shared/misconfigured `TOKEN_DIR` can never silently download another user's data into this user's DB. |
 | `garmin-grafana/src/garmin_grafana/sqlite_manager.py` | SQLite write layer for the fetcher |
 | `users/*.env.example` | Per-user env templates for multi-user mode |
 | `scripts/run-user.sh` | Generic launcher (sources `users/<name>.env`, starts fetcher + web) |
@@ -107,7 +107,9 @@ Run `maintain` from cron nightly given the Pi's power-instability corruption ris
 GARMINCONNECT_EMAIL=your@email.com
 GARMINCONNECT_PASSWORD=your_password
 SQLITE_DB_PATH=/path/to/garmin.db
-TOKEN_DIR=/home/you/.garminconnect   # separate per-user in multi-user mode
+TOKEN_DIR=/home/you/.garminconnect   # MUST be a distinct directory per user — the fetcher
+                                    # verifies token ownership against GARMINCONNECT_EMAIL and
+                                    # refuses to download another account's data on mismatch
 
 # Insights agent (same db as fetcher)
 ANTHROPIC_API_KEY=sk-ant-...
