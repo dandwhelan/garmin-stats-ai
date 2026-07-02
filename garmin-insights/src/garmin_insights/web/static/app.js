@@ -49,6 +49,12 @@ async function initUserPicker() {
     if (!ids.includes(activeUser)) {
       activeUser = ids[0] || 'default';
       localStorage.setItem(USER_KEY, activeUser);
+      // The initial loadDashboard() at script load raced with the stale
+      // stored user and 404'd — redo it for the corrected user, mirroring
+      // the picker change handler (incl. dropping the stale chat session).
+      sessionId = null;
+      localStorage.removeItem(SESSION_KEY);
+      loadDashboard().then(populateEntityMetrics);
     }
     sel.value = activeUser;
     // Hide the picker entirely when there's only one user (single-user mode)
@@ -188,7 +194,9 @@ async function checkHealth() {
     statusDot.title = 'Unreachable';
   }
 }
-// Initialise user picker first; once done it will trigger checkHealth + loadDashboard
+// Initialise user picker, then check health for the (possibly corrected)
+// active user. The dashboard itself loads at script bottom; initUserPicker
+// re-triggers it only when the stored user turned out to be invalid.
 initUserPicker().then(() => {
   checkHealth();
 });
