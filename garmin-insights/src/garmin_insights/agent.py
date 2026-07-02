@@ -19,6 +19,7 @@ from garmin_insights.knowledge.medical import (
     select_relevant_rule_names,
     count_visible_rules,
 )
+from garmin_insights.insights.proactive import BEHAVIOR_IMPACT_WINDOW_DAYS
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
     QueryToolHandler,
@@ -937,6 +938,19 @@ class HealthAgent:
                 system_text_parts.append(text)
         system_text = "\n\n".join(system_text_parts)
 
+        # The Capabilities section opens by telling the agent it has tools —
+        # directly contradicting the "NO tools" header. Some models hesitate or
+        # attempt phantom tool calls on that contradiction, so rewrite it for
+        # portable mode rather than relying on the header to override it.
+        system_text = system_text.replace(
+            "You have access to tools that query the user's health data, "
+            "analyze trends and correlations, and recall/save context from "
+            "previous sessions.",
+            "In this session all data is pre-fetched and provided in the DATA "
+            "SNAPSHOT below — no tool calls are needed or available, and there "
+            "is no prior session to recall.",
+        )
+
         # The system text is written for the live tool-calling agent, which has a
         # 90-day cache window. In portable mode the only history is the snapshot
         # below, so rewrite the "90 days" claim to the real window rather than
@@ -967,8 +981,13 @@ class HealthAgent:
             "`p_value`/`significant` fields in the snapshot, if any",
         ).replace(
             "When comparing behaviors, always use compare_behavior_impact for statistical rigor",
-            "When comparing behaviors, rely only on the daily data provided and report "
-            "on/off day counts — do not imply statistical significance",
+            "When comparing behaviors, lead with the precomputed `behavior_impacts` "
+            f"findings, citing their n_with/n_without/p_value/significant fields as "
+            f"given — they are computed over the last {BEHAVIOR_IMPACT_WINDOW_DAYS} "
+            f"days of history, so cite them as {BEHAVIOR_IMPACT_WINDOW_DAYS}-day "
+            "figures even when they span more days than the snapshot window or the "
+            "question's window. Do not re-derive counts or significance from the raw "
+            "daily rows",
         )
 
         # Subset the embedded medical KB to the rules relevant to THIS snapshot
@@ -1071,6 +1090,12 @@ class HealthAgent:
             "do NOT have Garmin training load / ACWR / HR-zone data — keep any training-load or "
             "recovery-balance assessment qualitative and approximate, based on the workout "
             "volume provided.\n"
+            f"- The user reads your answer TODAY ({today_iso}). If today's row or the "
+            "precomputed anomalies carry a striking overnight signal dated today (extreme "
+            "awakening count, RHR/HRV deviation, etc.), surface it briefly in a closing "
+            "'Today' note even when it falls outside the window the question asks about — "
+            "overnight/morning metrics are valid for today, and omitting the most extreme "
+            "signal in the data because of window bounds would mislead the reader.\n"
         )
 
         # Convert to date-keyed dict — removes the repeated "date" field from
@@ -1153,7 +1178,12 @@ class HealthAgent:
                 f"## Precomputed findings (code-computed local detection — "
                 f"anomalies vs baseline, composite recovery strain, behaviour "
                 f"impacts, and trends; lead with these rather than re-deriving "
-                f"from the raw rows)\n"
+                f"from the raw rows. Each category runs over its OWN history "
+                f"window anchored to today — behaviour impacts over the last "
+                f"{BEHAVIOR_IMPACT_WINDOW_DAYS} days, trends over 14, anomalies "
+                f"over the last 3 vs a 30-day baseline — so n counts can "
+                f"legitimately exceed the snapshot window; cite each finding "
+                f"with its own window, not the snapshot's or the question's)\n"
                 "```json\n"
                 f"{json.dumps(_round_floats(scan_findings), default=str)}\n"
                 "```\n\n"

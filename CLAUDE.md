@@ -89,13 +89,13 @@ Run `maintain` from cron nightly given the Pi's power-instability corruption ris
 | `garmin-insights/src/garmin_insights/web/visualizations.py` | `VisualizationService` — intraday heatmap, sleep timeline, anomaly z-score calendar, correlation matrix, 90-day behavior impact, environment↔recovery overlay (same-day heat/AQ/PM2.5 + next-day pollen vs RHR/HRV/respiration/sleep, with per-pair Pearson r) |
 | `garmin-insights/src/garmin_insights/web/lifestyle_viz.py` | `LifestyleService` — 15 research-backed lifestyle analytics (SRI, social jet lag, illness-like recovery strain pattern, recovery debt, etc.) |
 | `garmin-insights/src/garmin_insights/knowledge/medical.py` | 52 evidence-tier-graded insight rules (`InsightRule` with `evidence_tier`, `claim_strength`, `measurement_confidence`, `confounders`, `requires_user_context`). Includes the `multi_cause_recovery_strain` meta-rule, `baseline_reliability_guard`, `travel_circadian_disruption`, and an environmental cluster (`heat_recovery_confounder`, `air_quality_recovery_confounder`, `high_pollen_sleep_confounder`, `allergy_next_day_rhr_systemic` per Buekers 2023, `asthma_environmental_hr_marker` per Cokorudy 2024). |
-| `garmin-insights/src/garmin_insights/insights/proactive.py` | `InsightScanner` — local anomaly + behavior + trend detection, enriched with tier metadata. `scan_composite_strain()` collapses concurrent RHR/HRV/respiration anomalies into a single ranked-contributor finding. |
+| `garmin-insights/src/garmin_insights/insights/proactive.py` | `InsightScanner` — local anomaly + behavior + trend detection, enriched with tier metadata. `scan_composite_strain()` collapses concurrent strain-direction anomalies (RHR↑ / HRV↓ / respiration↑ only — deviations the "good" way never trigger it) into a single ranked-contributor finding. |
 | `garmin-insights/src/garmin_insights/web/static/` | Frontend: `index.html`, `style.css`, `app.js` (date range toolbar, customize panel, info-icon tooltips, user/sync badges, Entities tab, ~17 secondary chart renderers) |
 | `garmin-insights/src/garmin_insights/db/sqlite_repo.py` | SQLite query layer (pandas DataFrames) |
 | `garmin-insights/src/garmin_insights/db/memory.py` | Memory store — baselines, insights, session history, and user-authored `daily_notes` (free-text note per day, merged into `get_daily_summaries_range`/`get_daily_summary` under a `note` key so it rides into the dashboard, the AI's `get_daily_metrics` tool, and the portable prompt) |
 | `garmin-insights/src/garmin_insights/db/cache.py` | Daily summary + baseline cache builder |
 | `garmin-insights/src/garmin_insights/config.py` | Settings via pydantic-settings + `.env`. `settings_for_user(user_id)` overlays `display_name`, `garminconnect_email`, and `biological_sex` from `users/<id>.env` so each user gets their own UI badge + AI persona |
-| `garmin-grafana/src/garmin_grafana/garmin_fetch.py` | Garmin Connect poller — daily stats, intraday, activities, etc. |
+| `garmin-grafana/src/garmin_grafana/garmin_fetch.py` | Garmin Connect poller — daily stats, intraday, activities, etc. Token-store ownership guard: after every token login it verifies the tokens in `TOKEN_DIR` belong to `GARMINCONNECT_EMAIL` (via the profile `userName` when email-form, else an `account_owner.txt` marker written at credential login) and re-authenticates as the configured account on mismatch — so a shared/misconfigured `TOKEN_DIR` can never silently download another user's data into this user's DB. |
 | `garmin-grafana/src/garmin_grafana/sqlite_manager.py` | SQLite write layer for the fetcher |
 | `users/*.env.example` | Per-user env templates for multi-user mode |
 | `scripts/run-user.sh` | Generic launcher (sources `users/<name>.env`, starts fetcher + web) |
@@ -107,7 +107,9 @@ Run `maintain` from cron nightly given the Pi's power-instability corruption ris
 GARMINCONNECT_EMAIL=your@email.com
 GARMINCONNECT_PASSWORD=your_password
 SQLITE_DB_PATH=/path/to/garmin.db
-TOKEN_DIR=/home/you/.garminconnect   # separate per-user in multi-user mode
+TOKEN_DIR=/home/you/.garminconnect   # MUST be a distinct directory per user — the fetcher
+                                    # verifies token ownership against GARMINCONNECT_EMAIL and
+                                    # refuses to download another account's data on mismatch
 
 # Insights agent (same db as fetcher)
 ANTHROPIC_API_KEY=sk-ant-...
@@ -261,7 +263,7 @@ Each rule also carries:
 
 ### Multi-cause confounder layer
 
-When two or more of RHR / HRV / respiration deviate together, `InsightScanner.scan_composite_strain()` (in `insights/proactive.py`) emits a single `multi_cause_recovery_strain` finding with ranked plausible contributors. User-logged behaviours from the last 48h outrank generic confounders. The agent presents this as a ranked list, never a single cause.
+When two or more of RHR / HRV / respiration deviate together **in strain-indicating directions** (RHR↑, HRV↓, respiration↑ — an anomalously good recovery day never triggers it), `InsightScanner.scan_composite_strain()` (in `insights/proactive.py`) emits a single `multi_cause_recovery_strain` finding with ranked plausible contributors. User-logged behaviours from the last 48h outrank generic confounders. The agent presents this as a ranked list, never a single cause.
 
 ### Baseline reliability guard
 

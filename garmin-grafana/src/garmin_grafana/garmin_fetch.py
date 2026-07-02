@@ -39,7 +39,7 @@ SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "garmin.db")
 # InfluxDB settings removed
 TOKEN_DIR = os.getenv("TOKEN_DIR", "~/.garminconnect") # optional
 GARMINCONNECT_EMAIL = os.environ.get("GARMINCONNECT_EMAIL", None) # optional, asks in prompt on run if not provided
-GARMINCONNECT_PASSWORD = base64.b64decode(os.getenv("GARMINCONNECT_BASE64_PASSWORD")).decode("utf-8") if os.getenv("GARMINCONNECT_BASE64_PASSWORD") != None else None # optional, asks in prompt on run if not provided
+GARMINCONNECT_PASSWORD = base64.b64decode(os.getenv("GARMINCONNECT_BASE64_PASSWORD")).decode("utf-8") if os.getenv("GARMINCONNECT_BASE64_PASSWORD") != None else os.environ.get("GARMINCONNECT_PASSWORD", None) # optional (plain or base64 variant), asks in prompt on run if not provided
 GARMINCONNECT_IS_CN = True if os.getenv("GARMINCONNECT_IS_CN") in ['True', 'true', 'TRUE','t', 'T', 'yes', 'Yes', 'YES', '1'] else False # optional if you are using a Chinese account
 GARMIN_DEVICENAME = os.getenv("GARMIN_DEVICENAME", "Unknown")  # optional, attempts to set the name automatically if not given
 GARMIN_DEVICEID = os.getenv("GARMIN_DEVICEID", None)  # optional, attempts to set the id automatically if not given
@@ -99,32 +99,123 @@ def iter_days(start_date: str, end_date: str):
 
 
 # %%
+# Token-store ownership guard. Stored tokens carry no visible account identity,
+# so a TOKEN_DIR pointed at (or shared with) another user's tokens silently
+# downloads THAT account's data into this user's database. We verify ownership
+# after every token login: against Garmin's own profile userName when it is an
+# email (password-login accounts), else against an owner marker file this
+# script writes into TOKEN_DIR whenever it logs in with explicit credentials.
+_TOKEN_OWNER_FILE = "account_owner.txt"
+
+
+def _token_owner_path():
+    return os.path.join(os.path.expanduser(TOKEN_DIR), _TOKEN_OWNER_FILE)
+
+
+def _read_token_owner():
+    try:
+        with open(_token_owner_path()) as f:
+            owner = f.read().strip().lower()
+        return owner or None
+    except OSError:
+        return None
+
+
+def _write_token_owner(email):
+    try:
+        os.makedirs(os.path.expanduser(TOKEN_DIR), exist_ok=True)
+        with open(_token_owner_path(), "w") as f:
+            f.write(email.strip().lower() + "\n")
+    except OSError as err:
+        logging.warning(f"Could not record token owner marker in '{TOKEN_DIR}': {err}")
+
+
+def _verify_token_owner(garmin):
+    """Raise GarminConnectAuthenticationError if the stored tokens belong to a
+    different Garmin account than GARMINCONNECT_EMAIL. The caller's except
+    path then performs a fresh credential login for the right account, which
+    re-dumps correct tokens (and the owner marker) into TOKEN_DIR."""
+    if not GARMINCONNECT_EMAIL:
+        return  # interactive single-user mode — no expected identity to check
+    expected = GARMINCONNECT_EMAIL.strip().lower()
+
+    # socialProfile.userName is the login email for password accounts; on some
+    # accounts it is an opaque handle instead, in which case we fall back to
+    # the owner marker written at credential login.
+    try:
+        profile = garmin.connectapi("/userprofile-service/socialProfile") or {}
+        username = str(profile.get("userName") or "")
+    except Exception as err:
+        logging.debug(f"Could not read profile userName for ownership check: {err}")
+        username = ""
+
+    actual = username.strip().lower() if "@" in username else _read_token_owner()
+    if actual is None:
+        logging.warning(
+            f"Cannot verify which Garmin account the tokens in '{TOKEN_DIR}' belong to "
+            f"(no email-form profile userName and no owner marker). If the fetched data "
+            f"looks like another user's, delete '{TOKEN_DIR}' to force a fresh login as "
+            f"{GARMINCONNECT_EMAIL}."
+        )
+        return
+    if actual != expected:
+        logging.error(
+            f"Stored tokens in '{TOKEN_DIR}' belong to Garmin account '{actual}', but this "
+            f"fetcher is configured for '{expected}' — refusing to download another user's "
+            f"data. Re-authenticating as {expected}. If you run multiple users, every user "
+            f"env MUST set its own distinct TOKEN_DIR."
+        )
+        raise GarminConnectAuthenticationError(
+            f"Token store owner mismatch: {actual} != {expected}"
+        )
+    # Ownership confirmed — persist the marker so future runs can verify even
+    # if the profile userName is unavailable or not email-form.
+    if _read_token_owner() != expected:
+        _write_token_owner(expected)
+
+
+def _prompt_interactive(prompt):
+    """input() that fails with a clear error when there is no terminal.
+
+    A background fetcher (nohup / cron) has no stdin — a bare input() there
+    dies with an EOFError traceback and the process crash-loops. Failing with
+    an explicit message tells the operator what to put in the env instead."""
+    if not sys.stdin or not sys.stdin.isatty():
+        raise GarminConnectAuthenticationError(
+            f"Cannot prompt for '{prompt.strip()}' — no interactive terminal. "
+            "Set GARMINCONNECT_EMAIL and GARMINCONNECT_PASSWORD (or "
+            "GARMINCONNECT_BASE64_PASSWORD) in the env for unattended re-login."
+        )
+    return input(prompt)
+
+
 def garmin_login():
     try:
         logging.info(f"Trying to login to Garmin Connect using token data from directory '{TOKEN_DIR}'...")
         garmin = Garmin()
         garmin.login(TOKEN_DIR)
+        _verify_token_owner(garmin)
         logging.info("login to Garmin Connect successful using stored session tokens.")
 
     except (FileNotFoundError, GarminConnectConnectionError, GarminConnectAuthenticationError):
         logging.warning("Session is expired or login information not present/incorrect. You'll need to log in again...login with your Garmin Connect credentials to generate them.")
         try:
-            user_email = GARMINCONNECT_EMAIL or input("Enter Garminconnect Login e-mail: ")
-            user_password = GARMINCONNECT_PASSWORD or input("Enter Garminconnect password (characters will be visible): ")
+            user_email = GARMINCONNECT_EMAIL or _prompt_interactive("Enter Garminconnect Login e-mail: ")
+            user_password = GARMINCONNECT_PASSWORD or _prompt_interactive("Enter Garminconnect password (characters will be visible): ")
             garmin = Garmin(
                 email=user_email, password=user_password, is_cn=GARMINCONNECT_IS_CN, return_on_mfa=True
             )
             result1, result2 = garmin.login()
             if result1 == "needs_mfa":  # MFA is required
-                mfa_code = input("MFA one-time code (via email or SMS): ")
+                mfa_code = _prompt_interactive("MFA one-time code (via email or SMS): ")
                 garmin.resume_login(result2, mfa_code)
 
             garmin.client.dump(TOKEN_DIR)
+            _write_token_owner(user_email)
             logging.info(f"Oauth tokens stored in '{TOKEN_DIR}' directory for future use")
 
             garmin.login(TOKEN_DIR)
-            logging.info("login to Garmin Connect successful using stored session tokens. Please restart the script. Saved logins will be used automatically")
-            exit() # terminating script
+            logging.info("login to Garmin Connect successful using freshly stored session tokens — continuing.")
 
         except (
             FileNotFoundError,
