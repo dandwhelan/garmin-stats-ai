@@ -32,7 +32,20 @@ logger = logging.getLogger(__name__)
 
 # Metrics whose simultaneous deviation should collapse into a single composite
 # "illness-like recovery strain pattern" finding rather than three separate ones.
-_STRAIN_TRIAD = ("restingHeartRate", "avgOvernightHrv", "averageRespirationValue")
+# The sign is the strain-indicating direction of the z-score: RHR and respiration
+# above baseline (+1) indicate strain, HRV below baseline (-1) does. A deviation
+# the opposite way (e.g. anomalously LOW resting HR on a great recovery day) is
+# the same magnitude but the opposite of strain and must not trigger the finding.
+_STRAIN_DIRECTIONS = {
+    "restingHeartRate": 1,
+    "avgOvernightHrv": -1,
+    "averageRespirationValue": 1,
+}
+
+# Window (days) over which scan_behavior_impacts compares on- vs off-days.
+# Exposed as a constant so the portable prompt can state the true window when
+# it embeds these findings alongside a shorter data snapshot.
+BEHAVIOR_IMPACT_WINDOW_DAYS = 30
 
 
 def _is_female(biological_sex: str | None) -> bool:
@@ -103,9 +116,17 @@ class InsightScanner:
         """When two or three of RHR / HRV / respiration deviate together,
         emit a single multi-cause composite finding with ranked plausible
         contributors. This replaces three parallel single-cause anomalies
-        with one tier-aware "illness-like recovery strain pattern" entry."""
+        with one tier-aware "illness-like recovery strain pattern" entry.
+
+        Only strain-direction deviations count (RHR up, HRV down, respiration
+        up) — a day where RHR is anomalously low and HRV anomalously high
+        deviates on two triad metrics but is an unusually GOOD recovery day,
+        not a strain pattern."""
         anomalies = self._analysis.run_full_anomaly_scan()
-        by_metric = {a.metric: a for a in anomalies if a.metric in _STRAIN_TRIAD}
+        by_metric = {
+            a.metric: a for a in anomalies
+            if a.z_score * _STRAIN_DIRECTIONS.get(a.metric, 0) > 0
+        }
         if len(by_metric) < 2:
             return []
 
@@ -236,7 +257,9 @@ class InsightScanner:
             logger.debug("baseline_days_available not available: %s", e)
             return None
 
-    def scan_behavior_impacts(self, days: int = 30) -> list[dict[str, Any]]:
+    def scan_behavior_impacts(
+        self, days: int = BEHAVIOR_IMPACT_WINDOW_DAYS
+    ) -> list[dict[str, Any]]:
         """Analyze the impact of all logged lifestyle behaviors on key metrics."""
         behavior_rules = get_behavior_rules()
         findings = []
