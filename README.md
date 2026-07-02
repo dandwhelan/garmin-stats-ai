@@ -200,7 +200,7 @@ Recovery & Activity:
 - Behavior Impact (last 90 days, Sleep / HRV / RHR toggle) and Metric Correlation Matrix
 
 Lifestyle & Health Insights. Every chart tooltip carries an evidence-tier chip (`[Tier A/B/C]`) so the user can see how strong the underlying research is. The agent is a **deviation detector, not a diagnostician**:
-- Illness-like Recovery Strain Pattern (Tier B — Quer 2021 + Mishra 2022 *Lancet Digital Health* systematic review; **not diagnostic** — same pattern can follow alcohol, heat, poor sleep, late training, travel, DOMS, or luteal-phase physiology)
+- Illness-like Recovery Strain Pattern (Tier B — Quer 2021 + Mitratza 2022 *Lancet Digital Health* systematic review; **not diagnostic** — same pattern can follow alcohol, heat, poor sleep, late training, travel, DOMS, or luteal-phase physiology)
 - Recovery Debt, Inflammation Index, Stress Resilience, Body Battery Decay Slope
 - Sleep Regularity Index (Windred 2024) and Social Jet Lag dual-clock (weekday vs weekend midpoints)
 - Behavior Recovery Cost (median days for HRV to return to baseline)
@@ -210,8 +210,8 @@ Lifestyle & Health Insights. Every chart tooltip carries an evidence-tier chip (
 - Stress Hour-of-Day Fingerprint (weekday vs weekend)
 
 Menstrual cycle (shown **only** for users with `BIOLOGICAL_SEX=Female` — gated server-side, so male users never see these charts even if stray cycle rows exist; also hidden when a female user has no cycle data in the selected window). Cycle phase is framed as a **confounder / context label**, never a single cause:
-- Vitals by Menstrual Phase — RHR / HRV / Sleep score / Body Battery across follicular / ovulatory / luteal / menstrual phases (Shilaih 2017, Maijala 2022, Alzueta 2022, Symons Downs 2025 *Sports Med* SR)
-- Cycle-Day Curve — RHR + HRV averaged at each day-of-cycle (Symons Downs 2025; Masuda 2025)
+- Vitals by Menstrual Phase — RHR / HRV / Sleep score / Body Battery across follicular / ovulatory / luteal / menstrual phases (Shilaih 2017, Maijala 2019, Alzueta 2022, de Jager 2026 *Sports Med* SR)
+- Cycle-Day Curve — RHR + HRV averaged at each day-of-cycle (de Jager 2026; Masuda 2025)
 - Cycle Calendar — 60-day phase grid with flow-intensity markers
 - Sleep Architecture by Phase — device-estimated deep / REM / light / awake minutes per phase (Baker 2007). Note: Garmin sleep-stage estimates differ meaningfully from polysomnography (Chinoy 2021; Schyvens 2024 Garmin validation) — read as a personal trend across phases, not clinical staging.
 - Stress & Body Battery by Phase — daily autonomic-strain % + Body Battery drain across phases
@@ -306,13 +306,13 @@ The agent has **48 evidence-tier-graded insight rules** in `garmin-insights/src/
 | **Blue light and melatonin suppression** | Chang et al., 2015, *Proceedings of the National Academy of Sciences* |
 | **HRV decline as overtraining marker** | Plews et al., 2013, *International Journal of Sports Physiology & Performance* |
 | **Wearable RHR for early illness detection** | Radin et al., 2020, *The Lancet Digital Health* |
-| **Illness-like recovery strain pattern (RHR + HRV + respiration) — non-diagnostic** | Quer et al., 2021, *Nature Medicine*; Mishra et al., 2022, *Lancet Digital Health* (systematic review) |
-| **Respiration rate as inflammation/illness signal** | Natarajan et al., 2020, *BMJ Open* |
-| **ACWR as load-spike context signal (NOT an injury predictor)** | Gabbett, 2016, *BJSM* (original concept); Impellizzeri et al., 2020, *BJSM* (critique); Wang et al., 2024, *BJSM* (training-load research limitations) |
+| **Illness-like recovery strain pattern (RHR + HRV + respiration) — non-diagnostic** | Quer et al., 2021, *Nature Medicine*; Mitratza et al., 2022, *Lancet Digital Health* (systematic review) |
+| **Respiration rate as inflammation/illness signal** | Natarajan et al., 2020, *npj Digital Medicine* |
+| **ACWR as load-spike context signal (NOT an injury predictor)** | Gabbett, 2016, *BJSM* (original concept); Impellizzeri et al., 2020, *BJSM* (critique); Wang et al., 2020, *Sports Medicine* (ACWR lessons learned) |
 | **Overreaching: rising load + falling HRV** | Bellenger et al., 2016, *Sports Medicine* |
 | **Polarized vs. grey-zone training** | Seiler, 2010, *International Journal of Sports Physiology* |
-| **VO2 max plateau dynamics & cardiorespiratory fitness ↔ mortality** | Bacon et al., 2013, *PLOS ONE* (training meta-analysis); Han et al., 2024, *BJSM* (overview of meta-analyses, >20M observations, 199 cohorts) |
-| **RHR and all-cause / CV mortality** | Cooney et al., 2010, *American Journal of Cardiology*; Aune et al., 2017, *CMAJ* (dose-response meta-analysis) |
+| **VO2 max plateau dynamics & cardiorespiratory fitness ↔ mortality** | Bacon et al., 2013, *PLOS ONE* (training meta-analysis); Lang et al., 2024, *BJSM* (overview of meta-analyses, >20M observations, 199 cohorts) |
+| **RHR and all-cause / CV mortality** | Cooney et al., 2010, *American Heart Journal*; Aune et al., 2017, *Nutr Metab Cardiovasc Dis* (dose-response meta-analysis) |
 | **Cortisol, stress, and sleep quality** | Adam et al., 2017, *Psychoneuroendocrinology* |
 | **Allostatic load and burnout** | McEwen, 2007, *Physiological Reviews* |
 | **Exercise and sleep quality (meta-analysis)** | Kredlow et al., 2015, *Journal of Behavioral Medicine* |
@@ -329,25 +329,25 @@ The agent has **48 evidence-tier-graded insight rules** in `garmin-insights/src/
 | **Device-estimated deep / REM as a personal trend** | Ohayon et al., 2004, *Sleep* (PSG meta-analysis); Chinoy et al., 2021, *Sleep* (consumer wearable vs PSG validation); Schyvens et al., 2024 (Garmin sleep-stage validation). **Consumer-wearable sleep-stage estimates differ meaningfully from polysomnography** — the agent treats this as a personal trend, not clinical staging. |
 | **REM sleep decline as a long-term mortality signal (PSG cohort)** | Leary et al., 2020, *JAMA Neurology* |
 | **Social jet lag and metabolic health** | Wittmann et al., 2006, *Chronobiology International* |
-| **Sedentary behaviour and stress** | Choi et al., 2019, *JAMA Internal Medicine* |
+| **Sedentary behaviour and stress** | Zaffalon Junior et al., 2018, *Physiological Reports* |
 | **Sleep fragmentation and HRV recovery** | Stein & Pu, 2012, *Sleep Medicine Reviews* |
-| **Visceral fat and HRV** | Felber Dietrich et al., 2006, *European Heart Journal* |
+| **Visceral fat and HRV** | Felber Dietrich et al., 2006, *Europace* |
 | **Hydration and resting heart rate** | Watso & Farquhar, 2019, *Nutrients* |
 | **Overnight SpO2 — clinician-screening signal only, NOT a diagnostic sleep study** | Kapur et al., 2017, *Journal of Clinical Sleep Medicine* (AASM Clinical Practice Guideline for Adult OSA Diagnostic Testing) |
-| **Period-day RHR/HRV shift (luteal phase physiology — use as confounder, not single cause)** | Shilaih et al., 2017, *Scientific Reports* (wrist wearable); Alzueta / de Zambotti / Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); Symons Downs et al., 2025, *Sports Medicine* (systematic review — wearable HRV across reproductive life stages); Nakagawa et al., 2020, *J Clin Med*; Brar et al., 2015, *J Women's Health* |
+| **Period-day RHR/HRV shift (luteal phase physiology — use as confounder, not single cause)** | Shilaih et al., 2017, *Scientific Reports* (wrist wearable); Alzueta / de Zambotti / Baker, 2022 (Oura: luteal HR↑, skin temp↑, RMSSD↓); de Jager et al., 2026, *Sports Medicine* (living systematic review — wearable HRV across reproductive life stages); Schmalenberger et al., 2020, *J Clin Med*; Brar et al., 2015, *J Clin Diagn Res* |
 | **Temperature / HR / HRV across the menstrual cycle (Oura)** *(dashboard tooltip)* | Maijala et al., 2022, *International Journal of Women's Health* |
 | **ML classification of cycle phase from sleeping HR** | Masuda et al., 2025 |
-| **Cycle phase × sleep architecture (device-estimated, personal-trend framing)** | Baker & Driver, 2007, *Sleep Medicine Reviews*; PMS &amp; sleep quality cross-sectional, 2025 (PMC11842786) |
+| **Cycle phase × sleep architecture (device-estimated, personal-trend framing)** | Baker, 2007, *Sleep* (PMC2266284); PMS &amp; sleep quality cross-sectional, 2025 (PMC11842786) |
 | **Follicular-phase training window** | Janse de Jonge, 2019, *Sports Medicine* |
 | **Travel & time-zone disruption (wearable cohort)** | Lechat et al., 2025, *SLEEP* (Oura cohort, ~1.5M nights) |
 | **HRV/RHR baseline reliability** | Plews et al., 2013, *Sports Medicine* (requires ~21-30 days of continuous data) |
-| **DOMS — RHR/HRV signature mimics illness** | Cheung et al., 2003, *Sports Medicine*; Twist & Eston, 2005, *Journal of Sports Sciences* |
+| **DOMS — RHR/HRV signature mimics illness** | Cheung et al., 2003, *Sports Medicine*; Twist & Eston, 2005, *European Journal of Applied Physiology* |
 | **Pet-in-bedroom sleep fragmentation** | Patel et al., 2017, *Mayo Clinic Proceedings* |
 | **Acute emotional stress and HRV suppression** | Thayer & Lane, 2009, *Neuroscience & Biobehavioral Reviews* |
-| **Travel / first-night effect on sleep** | Waterhouse et al., 2007, *Journal of Sleep Research* |
+| **Travel / first-night effect on sleep** | Waterhouse et al., 2007, *The Lancet* |
 | **Weekly activity guidelines (moderate / vigorous minutes)** | WHO Physical Activity Guidelines, 2020; Bull et al., 2020, *British Journal of Sports Medicine* |
-| **Fitness age from VO2 max (Garmin's age-sex normative model)** | Nes et al., 2013, *Medicine & Science in Sports & Exercise* |
-| **Alcohol — next-morning RHR elevation** | Sagawa et al., 2011, *Alcohol & Alcoholism* |
+| **Fitness age from VO2 max (Garmin's age-sex normative model)** | Nes et al., 2011, *Medicine & Science in Sports & Exercise* |
+| **Alcohol — next-morning RHR elevation** | Sagawa et al., 2011, *Alcoholism: Clinical & Experimental Research* |
 
 ### What the rules cover
 
@@ -406,7 +406,7 @@ The agent defaults to **`claude-sonnet-5`** (fast, cost-effective). Set `CLAUDE_
 The dashboard's secondary charts are powered by two Python services that aggregate the SQLite tables in-process, alongside the AI agent:
 
 - **`web/visualizations.py` — `VisualizationService`**: intraday heatmap (stress/HR/body battery), sleep timeline, anomaly z-score calendar, metric correlation matrix, 90-day behavior-impact comparison
-- **`web/lifestyle_viz.py` — `LifestyleService`**: 21 research-backed analytics including Sleep Regularity Index (Windred 2024 — Tier A), social jet lag (Wittmann 2006 — Tier B), illness-like recovery strain pattern (Quer 2021 + Mishra 2022 *Lancet Digital Health* SR — Tier B, non-diagnostic), inflammation index (Tier C — composite physiological-strain z-score, not a measurement of inflammatory biomarkers), recovery debt, stress resilience, body battery decay slope, behavior dose-response, caffeine cutoff comparison (Drake 2013 + 2023 meta-analysis — Tier A), recovery cost, streak calendar, habit half-life, co-occurrence matrix, hour-of-day stress fingerprint, stress trigger leaderboard, step-count distribution (Paluch 2022 — Tier A), fitness-age delta (Nes 2013 + Han 2024 BJSM overview — Tier A), WHO weekly-intensity target tracking (Bull 2020 — Tier A), cycle-day HRV/RHR (Symons Downs 2025 *Sports Med* SR; Masuda 2025), per-cycle yearly view, plus a research-signal scorecard
+- **`web/lifestyle_viz.py` — `LifestyleService`**: 21 research-backed analytics including Sleep Regularity Index (Windred 2024 — Tier A), social jet lag (Wittmann 2006 — Tier B), illness-like recovery strain pattern (Quer 2021 + Mitratza 2022 *Lancet Digital Health* SR — Tier B, non-diagnostic), inflammation index (Tier C — composite physiological-strain z-score, not a measurement of inflammatory biomarkers), recovery debt, stress resilience, body battery decay slope, behavior dose-response, caffeine cutoff comparison (Drake 2013 + 2023 meta-analysis — Tier A), recovery cost, streak calendar, habit half-life, co-occurrence matrix, hour-of-day stress fingerprint, stress trigger leaderboard, step-count distribution (Paluch 2022 — Tier A), fitness-age delta (Nes 2011 + Lang 2024 BJSM overview — Tier A), WHO weekly-intensity target tracking (Bull 2020 — Tier A), cycle-day HRV/RHR (de Jager 2026 *Sports Med* SR; Masuda 2025), per-cycle yearly view, plus a research-signal scorecard
 - **Three endpoints** — `/api/visualizations`, `/api/lifestyle`, `/api/intraday/heatmap`. All accept `start`/`end` query params and fan out service calls via `asyncio.gather` for parallel loading.
 
 ## Security
