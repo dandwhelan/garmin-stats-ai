@@ -1249,9 +1249,12 @@ INSIGHT_RULES: list[InsightRule] = [
             "Buguet 2007, J Neurol Sci; Okamoto-Mizuno 2012, J Physiol Anthropol"
         ),
         research_summary=(
-            "Bedroom nighttime temperature outside ~20-25°C is associated with "
-            "a clinically relevant 5-10% drop in sleep efficiency; a 317k-person "
-            "wearable cohort confirms dose-response sleep loss as outdoor T rises. "
+            "Bedroom nighttime temperature outside a roughly 18-25°C comfort range "
+            "is associated with a clinically relevant 5-10% drop in sleep efficiency "
+            "(cooler ~18°C is common sleep-hygiene guidance; Baniassadi 2023 found "
+            "20-25°C optimal in older adults, with efficiency falling as temperature "
+            "rises above ~25°C); a 317k-person wearable cohort confirms dose-response "
+            "sleep loss as outdoor T rises. "
             "Daytime apparent T above ~28°C increases sweat-loss, dehydration risk, "
             "and sympathetic tone, raising RHR and reducing HRV the following night. "
             "Treat as a confounder for recovery deviations: when a heat day precedes "

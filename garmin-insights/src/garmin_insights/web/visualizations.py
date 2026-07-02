@@ -785,7 +785,9 @@ class VisualizationService:
             "correlations": correlations,
             "notes": (
                 "Bedroom T from Home Assistant. Overnight mean is 22:00–08:00. "
-                "Baniassadi 2023: cooler bedroom T (16–19°C) associated with better sleep efficiency."
+                "Optimal bedroom T is roughly 18-25°C (Okamoto-Mizuno 2012 favours the "
+                "cooler ~18°C end; Baniassadi 2023 found 20-25°C optimal in older adults); "
+                "sleep efficiency falls as T rises above ~25°C."
             ),
         }
 

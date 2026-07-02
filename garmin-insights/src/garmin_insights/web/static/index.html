@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260629a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260702a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -206,7 +206,7 @@
     <section class="chart-section" id="ha-bedroom-section" style="display:none;">
       <div class="chart-header">
         <h2>Bedroom Temperature</h2>
-        <span class="chart-sub">Overnight mean (10 PM–8 AM) from Home Assistant · optimal sleep range 16–19 °C (Okamoto-Mizuno 2012)</span>
+        <span class="chart-sub">Overnight mean (10 PM–8 AM) from Home Assistant · optimal sleep range ≈18–24 °C (Okamoto-Mizuno 2012; Baniassadi 2023)</span>
       </div>
       <div class="chart-container">
         <canvas id="ha-bedroom-chart"></canvas>
@@ -391,7 +391,7 @@
 
     <section class="chart-section" id="bedroom-sleep-section" style="display:none;">
       <div class="chart-header">
-        <h2>Bedroom Temperature &harr; Sleep <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overnight bedroom temperature (22:00–08:00 mean from Home Assistant) vs sleep score, overnight HRV, awakening count, and RHR. Baniassadi 2023 (Sci Total Environ): bedroom T in the 16–19 °C range is associated with better sleep efficiency; >24 °C with fragmentation.</span></span></h2>
+        <h2>Bedroom Temperature &harr; Sleep <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Overnight bedroom temperature (22:00–08:00 mean from Home Assistant) vs sleep score, overnight HRV, awakening count, and RHR. A cool room aids sleep, but the optimal range is roughly 18–24 °C: general guidance favours ~18 °C (Okamoto-Mizuno 2012), while Baniassadi 2023 (Sci Total Environ) found 20–25 °C optimal in older adults, with sleep efficiency falling as temperature rises above ~25 °C.</span></span></h2>
         <span class="chart-sub">Overnight bedroom T vs sleep score / HRV / awakenings; Pearson r per pair</span>
       </div>
       <div class="chart-container">
@@ -844,6 +844,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260629a"></script>
+  <script src="/static/app.js?v=20260702a"></script>
 </body>
 </html>
