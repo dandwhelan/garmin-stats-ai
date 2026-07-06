@@ -30,6 +30,12 @@ fi
 
 mkdir -p "$LOG_DIR"
 
+# Run from the repo root: the web server resolves relative paths (".env",
+# the "users/" per-user env dir) against its cwd, and cron invokes this
+# script from $HOME — launching from there made users/<id>.env unfindable,
+# so every user silently inherited the web-server owner's identity.
+cd "$REPO_ROOT"
+
 # Export every var in the user's env file
 set -a
 # shellcheck disable=SC1090

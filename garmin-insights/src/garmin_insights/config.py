@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 _VALID_EFFORT = {"low", "medium", "high", "xhigh", "max"}
 
@@ -104,6 +107,23 @@ class Settings(BaseSettings):
             return {"default": self.sqlite_db_path}
         return result
 
+    def _user_env_path(self, user_id: str) -> Path | None:
+        """Locate users/<user_id>.env. ``users_dir`` defaults to the relative
+        path "users", but the server may be launched from any cwd (cron's
+        @reboot runs from $HOME), so also try the repo root this package was
+        installed from (editable installs only — the candidate simply won't
+        exist for site-packages installs)."""
+        base = Path(self.users_dir)
+        candidates = [base]
+        if not base.is_absolute():
+            repo_root = Path(__file__).resolve().parents[3]
+            candidates.append(repo_root / base)
+        for d in candidates:
+            p = d / f"{user_id}.env"
+            if p.is_file():
+                return p
+        return None
+
     def settings_for_user(self, user_id: str) -> "Settings":
         """Return a copy of these settings with the user's DB path AND their
         identity fields (display name, email, biological sex) overlaid from
@@ -112,7 +132,26 @@ class Settings(BaseSettings):
         if not db_path:
             raise ValueError(f"Unknown user: {user_id}")
         updates: dict[str, str] = {"sqlite_db_path": db_path}
-        env_path = Path(self.users_dir) / f"{user_id}.env"
+        multi_user = bool(self.users.strip())
+        if multi_user:
+            # The base process env belongs to whichever user launched the web
+            # server (START_WEB=true). Another user must NEVER inherit that
+            # identity — a missing/unreadable users/<id>.env would otherwise
+            # silently stamp the server owner's name and biological sex onto
+            # this user's data (wrong AI persona, wrong reference ranges).
+            updates["display_name"] = ""
+            updates["garminconnect_email"] = ""
+            updates["biological_sex"] = ""
+        env_path = self._user_env_path(user_id)
+        if env_path is None:
+            if multi_user:
+                logger.warning(
+                    "users/%s.env not found (users_dir=%r, cwd=%s) — user '%s' "
+                    "gets no display name / email / biological sex. Create the "
+                    "file or set USERS_DIR to an absolute path.",
+                    user_id, self.users_dir, Path.cwd(), user_id,
+                )
+            return self.model_copy(update=updates)
         per_user = _parse_env_file(env_path)
         if per_user.get("DISPLAY_NAME"):
             updates["display_name"] = per_user["DISPLAY_NAME"]
