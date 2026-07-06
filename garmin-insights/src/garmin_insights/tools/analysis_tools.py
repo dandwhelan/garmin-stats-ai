@@ -191,8 +191,8 @@ class AnalysisEngine:
         """
         from datetime import datetime, timedelta
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         summaries = self._memory.get_daily_summaries_range(start, today)
         summaries = self._filter_summaries(summaries, metric)
 
@@ -297,8 +297,8 @@ class AnalysisEngine:
         """Detect a linear trend over a rolling window."""
         from datetime import datetime, timedelta
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         summaries = self._memory.get_daily_summaries_range(start, today)
         summaries = self._filter_summaries(summaries, metric)
 
@@ -355,8 +355,8 @@ class AnalysisEngine:
 
         from datetime import datetime, timedelta
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         summaries = self._memory.get_daily_summaries_range(start, today)
         summaries = self._filter_summaries(summaries, metric)
 
@@ -385,8 +385,8 @@ class AnalysisEngine:
         """Pearson correlation between multiple metrics."""
         from datetime import datetime, timedelta
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         summaries = self._memory.get_daily_summaries_range(start, today)
         # Exclude incomplete days if any metric in the set is cumulative
         if any(m in _CUMULATIVE_METRICS for m in metrics):
@@ -458,8 +458,8 @@ class AnalysisEngine:
         """
         from datetime import datetime, timedelta
 
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days + 1)).strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days + 1)).strftime("%Y-%m-%d")
 
         rhr_b = self._memory.get_baseline("restingHeartRate")
         hrv_b = self._memory.get_baseline("avgOvernightHrv")
@@ -540,8 +540,8 @@ class AnalysisEngine:
         import sqlite3
         from datetime import datetime, timedelta
 
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
         try:
             db_path = self._memory.db_path

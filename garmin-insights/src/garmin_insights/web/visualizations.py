@@ -42,7 +42,7 @@ class VisualizationService:
         if metric not in _INTRADAY_METRICS:
             return {"error": f"unknown metric '{metric}'", "available": list(_INTRADAY_METRICS)}
         table, col, agg = _INTRADAY_METRICS[metric]
-        end = datetime.utcnow().date()
+        end = datetime.now().date()
         start = end - timedelta(days=days - 1)
         sql = f"""
             SELECT substr(time, 1, 10) AS date,
@@ -281,7 +281,7 @@ class VisualizationService:
     # 5. Behavior-impact comparison
     # ------------------------------------------------------------------
     def behavior_impact(self, days: int = 90, min_occurrences: int = 3) -> list[dict]:
-        end = datetime.utcnow().date()
+        end = datetime.now().date()
         start = end - timedelta(days=days)
         with self._conn() as conn:
             lj = pd.read_sql_query(

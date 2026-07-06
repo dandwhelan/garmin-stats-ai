@@ -24,6 +24,7 @@ from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
     QueryToolHandler,
     get_all_tools_anthropic,
+    _marker_series,
     _round_floats,
     split_lifestyle_by_category,
     aggregate_workouts,
@@ -806,23 +807,6 @@ class HealthAgent:
         # snapshot window above.
         fitness_markers: dict = {}
         marker_start = (end_d - timedelta(days=365)).isoformat()
-
-        def _marker_series(df, value_col, scale=1.0, ndp=1, keep=8) -> dict | None:
-            if df is None or getattr(df, "empty", True) or value_col not in df.columns:
-                return None
-            d = df.reset_index() if df.index.name is not None else df
-            series: dict = {}
-            for row in d.to_dict(orient="records"):
-                v = row.get(value_col)
-                if v is None:
-                    continue
-                date = str(row.get("time", ""))[:10]
-                if not date:
-                    continue
-                series[date] = round(float(v) * scale, ndp)
-            if not series:
-                return None
-            return dict(sorted(series.items())[-keep:])
 
         try:
             vo2 = _marker_series(self._repo.query_vo2_max(marker_start, end), "vo2_max_value")
