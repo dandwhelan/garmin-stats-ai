@@ -1450,12 +1450,24 @@ def select_relevant_rule_names(
     for r in INSIGHT_RULES:
         if r.sex_specific == "female" and not is_female:
             continue
+        behavior_match = bool(
+            r.trigger_behavior and r.trigger_behavior.strip().lower() in behavior_set
+        )
+        metric_match = (
+            r.trigger_metric in metric_set
+            or (r.comparison_metric and r.comparison_metric in metric_set)
+        )
+        # needs-log behaviour rules require their behaviour to actually be
+        # logged — a bare metric match (HRV/sleepScore deviated, which matches
+        # half the KB) must not pull in e.g. the migraine or fasting rules when
+        # nothing of the sort appears in the journal.
+        if r.requires_user_context and r.trigger_behavior and not behavior_match:
+            metric_match = False
         if (
             r.name in _ALWAYS_KEEP_RULES
             or r.name in name_set
-            or r.trigger_metric in metric_set
-            or (r.comparison_metric and r.comparison_metric in metric_set)
-            or (r.trigger_behavior and r.trigger_behavior.strip().lower() in behavior_set)
+            or behavior_match
+            or metric_match
             or (include_environmental and r.name in _ENVIRONMENTAL_RULES)
         ):
             keep.add(r.name)
@@ -1524,7 +1536,10 @@ def get_rules_summary_for_llm(
         )
     lines = [header + "\n"]
     current_cat = ""
-    for rule in INSIGHT_RULES:
+    # Stable-sort by category so each header renders exactly once — emitting in
+    # definition order produced a dozen alternating "### Sleep" / "### Recovery"
+    # headers, one per category *change*.
+    for rule in sorted(INSIGHT_RULES, key=lambda r: r.category):
         if rule.sex_specific == "female" and not is_female:
             continue
         if only_rules is not None and rule.name not in only_rules:

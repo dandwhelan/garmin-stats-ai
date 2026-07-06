@@ -703,6 +703,11 @@ class HealthAgent:
         # names are byte-identical across both code paths (both read the journal),
         # so the join below is exact.
         behavior_category: dict[str, str] = {}
+        # Behaviours that actually OCCURRED in the window (status=1 / value>0).
+        # The journal writes a row per tracked behaviour per day even when it
+        # didn't happen (status 0), so the raw key set would tell the KB filter
+        # that e.g. "Migraines" is relevant when it was never once logged.
+        active_behaviors: set[str] = set()
         try:
             lj = self._repo.query_lifestyle_journal(start, end)
             if lj is not None and not lj.empty:
@@ -710,6 +715,10 @@ class HealthAgent:
                     b, c = row.get("behavior"), row.get("category")
                     if b is not None and c is not None:
                         behavior_category[str(b)] = str(c)
+                    if b is not None and (
+                        row.get("status") == 1 or (row.get("value") or 0) > 0
+                    ):
+                        active_behaviors.add(str(b))
         except Exception as e:
             logger.debug("Portable prompt: lifestyle category map failed: %s", e)
 
@@ -914,6 +923,21 @@ class HealthAgent:
         # gets a training-volume digest without summing dozens of raw sessions.
         workout_summary = aggregate_workouts(activities) if activities else []
 
+        # How many complete days actually back the rolling baselines — the tier
+        # rules tell the model to prepend "Low-confidence (sparse baseline)"
+        # below 21 days, which it can't apply without this number.
+        try:
+            baseline_days = self._analysis.baseline_days_available()
+        except Exception as e:
+            baseline_days = None
+            logger.debug("Portable prompt: baseline day count failed: %s", e)
+        baseline_days_note = (
+            f", built from {baseline_days} complete days"
+            + (" — FEWER THAN 21, treat deviation findings as low-confidence"
+               if baseline_days < 21 else "")
+            if baseline_days is not None else ""
+        )
+
         # Concatenate every system block we'd send to the live API
         system_text_parts: list[str] = []
         for block in self._system_for_call():
@@ -983,7 +1007,7 @@ class HealthAgent:
         try:
             sex = self._settings.biological_sex
             kb_metrics: set[str] = set()
-            kb_behaviors: set[str] = set(behavior_category.keys())
+            kb_behaviors: set[str] = set(active_behaviors)
             kb_rule_names: set[str] = set()
             for items in scan_findings.values():
                 for it in items:
@@ -1083,10 +1107,15 @@ class HealthAgent:
         )
 
         # Convert to date-keyed dict — removes the repeated "date" field from
-        # every row, plus a few fields that carry no extra signal in the
-        # snapshot: bodyBattery charged/drained are derivable from
-        # bodyBatteryChange, so they're dropped to save tokens.
-        _drop_fields = {"bodyBatteryChargedValue", "bodyBatteryDrainedValue"}
+        # every row, plus fields that carry no extra signal in the snapshot:
+        # bodyBattery charged/drained are derivable from bodyBatteryChange, and
+        # sleep_restingHeartRate is a byte-identical duplicate of
+        # restingHeartRate (same Garmin reading via two tables) that invites
+        # the model to cite the wrong twin.
+        _drop_fields = {
+            "bodyBatteryChargedValue", "bodyBatteryDrainedValue",
+            "sleep_restingHeartRate",
+        }
 
         def _to_date_dict(rows: list[dict]) -> dict:
             return {
@@ -1109,7 +1138,13 @@ class HealthAgent:
         # Always compute window-local avg/min/max/n per metric so the model has a
         # code-computed digest of the snapshot beside the raw rows (and a valid
         # comparator for explicit historical windows, where the rolling baselines
-        # — anchored to today — would be misleading).
+        # — anchored to today — would be misleading). Skips the fields dropped
+        # from the daily rows (a digest of invisible fields only confuses), and
+        # excludes today's incomplete row for cumulative metrics — otherwise the
+        # digest itself violates the "don't compare today's cumulative metrics"
+        # rule stated just above it.
+        from garmin_insights.tools.analysis_tools import _CUMULATIVE_METRICS
+
         window_stats: dict = {}
         if summaries:
             numeric_keys: set[str] = set()
@@ -1118,14 +1153,17 @@ class HealthAgent:
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
                         numeric_keys.add(k)
             numeric_keys -= {"is_complete"}
+            numeric_keys -= _drop_fields
+            complete_only = [s for s in summaries if s.get("is_complete", True)]
             for k in sorted(numeric_keys):
-                vals = [s[k] for s in summaries if isinstance(s.get(k), (int, float))]
+                rows = complete_only if k in _CUMULATIVE_METRICS else summaries
+                vals = [s[k] for s in rows if isinstance(s.get(k), (int, float))]
                 if not vals:
                     continue
                 window_stats[k] = {
                     "avg": round(float(sum(vals) / len(vals)), 1),
-                    "min": float(min(vals)),
-                    "max": float(max(vals)),
+                    "min": round(float(min(vals)), 1),
+                    "max": round(float(max(vals)), 1),
                     "n": len(vals),
                 }
 
@@ -1142,7 +1180,7 @@ class HealthAgent:
             f"{sep}\n\n"
             f"## Date range: {start} → {end}\n\n"
             f"## Baselines ({len(clean_baselines)} metrics — rolling 7d/30d "
-            f"averages anchored to TODAY ({today_iso}), NOT the snapshot window "
+            f"averages{baseline_days_note}, anchored to TODAY ({today_iso}), NOT the snapshot window "
             f"above. Each metric's `latest_value` is the last COMPLETE day "
             f"({last_complete_day}) — today is excluded from baselines, so for "
             f"today's overnight readings (sleep score, RHR, HRV, body battery at "
@@ -1165,7 +1203,8 @@ class HealthAgent:
                 f"from the raw rows. Each category runs over its OWN history "
                 f"window anchored to today — behaviour impacts over the last "
                 f"{BEHAVIOR_IMPACT_WINDOW_DAYS} days, trends over 14, anomalies "
-                f"over the last 3 vs a 30-day baseline — so n counts can "
+                f"over the last 4 calendar days incl. today (a 3-day lookback) "
+                f"vs a 30-day baseline — so n counts can "
                 f"legitimately exceed the snapshot window; cite each finding "
                 f"with its own window, not the snapshot's or the question's)\n"
                 "```json\n"
