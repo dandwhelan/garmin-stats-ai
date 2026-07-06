@@ -15,9 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 def _round_floats(obj: Any, ndigits: int = 1) -> Any:
-    """Recursively round all floats in a nested dict/list to ndigits decimal places."""
+    """Recursively round all floats in a nested dict/list to ndigits decimal
+    places. Integral floats serialise as ints (52.0 → 52) — shaves the ".0"
+    off thousands of values per payload at no information cost. NaN/Inf pass
+    through unchanged (is_integer() is False for them)."""
     if isinstance(obj, float):
-        return round(obj, ndigits)
+        r = round(obj, ndigits)
+        return int(r) if r.is_integer() else r
     if isinstance(obj, dict):
         return {k: _round_floats(v, ndigits) for k, v in obj.items()}
     if isinstance(obj, list):

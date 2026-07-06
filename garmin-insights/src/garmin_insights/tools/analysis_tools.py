@@ -149,6 +149,10 @@ _CUMULATIVE_METRICS = {
     "stressPercentage", "highStressPercentage",
     "bodyBatteryDrainedValue", "bodyBatteryChargedValue",
     "sleepingSeconds",
+    # Not sums, but only final at end of day: the battery floor happens in the
+    # evening and the day's max HR can rise until midnight, so a mid-day value
+    # reads as a false "above baseline" anomaly.
+    "bodyBatteryLowestValue", "maxHeartRate",
 }
 
 
@@ -157,6 +161,21 @@ class AnalysisEngine:
 
     def __init__(self, memory: MemoryStore) -> None:
         self._memory = memory
+
+    def baseline_days_available(self, window_days: int = 30) -> int:
+        """Complete days with a resting-heart-rate reading inside the rolling
+        baseline window. Feeds the <21-day low-confidence guard (proactive
+        scanner + portable prompt) — this method was previously missing, so
+        that guard could never fire."""
+        from datetime import datetime, timedelta
+
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start, yesterday)
+        return len([
+            s for s in summaries
+            if s.get("is_complete", True) and s.get("restingHeartRate") is not None
+        ])
 
     def _filter_summaries(self, summaries: list, metric: str) -> list:
         """Remove incomplete days if the metric is cumulative."""

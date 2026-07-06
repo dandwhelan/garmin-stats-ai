@@ -26,13 +26,29 @@ def test_select_keeps_always_rules_even_with_no_signals():
 
 def test_select_matches_by_metric():
     keep = select_relevant_rule_names(metrics={"restingHeartRate"}, biological_sex="Male")
-    # every RHR-triggered rule visible to a male user should be present
+    # Every RHR-triggered rule visible to a male user should be present —
+    # EXCEPT needs-log behaviour rules (requires_user_context + trigger_behavior),
+    # which ride on their behaviour actually being logged, not on a bare metric
+    # match (otherwise an RHR deviation pulls in e.g. the DOMS/allergy rules
+    # with nothing in the journal to support them).
     rhr_rules = {
         r.name for r in INSIGHT_RULES
         if r.trigger_metric == "restingHeartRate" and r.sex_specific != "female"
+        and not (r.requires_user_context and r.trigger_behavior)
     }
+    assert rhr_rules
     assert rhr_rules <= keep
     assert _ALWAYS <= keep
+    # and the needs-log RHR rules are excluded without their behaviour logged
+    assert "doms_rhr_elevation" not in keep
+    # ...but come back when the behaviour IS logged
+    doms_rule = next(r for r in INSIGHT_RULES if r.name == "doms_rhr_elevation")
+    keep_with_log = select_relevant_rule_names(
+        metrics={"restingHeartRate"},
+        behaviors={doms_rule.trigger_behavior},
+        biological_sex="Male",
+    )
+    assert "doms_rhr_elevation" in keep_with_log
 
 
 def test_select_matches_behavior_case_insensitive():

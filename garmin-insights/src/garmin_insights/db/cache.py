@@ -30,6 +30,10 @@ _BASELINE_METRICS = [
     "sleepScore", "deepSleepSeconds", "remSleepSeconds",
     "avgOvernightHrv", "avgSleepStress",
     "bodyBatteryChange", "awakeCount",
+    # Required by detect_illness_signature and the composite strain triad
+    # (RHR / HRV / respiration) — without a respiration baseline both
+    # detectors were permanently blind to elevated respiration.
+    "averageRespirationValue",
 ]
 
 

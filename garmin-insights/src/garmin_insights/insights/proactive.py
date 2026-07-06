@@ -43,6 +43,32 @@ _STRAIN_DIRECTIONS = {
     "averageRespirationValue": 1,
 }
 
+# The direction (sign of the z-score) in which a deviation is a CONCERN for
+# each baselined metric. Used to gate rule-metadata attachment on single-metric
+# anomalies: the KB rules describe the bad direction (low body-battery floor,
+# high stress, low sleep score), so stamping their tier onto a deviation the
+# GOOD way (e.g. battery floor unusually high, SpO2 unusually high) invites the
+# model to narrate an improvement as a tier-B concern. Metrics not listed here
+# keep unconditional attachment.
+_CONCERN_DIRECTIONS = {
+    "restingHeartRate": 1,
+    "avgOvernightHrv": -1,
+    "averageRespirationValue": 1,
+    "stressPercentage": 1,
+    "highStressPercentage": 1,
+    "avgSleepStress": 1,
+    "awakeCount": 1,
+    "sleepScore": -1,
+    "deepSleepSeconds": -1,
+    "remSleepSeconds": -1,
+    "bodyBatteryHighestValue": -1,
+    "bodyBatteryLowestValue": -1,
+    "bodyBatteryAtWakeTime": -1,
+    "bodyBatteryChange": -1,
+    "averageSpo2": -1,
+    "totalSteps": -1,
+}
+
 # Window (days) over which scan_behavior_impacts compares on- vs off-days.
 # Exposed as a constant so the portable prompt can state the true window when
 # it embeds these findings alongside a shorter data snapshot.
@@ -103,11 +129,18 @@ class InsightScanner:
         anomalies = self._analysis.run_full_anomaly_scan()
         findings = []
         for a in anomalies:
+            finding = a.to_dict()
+            concern = _CONCERN_DIRECTIONS.get(a.metric)
+            if concern is not None and a.z_score * concern < 0:
+                # Deviation the GOOD way — still report it, but don't stamp a
+                # strain-rule's evidence tier onto an improvement.
+                finding["favourable_direction"] = True
+                findings.append(finding)
+                continue
             matching_rules = [
                 r for r in INSIGHT_RULES
                 if r.trigger_metric == a.metric and r.trigger_behavior is None
             ]
-            finding = a.to_dict()
             if matching_rules:
                 _attach_rule_metadata(finding, matching_rules[0], self._biological_sex)
             findings.append(finding)
@@ -276,6 +309,7 @@ class InsightScanner:
         # First pass: compute every comparison so BH can see the full set of
         # p-values before deciding which clear the corrected threshold.
         candidates: list[tuple[Any, ComparisonResult, dict[str, Any]]] = []
+        seen_comparisons: set[tuple] = set()
         for rule in behavior_rules:
             # Skip if we've already reported this recently
             if self._memory.is_insight_suppressed(rule.name):
@@ -290,6 +324,19 @@ class InsightScanner:
 
             if result is None or result.n_with < 2 or result.n_without < 2:
                 continue
+
+            # Two rules whose trigger behaviours fuzzy-match the same logged
+            # behaviour (e.g. "Travel" and "Traveling/Vacation") produce the
+            # identical comparison twice — duplicate findings that also pad the
+            # BH correction family. Keep the first rule's row only.
+            comparison_key = (
+                rule.trigger_metric, result.n_with, result.n_without,
+                result.mean_with, result.mean_without,
+            )
+            if comparison_key in seen_comparisons:
+                logger.debug("Skipping duplicate comparison for rule %s", rule.name)
+                continue
+            seen_comparisons.add(comparison_key)
 
             finding = result.to_dict()
             finding["rule_name"] = rule.name
