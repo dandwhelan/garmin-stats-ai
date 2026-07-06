@@ -1,6 +1,6 @@
-"""Smart cache builder — computes daily summaries and baselines from InfluxDB.
+"""Smart cache builder — computes daily summaries and baselines from SQLite.
 
-The key design principle: heavy InfluxDB queries happen here (pure Python,
+The key design principle: heavy raw-table queries happen here (pure Python,
 no LLM cost).  The LLM only ever sees the compact cached summaries.
 """
 
@@ -13,48 +13,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from garmin_insights.db.sqlite_repo import SqliteRepo
+from garmin_insights.db.sqlite_repo import (
+    SqliteRepo,
+    _DAILY_STATS_COLS as _DAILY_STATS_COLUMN_MAP,
+    _SLEEP_COLS as _SLEEP_COLUMN_MAP,
+)
 from garmin_insights.db.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
-
-# Maps logical (camelCase) summary key → actual SQLite column name (snake_case)
-_DAILY_STATS_COLUMN_MAP = {
-    "restingHeartRate":        "resting_heart_rate",
-    "minHeartRate":            "min_heart_rate",
-    "maxHeartRate":            "max_heart_rate",
-    "stressPercentage":        "stress_percentage",
-    "highStressPercentage":    "high_stress_percentage",
-    "bodyBatteryHighestValue": "body_battery_highest_value",
-    "bodyBatteryLowestValue":  "body_battery_lowest_value",
-    "bodyBatteryChargedValue": "body_battery_charged_value",
-    "bodyBatteryDrainedValue": "body_battery_drained_value",
-    "bodyBatteryAtWakeTime":   "body_battery_at_wake_time",
-    "totalSteps":              "total_steps",
-    "totalDistanceMeters":     "total_distance_meters",
-    "activeKilocalories":      "active_kilocalories",
-    "sleepingSeconds":         "sleeping_seconds",
-    "moderateIntensityMinutes":"moderate_intensity_minutes",
-    "vigorousIntensityMinutes":"vigorous_intensity_minutes",
-    "averageSpo2":             "average_spo2",
-}
-
-_SLEEP_COLUMN_MAP = {
-    "sleepScore":              "sleep_score",
-    "sleepTimeSeconds":        "sleep_time_seconds",
-    "deepSleepSeconds":        "deep_sleep_seconds",
-    "lightSleepSeconds":       "light_sleep_seconds",
-    "remSleepSeconds":         "rem_sleep_seconds",
-    "awakeSleepSeconds":       "awake_sleep_seconds",
-    "avgSleepStress":          "avg_sleep_stress",
-    "avgOvernightHrv":         "avg_overnight_hrv",
-    "bodyBatteryChange":       "body_battery_change",
-    "restingHeartRate":        "resting_heart_rate",
-    "averageSpO2Value":        "average_spo2_value",
-    "awakeCount":              "awake_count",
-    "restlessMomentsCount":    "restless_moments_count",
-    "averageRespirationValue": "average_respiration_value",
-}
 
 # Key metrics we track baselines for
 _BASELINE_METRICS = [
@@ -169,7 +135,7 @@ class CacheBuilder:
 
                 lifestyle[behavior] = {"status": int(status), "value": float(value)}
 
-        # -- Save to MariaDB --
+        # -- Save to the daily_summaries cache --
         self._memory.upsert_daily_summary(date, summary, lifestyle if lifestyle else None)
 
         status_label = "incomplete" if not is_complete else "complete"
@@ -209,9 +175,11 @@ class CacheBuilder:
         IMPORTANT: excludes today (incomplete day) from baseline computation.
         Baselines should only reflect fully completed days.
         """
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_30d = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
-        start_7d = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        # Local calendar days — daily rows are keyed by local date; a UTC
+        # "today" points at yesterday during the BST window after local midnight.
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_30d = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        start_7d = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
 
         # Only use completed days (up to yesterday, not today)
         summaries_30d = self._memory.get_daily_summaries_range(start_30d, yesterday)
@@ -225,8 +193,10 @@ class CacheBuilder:
 
             avg_7d = float(np.mean(vals_7d)) if vals_7d else None
             avg_30d = float(np.mean(vals_30d)) if vals_30d else None
-            std_7d = float(np.std(vals_7d)) if len(vals_7d) > 1 else None
-            std_30d = float(np.std(vals_30d)) if len(vals_30d) > 1 else None
+            # Sample SD (ddof=1) — matches the sample statistics used in
+            # analysis_tools; population SD understates spread on 7-point windows.
+            std_7d = float(np.std(vals_7d, ddof=1)) if len(vals_7d) > 1 else None
+            std_30d = float(np.std(vals_30d, ddof=1)) if len(vals_30d) > 1 else None
             min_30d = float(np.min(vals_30d)) if vals_30d else None
             max_30d = float(np.max(vals_30d)) if vals_30d else None
             latest = vals_7d[-1] if vals_7d else None
@@ -245,9 +215,10 @@ class CacheBuilder:
 
     def refresh(self, days: int = 30) -> None:
         """Full refresh: build missing summaries then update baselines."""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        # Local dates, not UTC — see update_baselines.
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         # Always rebuild today (data still accumulating) — marked incomplete
         self.build_daily_summary(today, is_complete=False)
         # Re-promote past days still cached as incomplete. Mid-day builds leave

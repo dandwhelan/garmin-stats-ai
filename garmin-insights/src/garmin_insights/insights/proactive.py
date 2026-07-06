@@ -200,8 +200,8 @@ class InsightScanner:
             db_path = self._memory.db_path
         except AttributeError:
             return []
-        end = datetime.utcnow().strftime("%Y-%m-%d")
-        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         rows: list[tuple] = []
         try:
             conn = sqlite3.connect(db_path, timeout=10)

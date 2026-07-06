@@ -397,11 +397,11 @@ class QueryToolHandler:
         age, and the grey-zone/endurance training rules in the knowledge base —
         none of which are in get_daily_metrics.
         """
-        end = end_date or datetime.utcnow().strftime("%Y-%m-%d")
+        end = end_date or datetime.now().strftime("%Y-%m-%d")
         if start_date:
             start = start_date
         else:
-            start = (datetime.utcnow() - timedelta(days=365)).strftime("%Y-%m-%d")
+            start = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
 
         out: dict[str, Any] = {}
 

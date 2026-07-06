@@ -387,6 +387,11 @@ class MemoryStore:
         suppress_hours: int = 168,
     ) -> int:
         conn = self._get_conn()
+        # Stored in SQLite's own "YYYY-MM-DD HH:MM:SS" (space-separated, UTC)
+        # format so it compares correctly against datetime('now') in
+        # is_insight_suppressed. Python's default isoformat() uses a 'T'
+        # separator, which sorts AFTER a space — an expires_at written that way
+        # kept insights suppressed until the calendar day rolled over.
         expires = datetime.utcnow() + timedelta(hours=suppress_hours)
         try:
             cursor = conn.cursor()
@@ -395,7 +400,8 @@ class MemoryStore:
                 INSERT INTO insights (rule_name, description, significance, data_json, expires_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (rule_name, description, significance, json.dumps(data) if data else None, expires.isoformat()),
+                (rule_name, description, significance, json.dumps(data) if data else None,
+                 expires.isoformat(sep=" ", timespec="seconds")),
             )
             conn.commit()
             return cursor.lastrowid
@@ -407,9 +413,13 @@ class MemoryStore:
         since = datetime.utcnow() - timedelta(hours=hours)
         try:
             cursor = conn.cursor()
+            # Space-separated to match discovered_at's datetime('now') format —
+            # a 'T'-separated cutoff string-compares as later than any
+            # same-day space-separated timestamp, silently excluding insights
+            # discovered on the boundary day.
             cursor.execute(
                 "SELECT * FROM insights WHERE discovered_at >= ? ORDER BY discovered_at DESC",
-                (since.isoformat(),),
+                (since.isoformat(sep=" ", timespec="seconds"),),
             )
             return [
                 {

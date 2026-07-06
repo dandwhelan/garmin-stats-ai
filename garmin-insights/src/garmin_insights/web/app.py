@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from typing import Any
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -33,9 +34,11 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _users: UserContext | None = None
 _sessions: SessionManager | None = None
 
-# Throttle the dashboard cache rebuild to at most once per 60 s so the UI
-# always reflects fresh fetcher data without hammering SQLite on every poll.
-_last_cache_refresh: datetime | None = None
+# Throttle the dashboard cache rebuild to at most once per 60 s PER USER so
+# the UI always reflects fresh fetcher data without hammering SQLite on every
+# poll. Keyed by user id — a single shared timestamp would let one user's
+# poll reset the clock and starve the other user's refresh indefinitely.
+_last_cache_refresh: dict[str, datetime] = {}
 _CACHE_REFRESH_INTERVAL = timedelta(seconds=60)
 
 
@@ -147,8 +150,11 @@ def _require_user(user: str) -> UserBundle:
 
 
 def _resolve_range(start: str | None, end: str | None, default_days: int = 30) -> tuple[str, str]:
-    end = end or datetime.utcnow().strftime("%Y-%m-%d")
-    start = start or (datetime.utcnow() - timedelta(days=default_days)).strftime("%Y-%m-%d")
+    # Local calendar day, not UTC — daily rows are keyed by local date, and a
+    # UTC "today" points at yesterday during the BST offset window after
+    # local midnight (same fix as build_portable_prompt).
+    end = end or datetime.now().strftime("%Y-%m-%d")
+    start = start or (datetime.now() - timedelta(days=default_days)).strftime("%Y-%m-%d")
     return start, end
 
 
@@ -166,7 +172,12 @@ def _extract_chat_tags(text: str) -> list[str]:
         "training": ["workout", "run", "ride", "lifting", "training", "exercise"],
         "mood": ["mood", "sad", "happy", "irritable", "depressed"],
     }
-    tags = [k for k, words in keyword_tags.items() if any(w in t for w in words)]
+    # Whole-word matching — a plain substring test tags "I will" as illness
+    # ("ill"), "late" as nutrition ("ate"), "grumpy" as training ("run").
+    tags = [
+        k for k, words in keyword_tags.items()
+        if any(re.search(rf"\b{re.escape(w)}\b", t) for w in words)
+    ]
     return tags[:8]
 
 
@@ -425,16 +436,16 @@ async def dashboard(
     once every 60 s so that new fetcher writes appear on the dashboard
     automatically without requiring a web-server restart.
     """
-    global _last_cache_refresh
     bundle = _require_user(user)
 
-    now = datetime.utcnow()
-    if _last_cache_refresh is None or (now - _last_cache_refresh) >= _CACHE_REFRESH_INTERVAL:
+    now = datetime.now()
+    last = _last_cache_refresh.get(user)
+    if last is None or (now - last) >= _CACHE_REFRESH_INTERVAL:
         try:
             loop = asyncio.get_event_loop()
             # Rebuild last 7 days only (fast; full history rebuilt on startup)
             await loop.run_in_executor(None, bundle.agent.ensure_cache_fresh, 7)
-            _last_cache_refresh = now
+            _last_cache_refresh[user] = now
         except Exception as e:
             logger.warning("Dashboard cache refresh failed (non-fatal): %s", e)
 
@@ -953,6 +964,12 @@ async def get_notes(
 async def save_note(req: NoteRequest):
     """Create, update, or (with an empty body) delete a day's free-text note."""
     bundle = _require_user(req.user)
+    # daily_notes is keyed by date string; an unvalidated value becomes a junk
+    # primary key that's invisible to every range query.
+    try:
+        datetime.strptime(req.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None, bundle.agent._memory.upsert_daily_note, req.date, req.note

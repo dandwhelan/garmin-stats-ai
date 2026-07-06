@@ -34,7 +34,11 @@ class UserContext:
         self._settings = settings
         self._user_map = settings.user_map
         self._bundles: dict[str, UserBundle] = {}
+        # _lock only guards the maps; each user gets their own init lock so a
+        # slow first-time build (90-day cache rebuild) can't block requests
+        # for users whose bundles are already warm.
         self._lock = threading.Lock()
+        self._init_locks: dict[str, threading.Lock] = {}
 
     @property
     def user_ids(self) -> list[str]:
@@ -57,6 +61,15 @@ class UserContext:
             bundle = self._bundles.get(user_id)
             if bundle is not None:
                 return bundle
+            init_lock = self._init_locks.setdefault(user_id, threading.Lock())
+
+        with init_lock:
+            # Double-check: another thread may have finished the build while
+            # we waited on this user's init lock.
+            with self._lock:
+                bundle = self._bundles.get(user_id)
+                if bundle is not None:
+                    return bundle
 
             logger.info("Initialising agent for user '%s'", user_id)
             user_settings = self._settings.settings_for_user(user_id)
@@ -68,7 +81,8 @@ class UserContext:
             viz = VisualizationService(user_settings.sqlite_db_path)
             lifestyle = LifestyleService(user_settings.sqlite_db_path)
             bundle = UserBundle(user_id=user_id, agent=agent, viz=viz, lifestyle=lifestyle)
-            self._bundles[user_id] = bundle
+            with self._lock:
+                self._bundles[user_id] = bundle
             return bundle
 
     def close(self) -> None:

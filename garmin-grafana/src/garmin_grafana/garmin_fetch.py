@@ -1424,12 +1424,11 @@ def daily_fetch_write(date_str):
             logging.info(f"No Data is available for date {date_str} to refresh")
             return None
         elif data_refresh_response == "DENIED":
-            logging.info(f"Daily refresh limit reached. Pausing script for 24 hours to ensure Intraday data fetching. Disable REQUEST_INTRADAY_DATA_REFRESH to avoid this!")
-            time.sleep(86500)
-            data_refresh_response = garmin_obj.connectapi(f"wellness-service/wellness/epoch/request/{date_str}", method="POST").get("status", "Unknown")
-            logging.info(f"Intraday data refresh request status: {data_refresh_response}")
-            logging.info(f"Waiting 10 seconds...")
-            time.sleep(10)
+            # Daily refresh limit reached. Do NOT sleep 24h here — that froze
+            # ALL fetching (every metric, every day) for a whole day. Skip the
+            # refresh request and carry on with normal fetching; already-synced
+            # intraday data still comes through.
+            logging.warning(f"Intraday refresh request DENIED for {date_str} (daily refresh limit reached) - skipping refresh and continuing with normal fetching. Disable REQUEST_INTRADAY_DATA_REFRESH to avoid this!")
         else:
             logging.info(f"Refresh response is unknown!")
             time.sleep(5)
@@ -1624,29 +1623,43 @@ if __name__ == "__main__":
         
         last_trailing_resync_day = ""  # forces a trailing-window pass on first iteration
         while True:
-            last_watch_sync_time_UTC = datetime.fromtimestamp(int(garmin_obj.get_device_last_used().get('lastUsedDeviceUploadTime')/1000)).astimezone(pytz.timezone("UTC"))
-            # Use today's local date as the end date rather than lastUsedDeviceUploadTime.
-            # The watch API upload timestamp can be stale (e.g. still showing yesterday) even when
-            # today's data is already available on Garmin servers, causing the fetch to miss
-            # recent days. Fetching up to today is safe — empty dates simply return no records.
-            today_local_str = datetime.today().strftime('%Y-%m-%d')
-            start_local_str = (last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')
-            # Once per calendar day, widen the start back by RESYNC_WINDOW_DAYS
-            # so retroactive Garmin Connect edits (lifestyle entries, sleep
-            # notes, etc.) get picked up. All upserts are idempotent on natural
-            # keys, so re-fetching is safe; we gate it to once/day to avoid
-            # re-pulling N days every UPDATE_INTERVAL_SECONDS tick.
-            if RESYNC_WINDOW_DAYS > 0 and last_trailing_resync_day != today_local_str:
-                resync_floor_str = (datetime.today() - timedelta(days=RESYNC_WINDOW_DAYS)).strftime('%Y-%m-%d')
-                if resync_floor_str < start_local_str:
-                    logging.info(f"Trailing resync : widening start to {resync_floor_str} (was {start_local_str}) to catch retroactive edits over past {RESYNC_WINDOW_DAYS} days")
-                    start_local_str = resync_floor_str
-                last_trailing_resync_day = today_local_str
-            if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC or start_local_str < today_local_str:
-                logging.info(f"Update found : fetching {start_local_str} → {today_local_str} (watch last upload: {last_watch_sync_time_UTC} UTC)")
-                fetch_write_bulk(start_local_str, today_local_str)
-                last_influxdb_sync_time_UTC = last_watch_sync_time_UTC
-            else:
-                logging.info(f"No new data found : DB sync={last_influxdb_sync_time_UTC} UTC, watch upload={last_watch_sync_time_UTC} UTC")
+            # The loop body is guarded so a transient network / Garmin API /
+            # auth error can't kill the long-running fetcher process — before
+            # this, an exception from get_device_last_used() (which runs
+            # outside fetch_write_bulk's own error handling) crashed the
+            # process and left a data gap until the cron self-heal relaunched it.
+            try:
+                last_watch_sync_time_UTC = datetime.fromtimestamp(int(garmin_obj.get_device_last_used().get('lastUsedDeviceUploadTime')/1000)).astimezone(pytz.timezone("UTC"))
+                # Use today's local date as the end date rather than lastUsedDeviceUploadTime.
+                # The watch API upload timestamp can be stale (e.g. still showing yesterday) even when
+                # today's data is already available on Garmin servers, causing the fetch to miss
+                # recent days. Fetching up to today is safe — empty dates simply return no records.
+                today_local_str = datetime.today().strftime('%Y-%m-%d')
+                start_local_str = (last_influxdb_sync_time_UTC + local_timediff).strftime('%Y-%m-%d')
+                # Once per calendar day, widen the start back by RESYNC_WINDOW_DAYS
+                # so retroactive Garmin Connect edits (lifestyle entries, sleep
+                # notes, etc.) get picked up. All upserts are idempotent on natural
+                # keys, so re-fetching is safe; we gate it to once/day to avoid
+                # re-pulling N days every UPDATE_INTERVAL_SECONDS tick.
+                if RESYNC_WINDOW_DAYS > 0 and last_trailing_resync_day != today_local_str:
+                    resync_floor_str = (datetime.today() - timedelta(days=RESYNC_WINDOW_DAYS)).strftime('%Y-%m-%d')
+                    if resync_floor_str < start_local_str:
+                        logging.info(f"Trailing resync : widening start to {resync_floor_str} (was {start_local_str}) to catch retroactive edits over past {RESYNC_WINDOW_DAYS} days")
+                        start_local_str = resync_floor_str
+                    last_trailing_resync_day = today_local_str
+                if last_influxdb_sync_time_UTC < last_watch_sync_time_UTC or start_local_str < today_local_str:
+                    logging.info(f"Update found : fetching {start_local_str} → {today_local_str} (watch last upload: {last_watch_sync_time_UTC} UTC)")
+                    fetch_write_bulk(start_local_str, today_local_str)
+                    last_influxdb_sync_time_UTC = last_watch_sync_time_UTC
+                else:
+                    logging.info(f"No new data found : DB sync={last_influxdb_sync_time_UTC} UTC, watch upload={last_watch_sync_time_UTC} UTC")
+            except GarminConnectAuthenticationError as err:
+                logging.error(f"Authentication error in main loop ({err}) - attempting re-login")
+                try:
+                    garmin_obj = garmin_login()
+                except Exception as login_err:
+                    logging.error(f"Re-login failed ({login_err}) - will retry next cycle")
+            except Exception as err:
+                logging.exception(f"Main loop iteration failed (will retry next cycle): {err}")
             logging.info(f"waiting for {UPDATE_INTERVAL_SECONDS} seconds before next automatic update calls")
             time.sleep(UPDATE_INTERVAL_SECONDS)
