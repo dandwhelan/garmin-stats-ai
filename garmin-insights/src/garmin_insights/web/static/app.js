@@ -174,6 +174,8 @@ function refreshSyncBadge() {
   syncBadge.title = `Last DB write: ${lastSyncDate.toLocaleString()}`;
 }
 
+let userBiologicalSex = ''; // 'male' / 'female' from /api/health, prefills the scan profile
+
 async function checkHealth() {
   try {
     const res = await fetch(withUser('/api/health'));
@@ -184,6 +186,7 @@ async function checkHealth() {
         const data = await res.json();
         renderUserBadge(data.user);
         renderSyncBadge(data.last_sync);
+        userBiologicalSex = (data.user?.biological_sex || '').toLowerCase();
       } catch { /* ignore */ }
     } else {
       statusDot.className = 'status-dot error';
@@ -4896,6 +4899,8 @@ function ensureJournalTab() {
     document.getElementById('journal-save')?.addEventListener('click', saveJournalNote);
     document.getElementById('journal-delete')?.addEventListener('click', clearJournalNote);
     document.getElementById('weighin-submit')?.addEventListener('click', submitWeighIn);
+    document.getElementById('weighin-scan-btn')?.addEventListener('click', scanScale);
+    initWeighInProfile();
     initWeighInTimestamp();
     initJournalCalendarNav();
     _journalInit = true;
@@ -4975,6 +4980,183 @@ function _wiNum(id) {
   if (raw.trim() === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
+}
+
+// ---- BLE scale scan (Web Bluetooth) ----
+// Reads weight + impedance from a Xiaomi Mi Body Composition Scale via the
+// standard GATT Body Composition service (0x181B / 0x2A9C), then derives the
+// remaining metrics from height / age / sex. Protocol and formulas follow
+// lswiderski/WebBodyComposition (services/scanner.js, services/metrics.js),
+// which credits wiecosystem/Bluetooth for the impedance equations — the same
+// math the Mi Fit app uses, so results match the scale's own app.
+
+function _profileKey() { return `weighin-profile:${activeUser || 'default'}`; }
+
+function initWeighInProfile() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(_profileKey()) || '{}'); } catch { /* ignore */ }
+  const h = document.getElementById('wi-height');
+  const a = document.getElementById('wi-age');
+  const s = document.getElementById('wi-sex');
+  if (h && saved.height) h.value = saved.height;
+  if (a && saved.age) a.value = saved.age;
+  if (s) s.value = saved.sex || (userBiologicalSex === 'female' ? 'female' : 'male');
+  for (const el of [h, a, s]) {
+    el?.addEventListener('change', () => {
+      localStorage.setItem(_profileKey(), JSON.stringify({
+        height: h?.value || '', age: a?.value || '', sex: s?.value || '',
+      }));
+    });
+  }
+}
+
+function scanSetStatus(msg, isError) {
+  const el = document.getElementById('weighin-scan-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--red, #c0392b)' : 'var(--muted, #888)';
+}
+
+// Impedance-based body-composition estimates (see block comment above).
+function computeBodyComposition(weight, impedance, height, age, sex) {
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+  // Lean body mass coefficient — every other metric hangs off this.
+  let lbm = (height * 9.058 / 100) * (height / 100);
+  lbm += weight * 0.32 + 12.226;
+  lbm -= impedance * 0.0068;
+  lbm -= age * 0.0542;
+
+  let fatBase = 0.8;
+  if (sex === 'female') fatBase = age <= 49 ? 9.25 : 7.25;
+  let coefficient = 1.0;
+  if (sex === 'male' && weight < 61) coefficient = 0.98;
+  else if (sex === 'female' && weight > 60) coefficient = height > 160 ? 1.03 : 0.96;
+  else if (sex === 'female' && weight < 50) coefficient = height > 160 ? 1.03 : 1.02;
+  let fat = (1.0 - (((lbm - fatBase) * coefficient) / weight)) * 100;
+  if (fat > 63) fat = 75;
+  fat = clamp(fat, 5, 75);
+
+  let water = (100 - fat) * 0.7;
+  const waterCoef = water <= 50 ? 1.02 : 0.98;
+  if (water * waterCoef >= 65) water = 75;
+  water = clamp(water * waterCoef, 35, 75);
+
+  let bone = (((sex === 'female' ? 0.245691014 : 0.18016894) - (lbm * 0.05158)) * -1);
+  bone += bone > 2.2 ? 0.1 : -0.1;
+  if (sex === 'female' && bone > 5.1) bone = 8;
+  else if (sex === 'male' && bone > 5.2) bone = 8;
+  bone = clamp(bone, 0.5, 8);
+
+  let muscle = weight - (fat * 0.01 * weight) - bone;
+  if (sex === 'female' && muscle >= 84) muscle = 120;
+  else if (sex === 'male' && muscle >= 93.5) muscle = 120;
+  muscle = clamp(muscle, 10, 120);
+
+  let visceral;
+  if (sex === 'female') {
+    if (weight > (13 - (height * 0.5)) * -1) {
+      const sub = ((height * 1.45) + (height * 0.1158) * height) - 120;
+      visceral = ((weight * 500 / sub) - 6) + (age * 0.07);
+    } else {
+      const sub = 0.691 + (height * -0.0024) + (height * -0.0024);
+      visceral = (((height * 0.027) - (sub * weight)) * -1) + (age * 0.07) - age;
+    }
+  } else if (height < weight * 1.6) {
+    const sub = ((height * 0.4) - (height * (height * 0.0826))) * -1;
+    visceral = ((weight * 305) / (sub + 48)) - 2.9 + (age * 0.15);
+  } else {
+    const sub = 0.765 + height * -0.0015;
+    visceral = (((height * 0.143) - (weight * sub)) * -1) + (age * 0.15) - 5.0;
+  }
+  visceral = clamp(visceral, 1, 50);
+
+  let metabolicAge = sex === 'female'
+    ? (height * -1.1165) + (weight * 1.5784) + (age * 0.4615) + (impedance * 0.0415) + 83.2548
+    : (height * -0.7471) + (weight * 0.9161) + (age * 0.4184) + (impedance * 0.0517) + 54.2267;
+  metabolicAge = clamp(metabolicAge, 15, 80);
+
+  const bmi = clamp(weight / ((height / 100) * (height / 100)), 10, 90);
+
+  return { bmi, fat, water, muscle, bone, visceral, metabolicAge };
+}
+
+let _scaleDevice = null;
+let _scaleChar = null;
+
+async function stopScaleScan() {
+  try { await _scaleChar?.stopNotifications(); } catch { /* already gone */ }
+  try { _scaleDevice?.gatt?.disconnect(); } catch { /* already gone */ }
+  _scaleChar = null;
+  _scaleDevice = null;
+  const btn = document.getElementById('weighin-scan-btn');
+  if (btn) btn.disabled = false;
+}
+
+function _setWi(id, value, decimals = 2) {
+  const el = document.getElementById(id);
+  if (el) el.value = Number(value).toFixed(decimals);
+}
+
+async function scanScale() {
+  if (!navigator.bluetooth) {
+    scanSetStatus('Bluetooth scanning needs a secure context — open the dashboard over HTTPS ' +
+      '(e.g. tailscale serve) or localhost, or allow this origin in ' +
+      'chrome://flags/#unsafely-treat-insecure-origin-as-secure.', true);
+    return;
+  }
+  const height = _wiNum('wi-height');
+  const age = _wiNum('wi-age');
+  const sex = document.getElementById('wi-sex')?.value || 'male';
+  if (height == null || age == null) {
+    scanSetStatus('Fill in height and age first — the scale only sends weight + impedance; the rest is computed.', true);
+    return;
+  }
+
+  const btn = document.getElementById('weighin-scan-btn');
+  if (btn) btn.disabled = true;
+  try {
+    scanSetStatus('Requesting Bluetooth device… pick your scale in the browser prompt.', false);
+    _scaleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: ['body_composition'] }],
+    });
+    scanSetStatus('Connecting…', false);
+    const server = await _scaleDevice.gatt.connect();
+    const service = await server.getPrimaryService('body_composition');
+    _scaleChar = await service.getCharacteristic('body_composition_measurement');
+    await _scaleChar.startNotifications();
+    scanSetStatus('Connected — step on the scale (barefoot for impedance).', false);
+
+    _scaleChar.addEventListener('characteristicvaluechanged', async (event) => {
+      const buf = new Uint8Array(event.target.value.buffer);
+      const stabilized = buf[1] & (1 << 5);
+      const weight = ((buf[12] << 8) + buf[11]) / 200;
+      const impedance = (buf[10] << 8) + buf[9];
+      if (!weight) return;
+      _setWi('wi-weight', weight, 2);
+
+      if (!(stabilized && impedance > 0 && impedance < 3000)) {
+        scanSetStatus(`Reading… ${weight.toFixed(1)} kg — hold still for the impedance measurement.`, false);
+        return;
+      }
+      const m = computeBodyComposition(weight, impedance, height, age, sex);
+      _setWi('wi-bmi', m.bmi);
+      _setWi('wi-fat', m.fat);
+      _setWi('wi-water', m.water);
+      _setWi('wi-muscle', m.muscle);
+      _setWi('wi-bone', m.bone);
+      _setWi('wi-visceral', m.visceral);
+      _setWi('wi-metabolic', m.metabolicAge, 1);
+      initWeighInTimestamp(); // stamp the reading with "now"
+      await stopScaleScan();
+      scanSetStatus(`Done — ${weight.toFixed(1)} kg, impedance ${impedance} Ω. Check the numbers, then Upload to Garmin.`, false);
+    });
+  } catch (err) {
+    await stopScaleScan();
+    // The user closing the device chooser is a normal path, not a failure.
+    const cancelled = err && (err.name === 'NotFoundError');
+    scanSetStatus(cancelled ? 'Scan cancelled.' : `Scan failed: ${err.message || err}`, cancelled ? false : true);
+  }
 }
 
 async function submitWeighIn() {

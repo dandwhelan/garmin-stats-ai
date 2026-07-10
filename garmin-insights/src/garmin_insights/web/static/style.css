@@ -1727,6 +1727,21 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   padding-top: 1.25rem;
   border-top: 1px solid var(--border, #333);
 }
+.weighin-scan {
+  margin: 0.25rem 0 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--border, #333);
+}
+.weighin-grid select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 8px);
+  background: var(--bg, #111);
+  color: var(--text, var(--fg, #eee));
+  font: inherit;
+}
 .weighin-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

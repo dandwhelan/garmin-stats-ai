@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260710a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260710b" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -802,7 +802,18 @@
 
         <div class="weighin-form" id="weighin-form">
           <h2>Log a Weigh-in <span class="info-icon" tabindex="0">i<span class="info-tooltip">Uploads straight to <b>your Garmin Connect account</b> using the same login the fetcher already holds — nothing goes through a third-party service. The reading syncs back onto the dashboard within ~5 minutes. Only weight is required; fill in whatever your scale shows.</span></span></h2>
-          <p class="journal-hint">Type in what your smart scale shows (body fat, water %, muscle…). It's sent to Garmin Connect and appears here after the next sync.</p>
+          <p class="journal-hint">Scan your Xiaomi scale over Bluetooth to fill the form automatically, or type in what your smart scale shows. It's sent to Garmin Connect and appears here after the next sync.</p>
+          <div class="weighin-scan">
+            <div class="weighin-grid weighin-profile">
+              <label>Height (cm) <input type="number" id="wi-height" step="0.5" min="80" max="230" placeholder="180"></label>
+              <label>Age <input type="number" id="wi-age" step="1" min="10" max="110" placeholder="35"></label>
+              <label>Sex <select id="wi-sex"><option value="male">Male</option><option value="female">Female</option></select></label>
+            </div>
+            <div class="journal-actions">
+              <button id="weighin-scan-btn" class="secondary-btn" title="Reads weight + impedance from a Mi Body Composition Scale over Bluetooth and computes the rest from your height / age / sex">📶 Scan scale</button>
+              <span id="weighin-scan-status" class="journal-status"></span>
+            </div>
+          </div>
           <div class="weighin-grid">
             <label>When <input type="datetime-local" id="wi-timestamp"></label>
             <label>Weight (kg) * <input type="number" id="wi-weight" step="0.05" min="20" max="400" placeholder="80.0"></label>
@@ -874,6 +885,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260710a"></script>
+  <script src="/static/app.js?v=20260710b"></script>
 </body>
 </html>
