@@ -670,7 +670,9 @@ def get_body_composition(date_str):
                     "muscleMass": weight_dict.get("muscleMass"),
                     "physiqueRating": weight_dict.get("physiqueRating"),
                     "visceralFat": weight_dict.get("visceralFat"),
-                    # "metabolicAge": datetime.fromtimestamp(int(weight_dict.get("metabolicAge")/1000), tz=pytz.timezone("UTC")).isoformat() if weight_dict.get("metabolicAge") else None
+                    # Plain integer of years — NOT a millisecond timestamp
+                    # (the old timestamp parse mis-read it and was disabled).
+                    "metabolicAge": weight_dict.get("metabolicAge"),
                 }
             if not all(value is None for value in data_fields.values()):
                 points_list.append({

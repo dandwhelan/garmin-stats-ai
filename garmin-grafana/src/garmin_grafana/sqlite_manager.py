@@ -199,6 +199,7 @@ class GarminDB:
                 muscle_mass REAL,
                 physique_rating REAL,
                 visceral_fat REAL,
+                metabolic_age REAL,
                 PRIMARY KEY (time, device)
             )
         """)
@@ -493,6 +494,9 @@ class GarminDB:
                 ("max_power", "REAL"),
                 ("norm_power", "REAL"),
             ],
+            "body_composition": [
+                ("metabolic_age", "REAL"),
+            ],
         }
         for _table, _cols in _added_columns.items():
             for _col, _type in _cols:
@@ -651,6 +655,7 @@ class GarminDB:
                         'muscle_mass': fields.get('muscleMass'),
                         'physique_rating': fields.get('physiqueRating'),
                         'visceral_fat': fields.get('visceralFat'),
+                        'metabolic_age': fields.get('metabolicAge'),
                     }, ['time', 'device'])
 
                 elif measurement == 'ActivitySummary':

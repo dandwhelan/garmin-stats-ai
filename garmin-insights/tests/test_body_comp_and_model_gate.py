@@ -1,0 +1,106 @@
+"""Regression tests: body-composition plumbing into daily summaries,
+the shared to_kg unit guard, and the adaptive-thinking model allowlist."""
+
+import sqlite3
+
+import pytest
+
+from garmin_insights.agent import _model_supports_adaptive
+from garmin_insights.config import Settings
+from garmin_insights.db.cache import CacheBuilder, _BASELINE_METRICS
+from garmin_insights.db.memory import MemoryStore
+from garmin_insights.db.sqlite_repo import SqliteRepo
+from garmin_insights.stats_utils import to_kg
+
+
+# ---------------------------------------------------------------------------
+# to_kg
+# ---------------------------------------------------------------------------
+
+def test_to_kg_converts_grams():
+    assert to_kg(72080) == 72.08
+
+
+def test_to_kg_idempotent_on_kg():
+    assert to_kg(72.08) == 72.08
+
+
+def test_to_kg_none_passthrough():
+    assert to_kg(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Adaptive-thinking model gate (allowlist, not denylist)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("model,expected", [
+    ("claude-sonnet-5", True),
+    ("claude-fable-5", True),
+    ("claude-mythos-5", True),
+    ("claude-opus-4-8", True),
+    ("claude-opus-4-6", True),
+    ("claude-sonnet-4-6", True),
+    ("claude-haiku-5", True),
+    # Legacy models reject adaptive + effort — must get enabled+budget
+    ("claude-sonnet-4-5", False),
+    ("claude-sonnet-4-0", False),
+    ("claude-haiku-4-5-20251001", False),
+    ("claude-opus-4-5", False),
+    ("claude-3-5-sonnet-20241022", False),
+])
+def test_model_supports_adaptive(model, expected):
+    assert _model_supports_adaptive(model) is expected
+
+
+# ---------------------------------------------------------------------------
+# Body composition → daily summaries + baselines
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def db_with_weigh_in(tmp_path):
+    db = str(tmp_path / "garmin.db")
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE body_composition ("
+        "time TEXT, device TEXT, weight REAL, bmi REAL, body_fat REAL, "
+        "body_water REAL, bone_mass REAL, muscle_mass REAL, "
+        "physique_rating REAL, visceral_fat REAL, metabolic_age REAL, "
+        "PRIMARY KEY (time, device))"
+    )
+    # Two readings on the day — the later one must win
+    conn.execute(
+        "INSERT INTO body_composition VALUES "
+        "('2026-07-10T06:00:00','scale',72500,21.2,17.0,57.0,3050,57000,NULL,9,33)"
+    )
+    conn.execute(
+        "INSERT INTO body_composition VALUES "
+        "('2026-07-10T07:01:00','scale',72080,21.1,16.6,57.2,3060,57070,NULL,9,32)"
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_body_comp_merged_into_daily_summary(db_with_weigh_in):
+    settings = Settings(sqlite_db_path=db_with_weigh_in, anthropic_api_key="test")
+    repo = SqliteRepo(settings)
+    memory = MemoryStore(settings)
+    memory.initialise_schema()
+    cache = CacheBuilder(repo, memory)
+
+    summary = cache.build_daily_summary("2026-07-10", is_complete=False)
+
+    assert summary["weight_kg"] == 72.08  # latest reading of the day, in kg
+    assert summary["bmi"] == 21.1
+    assert summary["body_fat_pct"] == 16.6
+    assert summary["body_water_pct"] == 57.2
+    assert summary["muscle_mass_kg"] == 57.07
+    assert summary["bone_mass_kg"] == 3.06
+    assert summary["visceral_fat"] == 9.0
+    assert summary["metabolic_age"] == 32.0
+
+
+def test_body_comp_metrics_are_baselined():
+    # detect_metric_trend / find_anomalies only see baselined summary metrics
+    for metric in ("weight_kg", "body_fat_pct", "visceral_fat"):
+        assert metric in _BASELINE_METRICS

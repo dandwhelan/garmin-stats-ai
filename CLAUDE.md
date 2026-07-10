@@ -183,7 +183,7 @@ All data lives in a single `garmin.db`. Key tables:
 - `sleep_summary` — sleep score, HRV, deep/REM/light sleep
 - `activity_summary` — workouts with HR, distance, calories
 - `lifestyle_journal` — user-logged behaviors (alcohol, caffeine, etc.)
-- `body_composition` — weight, body fat, BMI
+- `body_composition` — weight, BMI, body fat/water %, bone/muscle mass, visceral fat, metabolic age. The latest reading per day is merged into `daily_summaries` (`weight_kg`, `bmi`, `body_fat_pct`, `body_water_pct`, `muscle_mass_kg`, `bone_mass_kg`, `visceral_fat`, `metabolic_age` — masses normalised to kg via `stats_utils.to_kg`) and `weight_kg`/`body_fat_pct`/`visceral_fat` are baselined, so trend/anomaly/correlation tools, the Entities picker and the portable prompt all see scale data, not just the raw `get_body_composition` tool
 - `training_readiness` — Garmin training readiness score + factors
 - `training_status` — ACWR / acute & chronic training load, plus **heat & altitude acclimation** (`heat_acclimation_percentage`, `altitude_acclimation_percentage`, `heat_trend`, `altitude_trend`, `current_altitude`). Acclimation is how adapted the body is to training in heat — it builds with heat exposure and decays over ~1-2 weeks. All ride in the one Garmin training-status payload (no extra fetch); surfaced via the `get_heat_acclimation` tool and the dashboard Heat Acclimation chart.
 - `menstrual_cycle` — per-day cycle phase, day-of-cycle, predicted/observed cycle length, flow intensity, symptoms (only populated for users who track cycles in Garmin Connect)
