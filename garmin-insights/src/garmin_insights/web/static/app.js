@@ -5096,6 +5096,34 @@ function computeBodyComposition(weight, impedance, height, age, sex) {
   return { bmi, fat, water, muscle, bone, visceral, metabolicAge };
 }
 
+// One 13-byte 0x2A9C frame from the Mi scale. The raw 16-bit weight is in
+// whatever unit the scale is SET to (unit flags: byte0 bit0 = lbs, byte1
+// bit6 = catty) — raw*0.01 gives lbs/catty, kg mode is raw*0.005. The
+// original web port assumed kg mode, which halved lb readings instead of
+// converting them (131.5 lb came out as 65.75 "kg").
+function parseScaleFrame(buf) {
+  const isLbs = buf[0] & 0x01;
+  const isCatty = buf[1] & (1 << 6);
+  const stabilized = buf[1] & (1 << 5);
+  const impedance = (buf[10] << 8) + buf[9];
+  const rawWord = (buf[12] << 8) + buf[11];
+  let unit, raw, weightKg;
+  if (isLbs) {
+    unit = 'lb';
+    raw = rawWord * 0.01;
+    weightKg = raw * 0.45359237;
+  } else if (isCatty) {
+    unit = 'catty';
+    raw = rawWord * 0.01;
+    weightKg = raw * 0.5;
+  } else {
+    unit = 'kg';
+    raw = rawWord * 0.005;
+    weightKg = raw;
+  }
+  return { unit, raw, weightKg, impedance, stabilized };
+}
+
 let _scaleDevice = null;
 let _scaleChar = null;
 
@@ -5143,18 +5171,18 @@ async function scanScale() {
     scanSetStatus('Connected — step on the scale (barefoot for impedance).', false);
 
     _scaleChar.addEventListener('characteristicvaluechanged', async (event) => {
-      const buf = new Uint8Array(event.target.value.buffer);
-      const stabilized = buf[1] & (1 << 5);
-      const weight = ((buf[12] << 8) + buf[11]) / 200;
-      const impedance = (buf[10] << 8) + buf[9];
-      if (!weight) return;
-      _setWi('wi-weight', weight, 2);
+      const frame = parseScaleFrame(new Uint8Array(event.target.value.buffer));
+      if (!frame.weightKg) return;
+      _setWi('wi-weight', frame.weightKg, 2);
+      const display = frame.unit === 'kg'
+        ? `${frame.weightKg.toFixed(1)} kg`
+        : `${frame.raw.toFixed(1)} ${frame.unit} → ${frame.weightKg.toFixed(2)} kg`;
 
-      if (!(stabilized && impedance > 0 && impedance < 3000)) {
-        scanSetStatus(`Reading… ${weight.toFixed(1)} kg — hold still for the impedance measurement.`, false);
+      if (!(frame.stabilized && frame.impedance > 0 && frame.impedance < 3000)) {
+        scanSetStatus(`Reading… ${display} — hold still for the impedance measurement.`, false);
         return;
       }
-      const m = computeBodyComposition(weight, impedance, height, age, sex);
+      const m = computeBodyComposition(frame.weightKg, frame.impedance, height, age, sex);
       _setWi('wi-bmi', m.bmi);
       _setWi('wi-fat', m.fat);
       _setWi('wi-water', m.water);
@@ -5164,7 +5192,7 @@ async function scanScale() {
       _setWi('wi-metabolic', m.metabolicAge, 1);
       initWeighInTimestamp(); // stamp the reading with "now"
       await stopScaleScan();
-      scanSetStatus(`Done — ${weight.toFixed(1)} kg, impedance ${impedance} Ω. Check the numbers, then Upload to Garmin.`, false);
+      scanSetStatus(`Done — ${display}, impedance ${frame.impedance} Ω. Check the numbers, then Upload to Garmin.`, false);
     });
   } catch (err) {
     await stopScaleScan();
