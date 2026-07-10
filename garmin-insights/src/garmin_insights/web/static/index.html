@@ -235,13 +235,22 @@
 
       <section class="chart-section">
         <div class="chart-header">
-          <h2>Body Composition</h2>
+          <h2>Body Composition <span class="info-icon" tabindex="0">i<span class="info-tooltip">Weight, body fat % and muscle mass from your scale or manual Garmin Connect entries. Smart-scale body fat / muscle figures are <b>impedance estimates</b>, not measurements — best read as a personal trend, not absolute values. Weight itself is accurate.</span></span></h2>
         </div>
         <div class="chart-container">
           <canvas id="body-comp-chart"></canvas>
         </div>
       </section>
     </div>
+
+    <section class="chart-section" id="body-comp-detail-section" style="display:none">
+      <div class="chart-header">
+        <h2>Body Composition Detail <span class="info-icon" tabindex="0">i<span class="info-tooltip">Body water %, bone mass and visceral-fat rating from smart-scale weigh-ins (e.g. a Mi Scale syncing via Garmin Connect). All are <b>bio-impedance estimates</b> — hydration, recent meals and exercise shift them day to day, so track the trend against your own baseline rather than single readings. Only shown when your scale reports these fields.</span></span></h2>
+      </div>
+      <div class="chart-container">
+        <canvas id="body-comp-detail-chart"></canvas>
+      </div>
+    </section>
 
     <section class="chart-section">
       <div class="chart-header">
@@ -844,6 +853,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260702a"></script>
+  <script src="/static/app.js?v=20260710a"></script>
 </body>
 </html>

@@ -923,6 +923,7 @@ async function loadVisualizations(start, end) {
     safeRender('sleepTimeline', () => renderSleepTimeline(vizData.sleep_timeline));
     safeRender('sleepWindow',   () => renderSleepWindow(vizData.sleep_timeline));
     safeRender('bodyComp', () => renderBodyComposition(vizData.body_composition));
+    safeRender('bodyCompDetail', () => renderBodyCompositionDetail(vizData.body_composition));
     safeRender('behaviorImpact', () => renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric));
     safeRender('anomalyCalendar', () => renderAnomalyCalendar(vizData.anomaly_calendar));
     safeRender('hrZones', () => renderHrZones(vizData.hr_zones));
@@ -1300,6 +1301,65 @@ function renderBodyComposition(records) {
         x: commonScales().x,
         y: { ...commonScales('kg').y, position: 'left' },
         y1: { ...commonScales('%').y, position: 'right', grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// Body water / bone mass / visceral fat only arrive from smart-scale weigh-ins
+// (watch-entered weights leave them null), so the whole section stays hidden
+// until at least one reading carries a detail field.
+function renderBodyCompositionDetail(records) {
+  const section = document.getElementById('body-comp-detail-section');
+  if (!section) return;
+  const data = (records || []).filter(r =>
+    r.body_water != null || r.bone_mass != null || r.visceral_fat != null);
+  destroyAux('bodyCompDetail');
+  if (data.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+
+  const ctx = document.getElementById('body-comp-detail-chart');
+  if (!ctx) return;
+  const labels = data.map(r => r.date.slice(5));
+
+  auxCharts.bodyCompDetail = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Body water %',
+          data: data.map(r => r.body_water ?? null),
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.1)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'Bone mass (kg)',
+          data: data.map(r => r.bone_mass ?? null),
+          borderColor: '#a78bfa',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+          borderDash: [4, 4],
+        },
+        {
+          label: 'Visceral fat (rating)',
+          data: data.map(r => r.visceral_fat ?? null),
+          borderColor: '#fbbf24',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('%').y, position: 'left' },
+        y1: { ...commonScales().y, position: 'right', grid: { drawOnChartArea: false } },
       },
       plugins: commonPlugins(),
     },
@@ -3707,7 +3767,7 @@ const CHART_CATEGORIES = [
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
-  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
   { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },

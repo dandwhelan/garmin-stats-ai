@@ -120,7 +120,7 @@ class VisualizationService:
     # 3. Body composition — weight + body fat % + muscle mass trend
     # ------------------------------------------------------------------
     def body_composition(self, start: str, end: str) -> list[dict]:
-        cols = "weight, bmi, body_fat, muscle_mass, body_water, visceral_fat"
+        cols = "weight, bmi, body_fat, muscle_mass, body_water, bone_mass, visceral_fat"
         with self._conn() as conn:
             df = pd.read_sql_query(
                 f"SELECT substr(time, 1, 10) AS date, {cols} FROM body_composition "
@@ -145,11 +145,13 @@ class VisualizationService:
         if df.empty:
             return []
         df = df.groupby("date", as_index=False).mean(numeric_only=True)
-        # Garmin Connect stores weight in GRAMS. Convert to kg for display; the
-        # >1000 guard avoids double-converting any row already in kg.
-        if "weight" in df.columns:
-            df["weight"] = df["weight"].where(df["weight"] <= 1000, df["weight"] / 1000.0)
-        for col in ("weight", "bmi", "body_fat", "muscle_mass", "body_water", "visceral_fat"):
+        # Garmin Connect stores masses (weight, muscle, bone) in GRAMS. Convert
+        # to kg for display; the >1000 guard avoids double-converting any row
+        # already in kg.
+        for col in ("weight", "muscle_mass", "bone_mass"):
+            if col in df.columns:
+                df[col] = df[col].where(df[col] <= 1000, df[col] / 1000.0)
+        for col in ("weight", "bmi", "body_fat", "muscle_mass", "body_water", "bone_mass", "visceral_fat"):
             if col in df.columns:
                 df[col] = df[col].round(2)
         return df.to_dict(orient="records")
