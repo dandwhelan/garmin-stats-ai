@@ -174,6 +174,10 @@ function refreshSyncBadge() {
   syncBadge.title = `Last DB write: ${lastSyncDate.toLocaleString()}`;
 }
 
+let userBiologicalSex = ''; // 'male' / 'female' from /api/health, prefills the scan profile
+let userProfileHeight = ''; // HEIGHT_CM from users/<id>.env via /api/health
+let userProfileAge = null;  // derived server-side from BIRTH_DATE
+
 async function checkHealth() {
   try {
     const res = await fetch(withUser('/api/health'));
@@ -184,6 +188,10 @@ async function checkHealth() {
         const data = await res.json();
         renderUserBadge(data.user);
         renderSyncBadge(data.last_sync);
+        userBiologicalSex = (data.user?.biological_sex || '').toLowerCase();
+        userProfileHeight = data.user?.height_cm || '';
+        userProfileAge = data.user?.age ?? null;
+        prefillWeighInProfile(); // fill empty scan-profile fields once known
       } catch { /* ignore */ }
     } else {
       statusDot.className = 'status-dot error';
@@ -923,6 +931,7 @@ async function loadVisualizations(start, end) {
     safeRender('sleepTimeline', () => renderSleepTimeline(vizData.sleep_timeline));
     safeRender('sleepWindow',   () => renderSleepWindow(vizData.sleep_timeline));
     safeRender('bodyComp', () => renderBodyComposition(vizData.body_composition));
+    safeRender('bodyCompDetail', () => renderBodyCompositionDetail(vizData.body_composition));
     safeRender('behaviorImpact', () => renderBehaviorImpact(vizData.behavior_impact, activeBehaviorMetric));
     safeRender('anomalyCalendar', () => renderAnomalyCalendar(vizData.anomaly_calendar));
     safeRender('hrZones', () => renderHrZones(vizData.hr_zones));
@@ -1300,6 +1309,65 @@ function renderBodyComposition(records) {
         x: commonScales().x,
         y: { ...commonScales('kg').y, position: 'left' },
         y1: { ...commonScales('%').y, position: 'right', grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// Body water / bone mass / visceral fat only arrive from smart-scale weigh-ins
+// (watch-entered weights leave them null), so the whole section stays hidden
+// until at least one reading carries a detail field.
+function renderBodyCompositionDetail(records) {
+  const section = document.getElementById('body-comp-detail-section');
+  if (!section) return;
+  const data = (records || []).filter(r =>
+    r.body_water != null || r.bone_mass != null || r.visceral_fat != null);
+  destroyAux('bodyCompDetail');
+  if (data.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+
+  const ctx = document.getElementById('body-comp-detail-chart');
+  if (!ctx) return;
+  const labels = data.map(r => r.date.slice(5));
+
+  auxCharts.bodyCompDetail = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Body water %',
+          data: data.map(r => r.body_water ?? null),
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.1)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'Bone mass (kg)',
+          data: data.map(r => r.bone_mass ?? null),
+          borderColor: '#a78bfa',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+          borderDash: [4, 4],
+        },
+        {
+          label: 'Visceral fat (rating)',
+          data: data.map(r => r.visceral_fat ?? null),
+          borderColor: '#fbbf24',
+          backgroundColor: 'transparent',
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('%').y, position: 'left' },
+        y1: { ...commonScales().y, position: 'right', grid: { drawOnChartArea: false } },
       },
       plugins: commonPlugins(),
     },
@@ -3707,7 +3775,7 @@ const CHART_CATEGORIES = [
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
-  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
   { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },
@@ -4835,6 +4903,10 @@ function ensureJournalTab() {
     }
     document.getElementById('journal-save')?.addEventListener('click', saveJournalNote);
     document.getElementById('journal-delete')?.addEventListener('click', clearJournalNote);
+    document.getElementById('weighin-submit')?.addEventListener('click', submitWeighIn);
+    document.getElementById('weighin-scan-btn')?.addEventListener('click', scanScale);
+    initWeighInProfile();
+    initWeighInTimestamp();
     initJournalCalendarNav();
     _journalInit = true;
   }
@@ -4889,6 +4961,283 @@ async function clearJournalNote() {
   const ta = document.getElementById('journal-text');
   if (ta) ta.value = '';
   await saveJournalNote();
+}
+
+// ---- Manual weigh-in → Garmin Connect upload ----
+
+function initWeighInTimestamp() {
+  const el = document.getElementById('wi-timestamp');
+  if (!el) return;
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); // local, not UTC
+  el.value = now.toISOString().slice(0, 16);
+}
+
+function weighInSetStatus(msg, isError) {
+  const el = document.getElementById('weighin-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--red, #c0392b)' : 'var(--muted, #888)';
+}
+
+function _wiNum(id) {
+  const raw = document.getElementById(id)?.value ?? '';
+  if (raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+// ---- BLE scale scan (Web Bluetooth) ----
+// Reads weight + impedance from a Xiaomi Mi Body Composition Scale via the
+// standard GATT Body Composition service (0x181B / 0x2A9C), then derives the
+// remaining metrics from height / age / sex. Protocol and formulas follow
+// lswiderski/WebBodyComposition (services/scanner.js, services/metrics.js),
+// which credits wiecosystem/Bluetooth for the impedance equations — the same
+// math the Mi Fit app uses, so results match the scale's own app.
+
+function _profileKey() { return `weighin-profile:${activeUser || 'default'}`; }
+
+// Server-configured profile (HEIGHT_CM / BIRTH_DATE in users/<id>.env) fills
+// any empty field; a value the user typed (persisted in localStorage) wins.
+function prefillWeighInProfile() {
+  const h = document.getElementById('wi-height');
+  const a = document.getElementById('wi-age');
+  if (h && !h.value && userProfileHeight) h.value = userProfileHeight;
+  if (a && !a.value && userProfileAge != null) a.value = userProfileAge;
+}
+
+function initWeighInProfile() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(_profileKey()) || '{}'); } catch { /* ignore */ }
+  const h = document.getElementById('wi-height');
+  const a = document.getElementById('wi-age');
+  const s = document.getElementById('wi-sex');
+  if (h && saved.height) h.value = saved.height;
+  if (a && saved.age) a.value = saved.age;
+  if (s) s.value = saved.sex || (userBiologicalSex === 'female' ? 'female' : 'male');
+  prefillWeighInProfile();
+  for (const el of [h, a, s]) {
+    el?.addEventListener('change', () => {
+      localStorage.setItem(_profileKey(), JSON.stringify({
+        height: h?.value || '', age: a?.value || '', sex: s?.value || '',
+      }));
+    });
+  }
+}
+
+function scanSetStatus(msg, isError) {
+  const el = document.getElementById('weighin-scan-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--red, #c0392b)' : 'var(--muted, #888)';
+}
+
+// Impedance-based body-composition estimates (see block comment above).
+function computeBodyComposition(weight, impedance, height, age, sex) {
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+  // Lean body mass coefficient — every other metric hangs off this.
+  let lbm = (height * 9.058 / 100) * (height / 100);
+  lbm += weight * 0.32 + 12.226;
+  lbm -= impedance * 0.0068;
+  lbm -= age * 0.0542;
+
+  let fatBase = 0.8;
+  if (sex === 'female') fatBase = age <= 49 ? 9.25 : 7.25;
+  let coefficient = 1.0;
+  if (sex === 'male' && weight < 61) coefficient = 0.98;
+  else if (sex === 'female' && weight > 60) coefficient = height > 160 ? 1.03 : 0.96;
+  else if (sex === 'female' && weight < 50) coefficient = height > 160 ? 1.03 : 1.02;
+  let fat = (1.0 - (((lbm - fatBase) * coefficient) / weight)) * 100;
+  if (fat > 63) fat = 75;
+  fat = clamp(fat, 5, 75);
+
+  let water = (100 - fat) * 0.7;
+  const waterCoef = water <= 50 ? 1.02 : 0.98;
+  if (water * waterCoef >= 65) water = 75;
+  water = clamp(water * waterCoef, 35, 75);
+
+  let bone = (((sex === 'female' ? 0.245691014 : 0.18016894) - (lbm * 0.05158)) * -1);
+  bone += bone > 2.2 ? 0.1 : -0.1;
+  if (sex === 'female' && bone > 5.1) bone = 8;
+  else if (sex === 'male' && bone > 5.2) bone = 8;
+  bone = clamp(bone, 0.5, 8);
+
+  let muscle = weight - (fat * 0.01 * weight) - bone;
+  if (sex === 'female' && muscle >= 84) muscle = 120;
+  else if (sex === 'male' && muscle >= 93.5) muscle = 120;
+  muscle = clamp(muscle, 10, 120);
+
+  let visceral;
+  if (sex === 'female') {
+    if (weight > (13 - (height * 0.5)) * -1) {
+      const sub = ((height * 1.45) + (height * 0.1158) * height) - 120;
+      visceral = ((weight * 500 / sub) - 6) + (age * 0.07);
+    } else {
+      const sub = 0.691 + (height * -0.0024) + (height * -0.0024);
+      visceral = (((height * 0.027) - (sub * weight)) * -1) + (age * 0.07) - age;
+    }
+  } else if (height < weight * 1.6) {
+    const sub = ((height * 0.4) - (height * (height * 0.0826))) * -1;
+    visceral = ((weight * 305) / (sub + 48)) - 2.9 + (age * 0.15);
+  } else {
+    const sub = 0.765 + height * -0.0015;
+    visceral = (((height * 0.143) - (weight * sub)) * -1) + (age * 0.15) - 5.0;
+  }
+  visceral = clamp(visceral, 1, 50);
+
+  let metabolicAge = sex === 'female'
+    ? (height * -1.1165) + (weight * 1.5784) + (age * 0.4615) + (impedance * 0.0415) + 83.2548
+    : (height * -0.7471) + (weight * 0.9161) + (age * 0.4184) + (impedance * 0.0517) + 54.2267;
+  metabolicAge = clamp(metabolicAge, 15, 80);
+
+  const bmi = clamp(weight / ((height / 100) * (height / 100)), 10, 90);
+
+  return { bmi, fat, water, muscle, bone, visceral, metabolicAge };
+}
+
+// One 13-byte 0x2A9C frame from the Mi scale. The raw 16-bit weight is in
+// whatever unit the scale is SET to (unit flags: byte0 bit0 = lbs, byte1
+// bit6 = catty) — raw*0.01 gives lbs/catty, kg mode is raw*0.005. The
+// original web port assumed kg mode, which halved lb readings instead of
+// converting them (131.5 lb came out as 65.75 "kg").
+function parseScaleFrame(buf) {
+  const isLbs = buf[0] & 0x01;
+  const isCatty = buf[1] & (1 << 6);
+  const stabilized = buf[1] & (1 << 5);
+  const impedance = (buf[10] << 8) + buf[9];
+  const rawWord = (buf[12] << 8) + buf[11];
+  let unit, raw, weightKg;
+  if (isLbs) {
+    unit = 'lb';
+    raw = rawWord * 0.01;
+    weightKg = raw * 0.45359237;
+  } else if (isCatty) {
+    unit = 'catty';
+    raw = rawWord * 0.01;
+    weightKg = raw * 0.5;
+  } else {
+    unit = 'kg';
+    raw = rawWord * 0.005;
+    weightKg = raw;
+  }
+  return { unit, raw, weightKg, impedance, stabilized };
+}
+
+let _scaleDevice = null;
+let _scaleChar = null;
+
+async function stopScaleScan() {
+  try { await _scaleChar?.stopNotifications(); } catch { /* already gone */ }
+  try { _scaleDevice?.gatt?.disconnect(); } catch { /* already gone */ }
+  _scaleChar = null;
+  _scaleDevice = null;
+  const btn = document.getElementById('weighin-scan-btn');
+  if (btn) btn.disabled = false;
+}
+
+function _setWi(id, value, decimals = 2) {
+  const el = document.getElementById(id);
+  if (el) el.value = Number(value).toFixed(decimals);
+}
+
+async function scanScale() {
+  if (!navigator.bluetooth) {
+    scanSetStatus('Bluetooth scanning needs a secure context — open the dashboard over HTTPS ' +
+      '(e.g. tailscale serve) or localhost, or allow this origin in ' +
+      'chrome://flags/#unsafely-treat-insecure-origin-as-secure.', true);
+    return;
+  }
+  const height = _wiNum('wi-height');
+  const age = _wiNum('wi-age');
+  const sex = document.getElementById('wi-sex')?.value || 'male';
+  if (height == null || age == null) {
+    scanSetStatus('Fill in height and age first — the scale only sends weight + impedance; the rest is computed.', true);
+    return;
+  }
+
+  const btn = document.getElementById('weighin-scan-btn');
+  if (btn) btn.disabled = true;
+  try {
+    scanSetStatus('Requesting Bluetooth device… pick your scale in the browser prompt.', false);
+    _scaleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: ['body_composition'] }],
+    });
+    scanSetStatus('Connecting…', false);
+    const server = await _scaleDevice.gatt.connect();
+    const service = await server.getPrimaryService('body_composition');
+    _scaleChar = await service.getCharacteristic('body_composition_measurement');
+    await _scaleChar.startNotifications();
+    scanSetStatus('Connected — step on the scale (barefoot for impedance).', false);
+
+    _scaleChar.addEventListener('characteristicvaluechanged', async (event) => {
+      const frame = parseScaleFrame(new Uint8Array(event.target.value.buffer));
+      if (!frame.weightKg) return;
+      _setWi('wi-weight', frame.weightKg, 2);
+      const display = frame.unit === 'kg'
+        ? `${frame.weightKg.toFixed(1)} kg`
+        : `${frame.raw.toFixed(1)} ${frame.unit} → ${frame.weightKg.toFixed(2)} kg`;
+
+      if (!(frame.stabilized && frame.impedance > 0 && frame.impedance < 3000)) {
+        scanSetStatus(`Reading… ${display} — hold still for the impedance measurement.`, false);
+        return;
+      }
+      const m = computeBodyComposition(frame.weightKg, frame.impedance, height, age, sex);
+      _setWi('wi-bmi', m.bmi);
+      _setWi('wi-fat', m.fat);
+      _setWi('wi-water', m.water);
+      _setWi('wi-muscle', m.muscle);
+      _setWi('wi-bone', m.bone);
+      _setWi('wi-visceral', m.visceral);
+      _setWi('wi-metabolic', m.metabolicAge, 1);
+      initWeighInTimestamp(); // stamp the reading with "now"
+      await stopScaleScan();
+      scanSetStatus(`Done — ${display}, impedance ${frame.impedance} Ω. Check the numbers, then Upload to Garmin.`, false);
+    });
+  } catch (err) {
+    await stopScaleScan();
+    // The user closing the device chooser is a normal path, not a failure.
+    const cancelled = err && (err.name === 'NotFoundError');
+    scanSetStatus(cancelled ? 'Scan cancelled.' : `Scan failed: ${err.message || err}`, cancelled ? false : true);
+  }
+}
+
+async function submitWeighIn() {
+  const weight = _wiNum('wi-weight');
+  if (weight == null) { weighInSetStatus('Weight is required', true); return; }
+  const payload = {
+    user: activeUser,
+    timestamp: document.getElementById('wi-timestamp')?.value || null,
+    weight_kg: weight,
+    bmi: _wiNum('wi-bmi'),
+    body_fat_pct: _wiNum('wi-fat'),
+    body_water_pct: _wiNum('wi-water'),
+    muscle_mass_kg: _wiNum('wi-muscle'),
+    bone_mass_kg: _wiNum('wi-bone'),
+    visceral_fat: _wiNum('wi-visceral'),
+    metabolic_age: _wiNum('wi-metabolic'),
+    physique_rating: _wiNum('wi-physique'),
+  };
+  const btn = document.getElementById('weighin-submit');
+  if (btn) btn.disabled = true;
+  weighInSetStatus('Uploading to Garmin Connect…', false);
+  try {
+    const res = await fetch('/api/weigh-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      weighInSetStatus(data.detail || `Upload failed (HTTP ${res.status})`, true);
+      return;
+    }
+    weighInSetStatus(`Uploaded ${weight} kg — it will appear on the dashboard after the next sync (~5 min).`, false);
+  } catch (e) {
+    weighInSetStatus('Upload failed — is the server reachable?', true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ---- Journal month calendar ----

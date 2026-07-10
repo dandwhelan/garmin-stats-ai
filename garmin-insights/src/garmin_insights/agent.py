@@ -149,7 +149,10 @@ _SCAN_PROMPTS = {
         "low energy) as outcomes/confounders to explain, not causes. "
         "3) Training load and recovery balance (frame as approximate if detailed Garmin load / "
         "ACWR / HR-zone data isn't available). "
-        "4) Top 3 actionable recommendations for next week. "
+        "4) If any body-composition readings landed this week (get_body_composition), note the "
+        "weight / body fat / muscle trend vs earlier readings — impedance estimates, so frame "
+        "as personal trend, and skip this section entirely when there are no new readings. "
+        "5) Top 3 actionable recommendations for next week. "
         "Compare this week to the 30-day baseline. "
         "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
     ),
@@ -837,6 +840,12 @@ class HealthAgent:
             bf = _marker_series(bc_df, "body_fat")
             if bf:
                 fitness_markers["body_fat_pct"] = bf
+            mm = _marker_series(bc_df, "muscle_mass", scale=0.001)  # grams → kg
+            if mm:
+                fitness_markers["muscle_mass_kg"] = mm
+            vf = _marker_series(bc_df, "visceral_fat")
+            if vf:
+                fitness_markers["visceral_fat_rating"] = vf
         except Exception as e:
             logger.debug("Portable prompt: body composition fetch failed: %s", e)
 

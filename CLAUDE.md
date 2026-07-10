@@ -119,6 +119,8 @@ SQLITE_DB_PATH=/path/to/garmin.db   # must match fetcher
 DISPLAY_NAME=Alice                  # shown in header badge; derived from email if omitted
 BIOLOGICAL_SEX=Female               # Male / Female — applied to AI prompt for sex-specific
                                     # reference ranges; controls menstrual cycle context
+HEIGHT_CM=170                       # optional — prefills the weigh-in scale-scan profile
+BIRTH_DATE=1990-01-31               # optional — age for the scan formulas, derived fresh daily
 
 # Environmental context (optional — leave unset to skip Open-Meteo fetches)
 HOME_LAT=51.5074                    # latitude for daily weather / air quality / pollen
@@ -194,7 +196,7 @@ All data lives in a single `garmin.db`. Key tables:
 
 ## Web UI Features
 
-- **Journal tab** — write a free-text note for any day (what you did, ate, how you felt). Saved via `POST /api/notes`; an empty body clears the day. Notes are read back into the editor + a "recent notes" list (`GET /api/notes`) and merged into the AI's daily summaries so the agent treats them as first-hand ground truth when explaining metric deviations. A **navigable month calendar** sits above the recent-notes list: dots mark days that already have a note, clicking a day loads it into the editor, and prev/next walk between months. Notes fetches use `cache: 'no-store'` so a freshly-saved note shows immediately.
+- **Journal tab** — write a free-text note for any day (what you did, ate, how you felt). Saved via `POST /api/notes`; an empty body clears the day. Notes are read back into the editor + a "recent notes" list (`GET /api/notes`) and merged into the AI's daily summaries so the agent treats them as first-hand ground truth when explaining metric deviations. A **navigable month calendar** sits above the recent-notes list: dots mark days that already have a note, clicking a day loads it into the editor, and prev/next walk between months. Notes fetches use `cache: 'no-store'` so a freshly-saved note shows immediately. Below the note editor, a **Log a Weigh-in** form (weight + optional smart-scale fields) uploads a body-composition entry straight to Garmin Connect via `POST /api/weigh-in` — a local replacement for lswiderski's mi-scale-exporter web form. A **📶 Scan scale** button reads a Xiaomi Mi Body Composition Scale directly over Web Bluetooth (GATT 0x181B/0x2A9C: weight + impedance) and computes fat/water/muscle/bone/visceral/metabolic-age from the user's height/age/sex (formulas per lswiderski/WebBodyComposition ← wiecosystem/Bluetooth, verified to match that site's output exactly); profile persists in localStorage per user. **Web Bluetooth needs a secure context** — over plain `http://pi5:8081` the button explains the options (tailscale serve HTTPS, localhost, or the chrome insecure-origin flag).
 - **User picker** — when `USERS` is set, a dropdown in the header lets a viewer switch between configured users. Switching clears the chat session, refetches `/api/health`, reloads the dashboard against the new DB, and updates the document title.
 - **User badge** — shows `DISPLAY_NAME` (or name derived from Garmin email) and the email address in the header. Resolved per-user from `users/<id>.env` so the badge always matches the active user.
 - **Sync badge** — shows time since last Garmin fetch (green < 10 min, amber < 60 min, red otherwise); auto-refreshes every 30 s via `/api/health`
@@ -231,6 +233,7 @@ All data lives in a single `garmin.db`. Key tables:
 | `GET /api/activities/{id}/track` | GPS polyline for one activity (lat, lon, alt, HR, speed, cadence, power, temp) | — |
 | `GET /api/activities/{id}/export` | Formatted markdown stats block for one activity — all metrics except GPS coordinates. Used by the "Copy stats" clipboard button. | — |
 | `POST /api/scan` (body: `focus`, optional `start_date`, `end_date`) | Markdown AI report scoped to focus + optional window | focus-dependent |
+| `POST /api/weigh-in` (body: `user`, `weight_kg` + optional `timestamp`, `bmi`, `body_fat_pct`, `body_water_pct`, `muscle_mass_kg`, `bone_mass_kg`, `visceral_fat`, `metabolic_age`, `physique_rating`) | Uploads a manual body-composition entry to **Garmin Connect** via `garmin_upload.py`, using the OAuth tokens the fetcher maintains in the user's `TOKEN_DIR` (token-only login; verifies token ownership against the user's email before uploading). The reading flows back into `body_composition` on the next fetch. Form lives in the Journal tab ("Log a Weigh-in"). | — |
 
 All endpoints share the `_resolve_range(start, end, default_days)` helper so omitting either bound falls back to "ending today, going back N days".
 
