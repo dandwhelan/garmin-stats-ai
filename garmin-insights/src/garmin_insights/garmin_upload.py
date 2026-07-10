@@ -120,18 +120,27 @@ def upload_body_composition(
 
     _verify_token_owner(garmin, token_dir, expected_email)
 
+    def _fit(v, scale):
+        """Pre-quantize to the FIT field grid. The encoder does int(v*scale),
+        which truncates — 72.57*100 is 7256.999… in floats and lands as 72.56,
+        and 24.8 years becomes 24. Round to the grid and nudge past the float
+        representation error so the packed integer is exact."""
+        if v is None:
+            return None
+        return round(v * scale) / scale + 1e-9
+
     try:
         garmin.add_body_composition(
             timestamp,
-            weight=weight_kg,
-            percent_fat=percent_fat,
-            percent_hydration=percent_hydration,
-            muscle_mass=muscle_mass_kg,
-            bone_mass=bone_mass_kg,
-            visceral_fat_rating=visceral_fat_rating,
-            metabolic_age=metabolic_age,
-            physique_rating=physique_rating,
-            bmi=bmi,
+            weight=_fit(weight_kg, 100),
+            percent_fat=_fit(percent_fat, 100),
+            percent_hydration=_fit(percent_hydration, 100),
+            muscle_mass=_fit(muscle_mass_kg, 100),
+            bone_mass=_fit(bone_mass_kg, 100),
+            visceral_fat_rating=_fit(visceral_fat_rating, 1),
+            metabolic_age=_fit(metabolic_age, 1),
+            physique_rating=_fit(physique_rating, 1),
+            bmi=_fit(bmi, 10),
         )
     except Exception as err:
         raise GarminUploadError(f"Garmin Connect rejected the upload: {err}") from err
