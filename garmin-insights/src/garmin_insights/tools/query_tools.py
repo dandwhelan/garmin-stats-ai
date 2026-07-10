@@ -182,9 +182,14 @@ def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: i
         if not date:
             continue
         try:
-            series[date] = round(float(v) * scale, ndp)
+            fv = round(float(v) * scale, ndp)
         except (TypeError, ValueError):
             continue
+        # pandas rows carry NaN (not None) for missing values — e.g. body-fat
+        # on a watch-entered weight-only day. NaN is invalid JSON; skip it.
+        if fv != fv:
+            continue
+        series[date] = fv
     if not series:
         return None
     return dict(sorted(series.items())[-keep:])
@@ -310,6 +315,14 @@ class QueryToolHandler:
             return json.dumps({"message": "No body composition data found"})
         df = df.reset_index()
         df["time"] = df["time"].astype(str)
+        # Garmin stores masses in grams; convert to kg so the model never has
+        # to guess units (the >1000 guard skips rows already in kg).
+        for col in ("weight", "muscle_mass", "bone_mass"):
+            if col in df.columns:
+                df[col] = df[col].where(df[col] <= 1000, df[col] / 1000.0)
+        df = df.rename(columns={"weight": "weight_kg", "muscle_mass": "muscle_mass_kg",
+                                "bone_mass": "bone_mass_kg", "body_fat": "body_fat_pct",
+                                "body_water": "body_water_pct"})
         return _df_to_clean_json(df)
 
     def get_training_readiness(self, start_date: str, end_date: str) -> str:
@@ -628,7 +641,13 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
         },
         {
             "name": "get_body_composition",
-            "description": "Query body composition data (weight, body fat %, muscle mass, BMI) for a date range.",
+            "description": "Query body composition readings for a date range: weight_kg, BMI, "
+                           "body_fat_pct, body_water_pct, muscle_mass_kg, bone_mass_kg, "
+                           "visceral_fat (rating). Smart-scale entries carry all fields; "
+                           "watch-entered manual weights carry weight only. Readings are "
+                           "sparse (only on weigh-in days) and the composition figures are "
+                           "bio-impedance estimates — prefer multi-week trends over single "
+                           "readings.",
             "input_schema": {
                 "type": "object",
                 "properties": {
