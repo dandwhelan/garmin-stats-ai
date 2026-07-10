@@ -119,6 +119,8 @@ SQLITE_DB_PATH=/path/to/garmin.db   # must match fetcher
 DISPLAY_NAME=Alice                  # shown in header badge; derived from email if omitted
 BIOLOGICAL_SEX=Female               # Male / Female — applied to AI prompt for sex-specific
                                     # reference ranges; controls menstrual cycle context
+HEIGHT_CM=170                       # optional — prefills the weigh-in scale-scan profile
+BIRTH_DATE=1990-01-31               # optional — age for the scan formulas, derived fresh daily
 
 # Environmental context (optional — leave unset to skip Open-Meteo fetches)
 HOME_LAT=51.5074                    # latitude for daily weather / air quality / pollen

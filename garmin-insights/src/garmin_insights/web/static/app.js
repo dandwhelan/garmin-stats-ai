@@ -175,6 +175,8 @@ function refreshSyncBadge() {
 }
 
 let userBiologicalSex = ''; // 'male' / 'female' from /api/health, prefills the scan profile
+let userProfileHeight = ''; // HEIGHT_CM from users/<id>.env via /api/health
+let userProfileAge = null;  // derived server-side from BIRTH_DATE
 
 async function checkHealth() {
   try {
@@ -187,6 +189,9 @@ async function checkHealth() {
         renderUserBadge(data.user);
         renderSyncBadge(data.last_sync);
         userBiologicalSex = (data.user?.biological_sex || '').toLowerCase();
+        userProfileHeight = data.user?.height_cm || '';
+        userProfileAge = data.user?.age ?? null;
+        prefillWeighInProfile(); // fill empty scan-profile fields once known
       } catch { /* ignore */ }
     } else {
       statusDot.className = 'status-dot error';
@@ -4992,6 +4997,15 @@ function _wiNum(id) {
 
 function _profileKey() { return `weighin-profile:${activeUser || 'default'}`; }
 
+// Server-configured profile (HEIGHT_CM / BIRTH_DATE in users/<id>.env) fills
+// any empty field; a value the user typed (persisted in localStorage) wins.
+function prefillWeighInProfile() {
+  const h = document.getElementById('wi-height');
+  const a = document.getElementById('wi-age');
+  if (h && !h.value && userProfileHeight) h.value = userProfileHeight;
+  if (a && !a.value && userProfileAge != null) a.value = userProfileAge;
+}
+
 function initWeighInProfile() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(_profileKey()) || '{}'); } catch { /* ignore */ }
@@ -5001,6 +5015,7 @@ function initWeighInProfile() {
   if (h && saved.height) h.value = saved.height;
   if (a && saved.age) a.value = saved.age;
   if (s) s.value = saved.sex || (userBiologicalSex === 'female' ? 'female' : 'male');
+  prefillWeighInProfile();
   for (const el of [h, a, s]) {
     el?.addEventListener('change', () => {
       localStorage.setItem(_profileKey(), JSON.stringify({

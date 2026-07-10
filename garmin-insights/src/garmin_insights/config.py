@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # weigh-in upload endpoint to push body composition to Garmin Connect.
     token_dir: str = ""
 
+    # Body profile for the scale-scan composition formulas. Age is derived
+    # from birth_date (YYYY-MM-DD) so it never goes stale.
+    height_cm: str = ""
+    birth_date: str = ""
+
     # Directory containing per-user env files (e.g. users/dan.env). Looked up
     # by settings_for_user() to resolve the right display name / email / sex.
     users_dir: str = "users"
@@ -150,6 +155,8 @@ class Settings(BaseSettings):
             # TOKEN_DIR would upload this user's weigh-ins to the wrong
             # Garmin account.
             updates["token_dir"] = ""
+            updates["height_cm"] = ""
+            updates["birth_date"] = ""
         env_path = self._user_env_path(user_id)
         if env_path is None:
             if multi_user:
@@ -169,6 +176,10 @@ class Settings(BaseSettings):
             updates["biological_sex"] = per_user["BIOLOGICAL_SEX"]
         if per_user.get("TOKEN_DIR"):
             updates["token_dir"] = per_user["TOKEN_DIR"]
+        if per_user.get("HEIGHT_CM"):
+            updates["height_cm"] = per_user["HEIGHT_CM"]
+        if per_user.get("BIRTH_DATE"):
+            updates["birth_date"] = per_user["BIRTH_DATE"]
         return self.model_copy(update=updates)
 
 

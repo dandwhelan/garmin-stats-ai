@@ -14,7 +14,7 @@ import math
 import re
 from typing import Any
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -262,8 +262,20 @@ def _resolve_user_identity(settings) -> dict[str, str]:
     else:
         name = "User"
     sex = (settings.biological_sex or "").strip()
+    # Age derived from BIRTH_DATE so the scan-profile prefill never goes stale.
+    age = None
+    birth = (getattr(settings, "birth_date", "") or "").strip()
+    if birth:
+        try:
+            b = datetime.strptime(birth, "%Y-%m-%d").date()
+            today = date.today()
+            age = today.year - b.year - ((today.month, today.day) < (b.month, b.day))
+        except ValueError:
+            pass
     return {"name": name, "email": email, "biological_sex": sex,
-            "tracks_cycle": sex.lower() == "female"}
+            "tracks_cycle": sex.lower() == "female",
+            "height_cm": (getattr(settings, "height_cm", "") or "").strip(),
+            "age": age}
 
 
 def _tracks_cycle(settings) -> bool:
