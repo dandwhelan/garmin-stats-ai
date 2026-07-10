@@ -130,6 +130,22 @@ class NoteRequest(BaseModel):
     note: str = ""
 
 
+class WeighInRequest(BaseModel):
+    """Manual body-composition entry uploaded to Garmin Connect."""
+    user: str = "default"
+    # ISO local datetime (e.g. "2026-07-10T08:15"); defaults to now.
+    timestamp: str | None = None
+    weight_kg: float
+    body_fat_pct: float | None = None
+    body_water_pct: float | None = None
+    muscle_mass_kg: float | None = None
+    bone_mass_kg: float | None = None
+    visceral_fat: float | None = None
+    metabolic_age: float | None = None
+    physique_rating: float | None = None
+    bmi: float | None = None
+
+
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -976,6 +992,51 @@ async def save_note(req: NoteRequest):
     )
     saved = bool(req.note and req.note.strip())
     return {"saved": saved, "deleted": not saved, "date": req.date}
+
+
+@app.post("/api/weigh-in")
+async def upload_weigh_in(req: WeighInRequest):
+    """Upload a manual body-composition weigh-in to Garmin Connect.
+
+    Uses the OAuth tokens the fetcher maintains in this user's TOKEN_DIR, so
+    no Garmin credentials pass through the browser or a third-party service.
+    The reading flows back into the local DB on the next fetch cycle.
+    """
+    from garmin_insights.garmin_upload import GarminUploadError, upload_body_composition
+
+    _require_user(req.user)
+    if not (20 <= req.weight_kg <= 400):
+        raise HTTPException(status_code=400, detail="weight_kg must be between 20 and 400")
+    for name in ("body_fat_pct", "body_water_pct"):
+        v = getattr(req, name)
+        if v is not None and not (0 < v < 100):
+            raise HTTPException(status_code=400, detail=f"{name} must be between 0 and 100")
+    if req.timestamp is not None:
+        try:
+            datetime.fromisoformat(req.timestamp)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="timestamp must be ISO format")
+
+    user_settings = get_settings().settings_for_user(req.user)
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, lambda: upload_body_composition(
+            user_settings.token_dir,
+            user_settings.garminconnect_email,
+            timestamp=req.timestamp,
+            weight_kg=req.weight_kg,
+            percent_fat=req.body_fat_pct,
+            percent_hydration=req.body_water_pct,
+            muscle_mass_kg=req.muscle_mass_kg,
+            bone_mass_kg=req.bone_mass_kg,
+            visceral_fat_rating=req.visceral_fat,
+            metabolic_age=req.metabolic_age,
+            physique_rating=req.physique_rating,
+            bmi=req.bmi,
+        ))
+    except GarminUploadError as err:
+        raise HTTPException(status_code=502, detail=str(err))
+    return {"uploaded": True, "weight_kg": req.weight_kg}
 
 
 @app.post("/api/chat")

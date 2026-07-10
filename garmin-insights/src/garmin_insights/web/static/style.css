@@ -1722,6 +1722,34 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   gap: 0.75rem;
   margin-top: 0.75rem;
 }
+.weighin-form {
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border, #333);
+}
+.weighin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.6rem 0.75rem;
+  margin-top: 0.5rem;
+}
+.weighin-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--muted, var(--text-dim, #999));
+  font-size: 0.85rem;
+}
+.weighin-grid input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 8px);
+  background: var(--bg, #111);
+  color: var(--text, var(--fg, #eee));
+  font: inherit;
+}
 .secondary-btn {
   background: transparent;
   color: var(--text, var(--fg, #eee));

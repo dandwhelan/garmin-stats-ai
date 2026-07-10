@@ -4895,6 +4895,8 @@ function ensureJournalTab() {
     }
     document.getElementById('journal-save')?.addEventListener('click', saveJournalNote);
     document.getElementById('journal-delete')?.addEventListener('click', clearJournalNote);
+    document.getElementById('weighin-submit')?.addEventListener('click', submitWeighIn);
+    initWeighInTimestamp();
     initJournalCalendarNav();
     _journalInit = true;
   }
@@ -4949,6 +4951,68 @@ async function clearJournalNote() {
   const ta = document.getElementById('journal-text');
   if (ta) ta.value = '';
   await saveJournalNote();
+}
+
+// ---- Manual weigh-in → Garmin Connect upload ----
+
+function initWeighInTimestamp() {
+  const el = document.getElementById('wi-timestamp');
+  if (!el) return;
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); // local, not UTC
+  el.value = now.toISOString().slice(0, 16);
+}
+
+function weighInSetStatus(msg, isError) {
+  const el = document.getElementById('weighin-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--red, #c0392b)' : 'var(--muted, #888)';
+}
+
+function _wiNum(id) {
+  const raw = document.getElementById(id)?.value ?? '';
+  if (raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function submitWeighIn() {
+  const weight = _wiNum('wi-weight');
+  if (weight == null) { weighInSetStatus('Weight is required', true); return; }
+  const payload = {
+    user: activeUser,
+    timestamp: document.getElementById('wi-timestamp')?.value || null,
+    weight_kg: weight,
+    bmi: _wiNum('wi-bmi'),
+    body_fat_pct: _wiNum('wi-fat'),
+    body_water_pct: _wiNum('wi-water'),
+    muscle_mass_kg: _wiNum('wi-muscle'),
+    bone_mass_kg: _wiNum('wi-bone'),
+    visceral_fat: _wiNum('wi-visceral'),
+    metabolic_age: _wiNum('wi-metabolic'),
+    physique_rating: _wiNum('wi-physique'),
+  };
+  const btn = document.getElementById('weighin-submit');
+  if (btn) btn.disabled = true;
+  weighInSetStatus('Uploading to Garmin Connect…', false);
+  try {
+    const res = await fetch('/api/weigh-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      weighInSetStatus(data.detail || `Upload failed (HTTP ${res.status})`, true);
+      return;
+    }
+    weighInSetStatus(`Uploaded ${weight} kg — it will appear on the dashboard after the next sync (~5 min).`, false);
+  } catch (e) {
+    weighInSetStatus('Upload failed — is the server reachable?', true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ---- Journal month calendar ----

@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     display_name: str = ""
     biological_sex: str = ""
 
+    # Garmin token store (same directory the fetcher maintains). Used by the
+    # weigh-in upload endpoint to push body composition to Garmin Connect.
+    token_dir: str = ""
+
     # Directory containing per-user env files (e.g. users/dan.env). Looked up
     # by settings_for_user() to resolve the right display name / email / sex.
     users_dir: str = "users"
@@ -142,6 +146,10 @@ class Settings(BaseSettings):
             updates["display_name"] = ""
             updates["garminconnect_email"] = ""
             updates["biological_sex"] = ""
+            # Same rule for the token store: inheriting the server owner's
+            # TOKEN_DIR would upload this user's weigh-ins to the wrong
+            # Garmin account.
+            updates["token_dir"] = ""
         env_path = self._user_env_path(user_id)
         if env_path is None:
             if multi_user:
@@ -159,6 +167,8 @@ class Settings(BaseSettings):
             updates["garminconnect_email"] = per_user["GARMINCONNECT_EMAIL"]
         if per_user.get("BIOLOGICAL_SEX"):
             updates["biological_sex"] = per_user["BIOLOGICAL_SEX"]
+        if per_user.get("TOKEN_DIR"):
+            updates["token_dir"] = per_user["TOKEN_DIR"]
         return self.model_copy(update=updates)
 
 

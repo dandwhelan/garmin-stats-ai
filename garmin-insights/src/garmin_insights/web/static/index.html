@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260702a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260710a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -798,6 +798,27 @@
           <button id="journal-save" class="primary-btn">Save note</button>
           <button id="journal-delete" class="secondary-btn">Clear note</button>
           <span id="journal-status" class="journal-status"></span>
+        </div>
+
+        <div class="weighin-form" id="weighin-form">
+          <h2>Log a Weigh-in <span class="info-icon" tabindex="0">i<span class="info-tooltip">Uploads straight to <b>your Garmin Connect account</b> using the same login the fetcher already holds — nothing goes through a third-party service. The reading syncs back onto the dashboard within ~5 minutes. Only weight is required; fill in whatever your scale shows.</span></span></h2>
+          <p class="journal-hint">Type in what your smart scale shows (body fat, water %, muscle…). It's sent to Garmin Connect and appears here after the next sync.</p>
+          <div class="weighin-grid">
+            <label>When <input type="datetime-local" id="wi-timestamp"></label>
+            <label>Weight (kg) * <input type="number" id="wi-weight" step="0.05" min="20" max="400" placeholder="80.0"></label>
+            <label>BMI <input type="number" id="wi-bmi" step="0.01" min="5" max="80" placeholder="23.4"></label>
+            <label>Body fat (%) <input type="number" id="wi-fat" step="0.01" min="1" max="75" placeholder="22.0"></label>
+            <label>Body water (%) <input type="number" id="wi-water" step="0.01" min="1" max="99" placeholder="53.5"></label>
+            <label>Muscle mass (kg) <input type="number" id="wi-muscle" step="0.01" min="1" max="150" placeholder="59.2"></label>
+            <label>Bone mass (kg) <input type="number" id="wi-bone" step="0.01" min="0.5" max="15" placeholder="3.2"></label>
+            <label>Visceral fat <input type="number" id="wi-visceral" step="0.01" min="1" max="60" placeholder="13"></label>
+            <label>Metabolic age <input type="number" id="wi-metabolic" step="0.1" min="10" max="100" placeholder="32"></label>
+            <label>Physique rating <input type="number" id="wi-physique" step="1" min="1" max="9" placeholder="5"></label>
+          </div>
+          <div class="journal-actions">
+            <button id="weighin-submit" class="primary-btn">Upload to Garmin</button>
+            <span id="weighin-status" class="journal-status"></span>
+          </div>
         </div>
       </div>
       <div class="journal-recent">
