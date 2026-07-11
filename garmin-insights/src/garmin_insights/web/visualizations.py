@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from garmin_insights.db.sqlite_repo import utc_to_local_day
 from garmin_insights.stats_utils import correlate_pair, finalize_correlations
 
 logger = logging.getLogger(__name__)
@@ -120,13 +121,25 @@ class VisualizationService:
     # 3. Body composition — weight + body fat % + muscle mass trend
     # ------------------------------------------------------------------
     def body_composition(self, start: str, end: str) -> list[dict]:
-        cols = "weight, bmi, body_fat, muscle_mass, body_water, bone_mass, visceral_fat"
+        cols = "time, weight, bmi, body_fat, muscle_mass, body_water, bone_mass, visceral_fat"
+        # Widen the raw UTC filter a day each side — days are keyed on the
+        # LOCAL calendar date below, and during BST a post-midnight weigh-in
+        # carries the previous UTC date (same convention as
+        # SqliteRepo.query_body_composition).
+        try:
+            start_wide = (datetime.fromisoformat(start) - timedelta(days=1)).date().isoformat()
+            end_wide = (datetime.fromisoformat(end) + timedelta(days=1)).date().isoformat()
+        except ValueError:
+            start_wide, end_wide = start, end
         with self._conn() as conn:
             df = pd.read_sql_query(
-                f"SELECT substr(time, 1, 10) AS date, {cols} FROM body_composition "
+                f"SELECT {cols} FROM body_composition "
                 "WHERE time >= ? AND time <= ? ORDER BY time",
-                conn, params=(f"{start}T00:00:00", f"{end}T23:59:59"),
+                conn, params=(f"{start_wide}T00:00:00", f"{end_wide}T23:59:59"),
             )
+            if not df.empty:
+                df["date"] = df["time"].map(utc_to_local_day)
+                df = df[(df["date"] >= start) & (df["date"] <= end)]
             # Body composition is slow-moving and often logged irregularly (e.g.
             # only when the user steps on the scale). If the requested window has
             # no readings, fall back to the last ~year so a recent weight trend
@@ -138,19 +151,24 @@ class VisualizationService:
                 except ValueError:
                     year_ago = start
                 df = pd.read_sql_query(
-                    f"SELECT substr(time, 1, 10) AS date, {cols} FROM body_composition "
+                    f"SELECT {cols} FROM body_composition "
                     "WHERE time >= ? ORDER BY time",
                     conn, params=(f"{year_ago}T00:00:00",),
                 )
+                if not df.empty:
+                    df["date"] = df["time"].map(utc_to_local_day)
         if df.empty:
             return []
-        df = df.groupby("date", as_index=False).mean(numeric_only=True)
+        df = df.drop(columns=["time"])
         # Garmin Connect stores masses (weight, muscle, bone) in GRAMS. Convert
-        # to kg for display; the >1000 guard avoids double-converting any row
-        # already in kg.
+        # to kg BEFORE averaging per day; the >1000 guard avoids double-
+        # converting rows already in kg, and converting first means a day
+        # mixing gram- and kg-valued rows still averages correctly instead of
+        # collapsing to a meaningless mid-scale number.
         for col in ("weight", "muscle_mass", "bone_mass"):
             if col in df.columns:
                 df[col] = df[col].where(df[col] <= 1000, df[col] / 1000.0)
+        df = df.groupby("date", as_index=False).mean(numeric_only=True)
         for col in ("weight", "bmi", "body_fat", "muscle_mass", "body_water", "bone_mass", "visceral_fat"):
             if col in df.columns:
                 df[col] = df[col].round(2)

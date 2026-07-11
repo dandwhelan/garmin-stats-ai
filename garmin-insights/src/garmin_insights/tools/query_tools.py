@@ -182,7 +182,9 @@ def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: i
         v = row.get(value_col)
         if v is None:
             continue
-        date = str(row.get("time", ""))[:10]
+        # Prefer a repo-computed local `date` column (body_composition rows
+        # carry one — a UTC time slice mislabels post-midnight BST readings).
+        date = str(row.get("date") or row.get("time", ""))[:10]
         if not date:
             continue
         try:
@@ -577,7 +579,9 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
             "name": "get_daily_metrics",
             "description": (
                 "Query daily health metrics (RHR, stress, body battery, steps, sleep score, etc.) "
-                "for a date range. Uses the fast cached summaries — call this first."
+                "for a date range. Uses the fast cached summaries — call this first. "
+                "Note: averageSpo2 = daytime average SpO2 %; averageSpO2Value = overnight "
+                "(sleep) average SpO2 % — similar names, different measurement windows."
             ),
             "input_schema": {
                 "type": "object",

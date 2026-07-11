@@ -5234,7 +5234,11 @@ async function submitWeighIn() {
     }
     // The fetch loop only advances when the watch pushes new data, so a
     // manual weigh-in can take an hour or more to flow back — don't promise ~5 min.
-    weighInSetStatus(`Uploaded ${weight} kg to Garmin Connect — it will appear on the dashboard after your watch next syncs (this can take an hour or more).`, false);
+    // The server sends a note when the reading is backdated beyond the
+    // fetcher's re-scan window (it uploads fine but never syncs back locally).
+    weighInSetStatus(data.note
+      ? `Uploaded ${weight} kg. ⚠ ${data.note}`
+      : `Uploaded ${weight} kg to Garmin Connect — it will appear on the dashboard after your watch next syncs (this can take an hour or more).`, false);
   } catch (e) {
     weighInSetStatus('Upload failed — is the server reachable?', true);
   } finally {

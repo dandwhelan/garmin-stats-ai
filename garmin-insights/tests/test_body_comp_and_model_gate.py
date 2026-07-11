@@ -104,3 +104,46 @@ def test_body_comp_metrics_are_baselined():
     # detect_metric_trend / find_anomalies only see baselined summary metrics
     for metric in ("weight_kg", "body_fat_pct", "visceral_fat"):
         assert metric in _BASELINE_METRICS
+
+
+# ---------------------------------------------------------------------------
+# Local-day keying — a post-midnight BST weigh-in belongs to the NEXT local day
+# ---------------------------------------------------------------------------
+
+def test_body_comp_local_day_keying(tmp_path):
+    import os
+    import time as _time
+
+    db = str(tmp_path / "garmin.db")
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE body_composition ("
+        "time TEXT, device TEXT, weight REAL, bmi REAL, body_fat REAL, "
+        "body_water REAL, bone_mass REAL, muscle_mass REAL, "
+        "physique_rating REAL, visceral_fat REAL, metabolic_age REAL, "
+        "PRIMARY KEY (time, device))"
+    )
+    # 23:30 UTC on Jul 10 = 00:30 BST on Jul 11 — a just-after-midnight weigh-in
+    conn.execute(
+        "INSERT INTO body_composition (time, device, weight) VALUES "
+        "('2026-07-10T23:30:00+00:00','scale',71500)"
+    )
+    conn.commit()
+    conn.close()
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/London"
+    _time.tzset()
+    try:
+        repo = SqliteRepo(Settings(sqlite_db_path=db, anthropic_api_key="test"))
+        df_jul10 = repo.query_body_composition("2026-07-10", "2026-07-10")
+        df_jul11 = repo.query_body_composition("2026-07-11", "2026-07-11")
+        assert df_jul10.empty, "23:30 UTC reading must NOT key to its UTC date"
+        assert not df_jul11.empty
+        assert df_jul11.iloc[0]["date"] == "2026-07-11"
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        _time.tzset()

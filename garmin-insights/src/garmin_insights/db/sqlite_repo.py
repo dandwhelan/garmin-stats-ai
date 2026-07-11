@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
@@ -12,6 +12,20 @@ import pandas as pd
 from garmin_insights.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def utc_to_local_day(ts) -> str:
+    """Local calendar day (YYYY-MM-DD) for a UTC-stored timestamp.
+
+    Intraday tables store UTC timestamps; during BST a post-midnight reading
+    carries the previous UTC date, so slicing the raw string mislabels the
+    day. ``datetime.astimezone()`` applies the system zone's DST rule for
+    the timestamp's own date (not today's offset).
+    """
+    dt = pd.Timestamp(ts).to_pydatetime()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().strftime("%Y-%m-%d")
 
 # Maps the camelCase field names used in cache.py / _DAILY_STATS_FIELDS to the
 # snake_case column names stored in SQLite by garmin-grafana's sqlite_manager.py.
@@ -170,8 +184,25 @@ class SqliteRepo:
         return self._query(q, self._time_params(start, end))
 
     def query_body_composition(self, start: str, end: str) -> pd.DataFrame:
+        """Rows whose LOCAL calendar day falls within [start, end].
+
+        Weigh-in timestamps are stored in UTC; during BST a post-midnight
+        weigh-in carries the previous UTC date, so filtering/keying on the raw
+        timestamp shifted late-night readings to the wrong day. Widen the raw
+        time filter by a day each side, then key on the local calendar day —
+        exposed to callers as a ``date`` column.
+        """
         q = f"SELECT * FROM body_composition WHERE {self._TIME_RANGE}"
-        return self._query(q, self._time_params(start, end))
+        try:
+            start_wide = (datetime.strptime(start, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+            end_wide = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            start_wide, end_wide = start, end
+        df = self._query(q, self._time_params(start_wide, end_wide))
+        if df.empty:
+            return df
+        df = df.assign(date=[utc_to_local_day(t) for t in df.index])
+        return df[(df["date"] >= start) & (df["date"] <= end)]
 
     def query_fitness_age(self, start: str, end: str) -> pd.DataFrame:
         q = f"SELECT * FROM fitness_age WHERE {self._TIME_RANGE}"

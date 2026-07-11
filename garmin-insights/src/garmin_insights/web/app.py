@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 from typing import Any
 from contextlib import asynccontextmanager
@@ -1048,7 +1049,23 @@ async def upload_weigh_in(req: WeighInRequest):
         ))
     except GarminUploadError as err:
         raise HTTPException(status_code=502, detail=str(err))
-    return {"uploaded": True, "weight_kg": req.weight_kg}
+
+    # Backdated readings upload fine, but the fetcher only re-scans the
+    # trailing RESYNC_WINDOW_DAYS (default 7) — anything older lands in
+    # Garmin Connect yet never flows back into the local DB, so the user
+    # would believe it was logged while the dashboard and AI never see it.
+    note = None
+    if req.timestamp is not None:
+        resync_days = int(os.getenv("RESYNC_WINDOW_DAYS", "7") or 7)
+        ts_date = datetime.fromisoformat(req.timestamp).date()
+        if ts_date < (datetime.now().date() - timedelta(days=resync_days)):
+            note = (
+                f"Uploaded to Garmin Connect, but readings older than {resync_days} days "
+                f"are outside the fetcher's automatic re-scan window and won't appear in "
+                f"the local dashboard or AI data. To pull it in, run a one-off backfill: "
+                f"MANUAL_START_DATE={ts_date.isoformat()} python -m garmin_grafana.garmin_fetch"
+            )
+    return {"uploaded": True, "weight_kg": req.weight_kg, "note": note}
 
 
 @app.post("/api/chat")
