@@ -164,11 +164,15 @@ def _fmt_race_time(seconds: float | int | None) -> str | None:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
-def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: int = 8) -> dict | None:
+def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: int = 8,
+                   transform=None) -> dict | None:
     """Collapse a time-indexed DataFrame column to a recent {date: value} dict.
 
     Slow-moving fitness markers update infrequently, so we keep only the most
     recent ``keep`` distinct readings (latest value per day wins).
+
+    ``transform`` (applied before ``scale``) lets callers normalise units with
+    a guard — e.g. stats_utils.to_kg — instead of an unconditional divide.
     """
     if df is None or getattr(df, "empty", True) or value_col not in df.columns:
         return None
@@ -182,7 +186,10 @@ def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: i
         if not date:
             continue
         try:
-            fv = round(float(v) * scale, ndp)
+            fv = float(v)
+            if transform is not None:
+                fv = transform(fv)
+            fv = round(fv * scale, ndp)
         except (TypeError, ValueError):
             continue
         # pandas rows carry NaN (not None) for missing values — e.g. body-fat

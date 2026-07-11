@@ -20,6 +20,7 @@ from garmin_insights.knowledge.medical import (
     count_visible_rules,
 )
 from garmin_insights.insights.proactive import BEHAVIOR_IMPACT_WINDOW_DAYS
+from garmin_insights.stats_utils import to_kg
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
     QueryToolHandler,
@@ -31,6 +32,29 @@ from garmin_insights.tools.query_tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _model_supports_adaptive(model: str) -> bool:
+    """True when the model takes adaptive thinking + output_config effort.
+
+    Adaptive is supported by the current generation only: the 5-family
+    (Sonnet 5, Fable/Mythos 5, ...) and Opus/Sonnet 4.6+. Everything else —
+    Sonnet 4.5/4.0, Haiku 4.5, Opus 4.5 and earlier, the claude-3-* line —
+    rejects both adaptive and effort with a 400 and needs enabled+budget.
+    An allowlist (not the old sonnet-4-5 denylist) so e.g. claude-haiku-4-5
+    or claude-opus-4-5 don't get adaptive by falling through.
+    """
+    m = model.lower()
+    if m.startswith("claude-3"):
+        return False
+    match = re.search(r"(opus|sonnet|haiku|fable|mythos)-(\d)(?:[-.](\d+))?", m)
+    if not match:
+        return True  # unknown/future id — assume current generation
+    family, major = match.group(1), int(match.group(2))
+    minor = int(match.group(3)) if match.group(3) else 0
+    if family in ("fable", "mythos") or major >= 5:
+        return True
+    return major == 4 and family in ("opus", "sonnet") and minor >= 6
 
 
 _SYSTEM_PROMPT = """\
@@ -91,7 +115,10 @@ trends and correlations, and recall/save context from previous sessions.
   normal, check whether the baseline window contains such a stretch (use the daily data and the \
   user's notes); if it does, flag that the baseline itself may be temporarily inflated/depressed \
   and compare against the user's pre-event typical instead.
-- Check get_last_session_summary at the start of each conversation for continuity
+- Call get_last_session_summary only when the user refers to a previous conversation \
+  ("as we discussed", "last time", ...). Session summaries are saved by the CLI only, so the \
+  result may be empty or stale — check its created_at date before treating it as recent context, \
+  and never spend a tool round on it for a self-contained question
 - If the user shares useful context (symptoms, diet/alcohol/caffeine timing, travel, illness, stressors, meds, major events), save it with save_user_note for future sessions
 - The user can write their own free-text note for any day (what they did, ate, how they felt). \
   These notes appear inline under a `note` key in get_daily_metrics and via get_daily_notes — \
@@ -206,13 +233,12 @@ class HealthAgent:
         # The effort parameter (output_config) tunes thinking depth / token
         # spend on the adaptive models; it is unsupported on the legacy budget
         # models, so we only send it there.
-        _model = settings.claude_model.lower()
         self._extra_call_params: dict = {}
-        if any(tag in _model for tag in ("sonnet-4-5", "sonnet-4-0", "sonnet-3")):
-            self._thinking = {"type": "enabled", "budget_tokens": 8000}
-        else:
+        if _model_supports_adaptive(settings.claude_model):
             self._thinking = {"type": "adaptive"}
             self._extra_call_params["output_config"] = {"effort": settings.claude_effort}
+        else:
+            self._thinking = {"type": "enabled", "budget_tokens": 8000}
 
         system_content = _SYSTEM_PROMPT.format(
             medical_knowledge=get_rules_summary_for_llm(settings.biological_sex),
@@ -267,6 +293,11 @@ class HealthAgent:
         """Look up the most recent menstrual_cycle entry; if found, return a
         small system block so every reply is phase-aware without the model
         having to call a tool. Returns None when the user doesn't track cycles."""
+        # Sex-gate like /api/lifestyle and /api/menstrual: stray cycle rows in a
+        # male user's DB must not inject a cycle block that contradicts the
+        # identity block's "does NOT have menstrual cycle data".
+        if (self._settings.biological_sex or "").strip().lower().startswith("m"):
+            return None
         try:
             today = datetime.now().date()
             start = (today - timedelta(days=7)).isoformat()
@@ -448,6 +479,24 @@ class HealthAgent:
             logger.error("Tool %s failed: %s", name, e)
             return json.dumps({"error": f"Tool {name} failed: {str(e)}"})
 
+    @staticmethod
+    def _sanitize_truncated_turn(history: list[dict], base_len: int, content) -> None:
+        """Repair history after a max_tokens truncation mid-tool-call.
+
+        If the output cap is hit while the model is emitting tool_use blocks,
+        the just-appended assistant turn ends with tool calls that will never
+        get results — and every subsequent request in the session then 400s
+        ("tool_use ids not found in tool_result blocks"). Strip the dangling
+        tool_use blocks; if nothing displayable remains (no text), drop the
+        whole exchange back to base_len so the session stays clean.
+        """
+        kept = [b for b in content if getattr(b, "type", None) != "tool_use"]
+        has_text = any(getattr(b, "type", None) == "text" for b in kept)
+        if has_text:
+            history[-1] = {"role": "assistant", "content": kept}
+        else:
+            del history[base_len:]
+
     def _build_tool_result(self, tool_id: str, result: str) -> dict:
         """Wrap a tool result.
 
@@ -495,6 +544,9 @@ class HealthAgent:
                 text_parts = [b.text for b in response.content if b.type == "text"]
                 text = "\n".join(text_parts) if text_parts else ""
                 if response.stop_reason == "max_tokens":
+                    # Truncation can leave dangling tool_use blocks that would
+                    # poison every later call in this session.
+                    self._sanitize_truncated_turn(history, base_len, response.content)
                     text = (text + "\n\n" if text else "") + "_Response truncated (output token limit reached)._"
                 return text
 
@@ -567,6 +619,9 @@ class HealthAgent:
                 return
 
             if final.stop_reason == "max_tokens":
+                # See chat(): strip dangling tool_use blocks so the truncated
+                # turn can't 400 every later message in this session.
+                self._sanitize_truncated_turn(history, base_len, final.content)
                 yield {"type": "text", "text": "\n\n_Response truncated (output token limit reached)._"}
                 return
 
@@ -670,15 +725,28 @@ class HealthAgent:
         # concrete last 7 COMPLETE days (ending yesterday — today is incomplete),
         # so the receiving model isn't left to guess the window against a
         # date-stamped snapshot that may span more days than the question implies.
-        seven_start = (today - timedelta(days=7)).isoformat()
-        user_text = user_text.replace(
-            "Analyze the last 7 days:",
-            f"Analyze the last 7 complete days ({seven_start} → {last_complete_day}) "
-            f"— treat {today_iso} as incomplete (overnight/morning metrics only):",
-        ).replace(
-            "analyze recent trends (7-day) for the key metrics",
-            f"analyze recent trends ({seven_start} → {last_complete_day}) for the key metrics",
-        )
+        # When the caller supplied an explicit range, anchor to the END of that
+        # range instead — otherwise the prompt would say "restrict to May" and
+        # then "analyze <this week>", dates absent from the snapshot.
+        if start_date and end_date:
+            seven_start = max(start, (end_d - timedelta(days=6)).isoformat())
+            user_text = user_text.replace(
+                "Analyze the last 7 days:",
+                f"Analyze the last 7 days of the requested range ({seven_start} → {end}):",
+            ).replace(
+                "analyze recent trends (7-day) for the key metrics",
+                f"analyze recent trends ({seven_start} → {end}) for the key metrics",
+            )
+        else:
+            seven_start = (today - timedelta(days=7)).isoformat()
+            user_text = user_text.replace(
+                "Analyze the last 7 days:",
+                f"Analyze the last 7 complete days ({seven_start} → {last_complete_day}) "
+                f"— treat {today_iso} as incomplete (overnight/morning metrics only):",
+            ).replace(
+                "analyze recent trends (7-day) for the key metrics",
+                f"analyze recent trends ({seven_start} → {last_complete_day}) for the key metrics",
+            )
 
         # Lazily build cache for any uncached dates in the requested window,
         # so historical ranges (older than the rolling 90-day refresh) get a
@@ -834,18 +902,22 @@ class HealthAgent:
             logger.debug("Portable prompt: fitness age fetch failed: %s", e)
         try:
             bc_df = self._repo.query_body_composition(marker_start, end)
-            wt = _marker_series(bc_df, "weight", scale=0.001)  # grams → kg
-            if wt:
-                fitness_markers["weight_kg"] = wt
-            bf = _marker_series(bc_df, "body_fat")
-            if bf:
-                fitness_markers["body_fat_pct"] = bf
-            mm = _marker_series(bc_df, "muscle_mass", scale=0.001)  # grams → kg
-            if mm:
-                fitness_markers["muscle_mass_kg"] = mm
-            vf = _marker_series(bc_df, "visceral_fat")
-            if vf:
-                fitness_markers["visceral_fat_rating"] = vf
+            # to_kg guards against rows already stored in kg, unlike a blind
+            # /1000; percentages / ratings / years need no transform.
+            _bc_markers = (
+                ("weight", "weight_kg", to_kg),
+                ("bmi", "bmi", None),
+                ("body_fat", "body_fat_pct", None),
+                ("body_water", "body_water_pct", None),
+                ("muscle_mass", "muscle_mass_kg", to_kg),
+                ("bone_mass", "bone_mass_kg", to_kg),
+                ("visceral_fat", "visceral_fat_rating", None),
+                ("metabolic_age", "metabolic_age_years", None),
+            )
+            for col, key, transform in _bc_markers:
+                series = _marker_series(bc_df, col, transform=transform)
+                if series:
+                    fitness_markers[key] = series
         except Exception as e:
             logger.debug("Portable prompt: body composition fetch failed: %s", e)
 
@@ -1307,6 +1379,26 @@ class HealthAgent:
                 f"Restrict your analysis to this date range when fetching data and drawing conclusions. "
                 f"Use these exact dates as the start and end for any tool calls that require a date range.\n\n"
             )
+            # Re-anchor the scan prompts' relative "last 7 days" phrasing to the
+            # end of the selected range — otherwise a weekly scan over e.g. May
+            # says "restrict to May" and then "analyze the last 7 days" (today's
+            # week), a self-contradiction the model resolves unpredictably.
+            try:
+                _range_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+                _seven_start = max(
+                    start_date, (_range_end - timedelta(days=6)).isoformat()
+                )
+                base_prompt = base_prompt.replace(
+                    "Analyze the last 7 days:",
+                    f"Analyze the last 7 days of the selected range "
+                    f"({_seven_start} → {end_date}):",
+                ).replace(
+                    "analyze recent trends (7-day) for the key metrics",
+                    f"analyze recent trends ({_seven_start} → {end_date}) "
+                    f"for the key metrics",
+                )
+            except ValueError:
+                pass  # malformed date — leave the relative phrasing alone
             base_prompt = date_context + base_prompt
 
         if context:

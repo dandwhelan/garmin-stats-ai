@@ -19,6 +19,7 @@ from garmin_insights.db.sqlite_repo import (
     _SLEEP_COLS as _SLEEP_COLUMN_MAP,
 )
 from garmin_insights.db.memory import MemoryStore
+from garmin_insights.stats_utils import to_kg
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,25 @@ _BASELINE_METRICS = [
     # (RHR / HRV / respiration) — without a respiration baseline both
     # detectors were permanently blind to elevated respiration.
     "averageRespirationValue",
+    # Body composition — smart-scale readings can land daily, and the trend /
+    # anomaly / correlation tools only see metrics that live in the summaries
+    # and baselines. visceral_fat is required by the visceral_fat_hrv KB rule.
+    "weight_kg", "body_fat_pct", "visceral_fat",
 ]
+
+# body_composition db column → summary key. Masses are normalised to kg via
+# to_kg(); percentages / ratings / years pass through unchanged.
+_BODY_COMP_MAP = {
+    "weight": "weight_kg",
+    "bmi": "bmi",
+    "body_fat": "body_fat_pct",
+    "body_water": "body_water_pct",
+    "muscle_mass": "muscle_mass_kg",
+    "bone_mass": "bone_mass_kg",
+    "visceral_fat": "visceral_fat",
+    "metabolic_age": "metabolic_age",
+}
+_BODY_COMP_MASS_COLS = {"weight", "muscle_mass", "bone_mass"}
 
 
 class CacheBuilder:
@@ -109,6 +128,31 @@ class CacheBuilder:
                 val = row.get(db_col)
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
                     summary[logical] = float(val) if isinstance(val, (int, float, np.number)) else val
+
+        # -- BodyComposition (smart-scale / manual weigh-ins) --
+        # Latest reading of the day wins; without this merge, weight and body
+        # fat never reach the daily summaries the agent queries first, so
+        # trend/anomaly/correlation tools (and the Entities picker) were blind
+        # to data sitting in body_composition.
+        try:
+            # Inclusive time bounds — (date, date) covers 00:00:00–23:59:59
+            df_bc = self._repo.query_body_composition(date, date)
+        except Exception as e:
+            logger.debug("Body composition fetch failed for %s: %s", date, e)
+            df_bc = pd.DataFrame()
+        if not df_bc.empty:
+            df_bc = df_bc.reset_index() if df_bc.index.name is not None else df_bc
+            if "time" in df_bc.columns:
+                df_bc = df_bc.sort_values("time")
+            row = df_bc.iloc[-1]
+            for db_col, key in _BODY_COMP_MAP.items():
+                val = row.get(db_col)
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    continue
+                val = float(val)
+                if db_col in _BODY_COMP_MASS_COLS:
+                    val = to_kg(val)
+                summary[key] = val
 
         # -- LifestyleJournal --
         df_lj = self._repo.query_lifestyle_journal(date, date)

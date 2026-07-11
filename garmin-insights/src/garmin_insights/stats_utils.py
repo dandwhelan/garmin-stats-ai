@@ -32,6 +32,19 @@ except Exception:  # pragma: no cover - defensive: never break a render
 MIN_PAIRS = 7
 
 
+def to_kg(value: float | None) -> float | None:
+    """Normalise a Garmin mass reading to kilograms.
+
+    ``body_composition`` masses arrive in grams from the fetcher, but rows
+    written by other paths may already be in kg — the >1000 guard (no human
+    weighs a tonne) makes the conversion idempotent either way. This is the
+    single shared implementation; use it instead of dividing by 1000 inline.
+    """
+    if value is None:
+        return None
+    return value / 1000.0 if value > 1000 else value
+
+
 def pearson_r_p(
     x: Sequence[float], y: Sequence[float]
 ) -> tuple[float | None, float | None, int]:
