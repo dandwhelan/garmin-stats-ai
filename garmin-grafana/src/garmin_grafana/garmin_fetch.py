@@ -670,9 +670,14 @@ def get_body_composition(date_str):
                     "muscleMass": weight_dict.get("muscleMass"),
                     "physiqueRating": weight_dict.get("physiqueRating"),
                     "visceralFat": weight_dict.get("visceralFat"),
-                    # Plain integer of years — NOT a millisecond timestamp
-                    # (the old timestamp parse mis-read it and was disabled).
-                    "metabolicAge": weight_dict.get("metabolicAge"),
+                    # Garmin returns metabolicAge as a millisecond DURATION
+                    # (e.g. ~7.26e11 ms ≈ 23 years) — convert to years here so
+                    # the DB stores sane values. The >1000 guard (no metabolic
+                    # age exceeds a millennium) passes through values already
+                    # in years; 31,556,952,000 ms = one Gregorian year.
+                    "metabolicAge": (round(weight_dict["metabolicAge"] / 31_556_952_000, 1)
+                                     if (weight_dict.get("metabolicAge") or 0) > 1000
+                                     else weight_dict.get("metabolicAge")),
                 }
             if not all(value is None for value in data_fields.values()):
                 points_list.append({

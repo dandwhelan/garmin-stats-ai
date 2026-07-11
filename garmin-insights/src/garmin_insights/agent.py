@@ -20,7 +20,7 @@ from garmin_insights.knowledge.medical import (
     count_visible_rules,
 )
 from garmin_insights.insights.proactive import BEHAVIOR_IMPACT_WINDOW_DAYS
-from garmin_insights.stats_utils import to_kg
+from garmin_insights.stats_utils import metabolic_age_years, to_kg
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
     QueryToolHandler,
@@ -902,8 +902,9 @@ class HealthAgent:
             logger.debug("Portable prompt: fitness age fetch failed: %s", e)
         try:
             bc_df = self._repo.query_body_composition(marker_start, end)
-            # to_kg guards against rows already stored in kg, unlike a blind
-            # /1000; percentages / ratings / years need no transform.
+            # to_kg / metabolic_age_years guard against rows already stored in
+            # the target unit, unlike a blind divide; percentages / ratings
+            # need no transform.
             _bc_markers = (
                 ("weight", "weight_kg", to_kg),
                 ("bmi", "bmi", None),
@@ -912,7 +913,7 @@ class HealthAgent:
                 ("muscle_mass", "muscle_mass_kg", to_kg),
                 ("bone_mass", "bone_mass_kg", to_kg),
                 ("visceral_fat", "visceral_fat_rating", None),
-                ("metabolic_age", "metabolic_age_years", None),
+                ("metabolic_age", "metabolic_age_years", metabolic_age_years),
             )
             for col, key, transform in _bc_markers:
                 series = _marker_series(bc_df, col, transform=transform)

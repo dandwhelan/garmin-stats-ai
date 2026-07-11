@@ -1,5 +1,6 @@
 """Regression tests: body-composition plumbing into daily summaries,
-the shared to_kg unit guard, and the adaptive-thinking model allowlist."""
+the shared to_kg / metabolic_age_years unit guards, and the
+adaptive-thinking model allowlist."""
 
 import sqlite3
 
@@ -10,7 +11,7 @@ from garmin_insights.config import Settings
 from garmin_insights.db.cache import CacheBuilder, _BASELINE_METRICS
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.db.sqlite_repo import SqliteRepo
-from garmin_insights.stats_utils import to_kg
+from garmin_insights.stats_utils import metabolic_age_years, to_kg
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +28,24 @@ def test_to_kg_idempotent_on_kg():
 
 def test_to_kg_none_passthrough():
     assert to_kg(None) is None
+
+
+# ---------------------------------------------------------------------------
+# metabolic_age_years — Garmin returns a ms duration, not plain years
+# ---------------------------------------------------------------------------
+
+def test_metabolic_age_converts_ms_duration():
+    # Observed live value for a 23-year metabolic age (dan.db, 2026-07-10)
+    assert metabolic_age_years(725_809_298_000) == 23.0
+
+
+def test_metabolic_age_idempotent_on_years():
+    assert metabolic_age_years(32.0) == 32.0
+    assert metabolic_age_years(24.5) == 24.5
+
+
+def test_metabolic_age_none_passthrough():
+    assert metabolic_age_years(None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -67,14 +86,17 @@ def db_with_weigh_in(tmp_path):
         "physique_rating REAL, visceral_fat REAL, metabolic_age REAL, "
         "PRIMARY KEY (time, device))"
     )
-    # Two readings on the day — the later one must win
+    # Two readings on the day — the later one must win. The winner's
+    # metabolic_age is a raw ms duration, as rows fetched before the
+    # fetcher-side conversion landed (and as Garmin returns it).
     conn.execute(
         "INSERT INTO body_composition VALUES "
         "('2026-07-10T06:00:00','scale',72500,21.2,17.0,57.0,3050,57000,NULL,9,33)"
     )
     conn.execute(
         "INSERT INTO body_composition VALUES "
-        "('2026-07-10T07:01:00','scale',72080,21.1,16.6,57.2,3060,57070,NULL,9,32)"
+        "('2026-07-10T07:01:00','scale',72080,21.1,16.6,57.2,3060,57070,NULL,9,"
+        "725809298000)"
     )
     conn.commit()
     conn.close()
@@ -97,7 +119,7 @@ def test_body_comp_merged_into_daily_summary(db_with_weigh_in):
     assert summary["muscle_mass_kg"] == 57.07
     assert summary["bone_mass_kg"] == 3.06
     assert summary["visceral_fat"] == 9.0
-    assert summary["metabolic_age"] == 32.0
+    assert summary["metabolic_age"] == 23.0  # normalised from ms duration
 
 
 def test_body_comp_metrics_are_baselined():

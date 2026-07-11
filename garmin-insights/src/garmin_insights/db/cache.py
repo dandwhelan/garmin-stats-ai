@@ -19,7 +19,7 @@ from garmin_insights.db.sqlite_repo import (
     _SLEEP_COLS as _SLEEP_COLUMN_MAP,
 )
 from garmin_insights.db.memory import MemoryStore
-from garmin_insights.stats_utils import to_kg
+from garmin_insights.stats_utils import metabolic_age_years, to_kg
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,8 @@ _BASELINE_METRICS = [
 ]
 
 # body_composition db column → summary key. Masses are normalised to kg via
-# to_kg(); percentages / ratings / years pass through unchanged.
+# to_kg(); metabolic_age via metabolic_age_years() (Garmin returns a ms
+# duration); percentages / ratings pass through unchanged.
 _BODY_COMP_MAP = {
     "weight": "weight_kg",
     "bmi": "bmi",
@@ -152,6 +153,9 @@ class CacheBuilder:
                 val = float(val)
                 if db_col in _BODY_COMP_MASS_COLS:
                     val = to_kg(val)
+                elif db_col == "metabolic_age":
+                    # Garmin returns a ms duration, not years — see stats_utils.
+                    val = metabolic_age_years(val)
                 summary[key] = val
 
         # -- LifestyleJournal --
