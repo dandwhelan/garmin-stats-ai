@@ -177,6 +177,7 @@ function refreshSyncBadge() {
 let userBiologicalSex = ''; // 'male' / 'female' from /api/health, prefills the scan profile
 let userProfileHeight = ''; // HEIGHT_CM from users/<id>.env via /api/health
 let userProfileAge = null;  // derived server-side from BIRTH_DATE
+let _weighInProfileUser = null; // which user the scan-profile fields are keyed to
 
 async function checkHealth() {
   try {
@@ -191,7 +192,17 @@ async function checkHealth() {
         userBiologicalSex = (data.user?.biological_sex || '').toLowerCase();
         userProfileHeight = data.user?.height_cm || '';
         userProfileAge = data.user?.age ?? null;
-        prefillWeighInProfile(); // fill empty scan-profile fields once known
+        if (_weighInProfileUser !== activeUser) {
+          // First health response for this user (page load or picker switch):
+          // re-key the whole scan profile — stale height/age/sex from the
+          // previous user would compute wrong body composition and upload it
+          // to the NEW user's Garmin account. Runs here (not in the picker
+          // handler) so the new user's server profile has already landed.
+          _weighInProfileUser = activeUser;
+          loadWeighInProfileFields();
+        } else {
+          prefillWeighInProfile(); // fill empty scan-profile fields once known
+        }
       } catch { /* ignore */ }
     } else {
       statusDot.className = 'status-dot error';
@@ -1776,12 +1787,20 @@ function setActivePreset(days) {
   });
 }
 
+// Local calendar date, not UTC: during BST, toISOString() in the hour after
+// local midnight still says yesterday — the backend deliberately keys days
+// on local dates (see _resolve_range), so the toolbar must agree.
+function localDateStr(d) {
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d - tz).toISOString().slice(0, 10);
+}
+
 function applyPreset(days) {
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - (days - 1));
-  selectedEnd = end.toISOString().slice(0, 10);
-  selectedStart = start.toISOString().slice(0, 10);
+  selectedEnd = localDateStr(end);
+  selectedStart = localDateStr(start);
   dateStartInput.value = selectedStart;
   dateEndInput.value = selectedEnd;
   setActivePreset(days);
@@ -1808,10 +1827,10 @@ document.getElementById('date-apply-btn').addEventListener('click', () => {
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - 29);
-  dateStartInput.value = start.toISOString().slice(0, 10);
-  dateEndInput.value = end.toISOString().slice(0, 10);
-  dateStartInput.max = end.toISOString().slice(0, 10);
-  dateEndInput.max = end.toISOString().slice(0, 10);
+  dateStartInput.value = localDateStr(start);
+  dateEndInput.value = localDateStr(end);
+  dateStartInput.max = localDateStr(end);
+  dateEndInput.max = localDateStr(end);
 })();
 
 // Note: the initial loadDashboard() + 5-min refresh interval are registered
@@ -4309,7 +4328,7 @@ async function loadPollenChart() {
   const ctx = document.getElementById('environment-pollen-chart');
   if (!ctx) return;
   const today = new Date();
-  const pad = d => d.toISOString().slice(0, 10);
+  const pad = d => localDateStr(d);
   const s = new Date(today); s.setDate(today.getDate() - 3);
   const e = new Date(today); e.setDate(today.getDate() + 5);
   const params = new URLSearchParams({ start: pad(s), end: pad(e) });
@@ -4330,7 +4349,7 @@ function renderPollenChart(entries) {
   if (!ctx) return;
   if (envPollenChart) envPollenChart.destroy();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateStr(new Date());
   const labels = entries.map(e => (e.date || '').slice(5));
   const todayLabel = todayStr.slice(5);
   const todayIdx = labels.indexOf(todayLabel);
@@ -4886,9 +4905,7 @@ function renderBehaviorRootCause(key, data) {
 let _journalInit = false;
 
 function journalToday() {
-  const d = new Date();
-  const tz = d.getTimezoneOffset() * 60000;
-  return new Date(d - tz).toISOString().slice(0, 10);
+  return localDateStr(new Date());
 }
 
 function ensureJournalTab() {
@@ -5006,16 +5023,28 @@ function prefillWeighInProfile() {
   if (a && !a.value && userProfileAge != null) a.value = userProfileAge;
 }
 
-function initWeighInProfile() {
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(_profileKey()) || '{}'); } catch { /* ignore */ }
+// (Re)load the scan-profile fields for the CURRENT active user. Assignments
+// are unconditional: on a user switch, the previous user's height/age/sex
+// must never linger — the sex term alone shifts the computed body fat by
+// ~10 points, and the result uploads to the new user's real Garmin account.
+function loadWeighInProfileFields() {
   const h = document.getElementById('wi-height');
   const a = document.getElementById('wi-age');
   const s = document.getElementById('wi-sex');
-  if (h && saved.height) h.value = saved.height;
-  if (a && saved.age) a.value = saved.age;
+  if (!h && !a && !s) return; // Journal tab not built yet
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(_profileKey()) || '{}'); } catch { /* ignore */ }
+  if (h) h.value = saved.height || '';
+  if (a) a.value = saved.age || '';
   if (s) s.value = saved.sex || (userBiologicalSex === 'female' ? 'female' : 'male');
   prefillWeighInProfile();
+}
+
+function initWeighInProfile() {
+  loadWeighInProfileFields();
+  const h = document.getElementById('wi-height');
+  const a = document.getElementById('wi-age');
+  const s = document.getElementById('wi-sex');
   for (const el of [h, a, s]) {
     el?.addEventListener('change', () => {
       localStorage.setItem(_profileKey(), JSON.stringify({

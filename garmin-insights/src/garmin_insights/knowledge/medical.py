@@ -1484,25 +1484,48 @@ def count_visible_rules(biological_sex: str | None = None) -> int:
     )
 
 
+_ETAL_RE = re.compile(r"\bet al\.?", re.IGNORECASE)
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
 def _abbrev_citation(citation: str) -> str:
     """Compress a citation string to [Author Year, Author Year] format.
 
     Drops journal names and 'et al.' suffixes to reduce system-prompt tokens.
     e.g. 'Drake et al., 2013, J Clin Sleep Med; Gardiner et al., 2023, ...'
       -> '[Drake 2013, Gardiner 2023]'
+
+    The old first-word/exact-token parser mangled ~15 of the 52 rules —
+    'Baniassadi et al. 2023' (year inside the first token) lost its year,
+    'de Jager' collapsed to 'de', and parenthetical notes spawned fake
+    authors — and the garbled forms were quoted verbatim to users. Here the
+    year is found anywhere in the segment, the author is everything before
+    'et al.'/the year/the first comma (multi-word surnames survive), and
+    segments with no plausible author-year pair are skipped.
     """
-    parts = []
+    parts: list[str] = []
     for segment in citation.split(";"):
-        tokens = [t.strip().rstrip(",") for t in segment.split(",") if t.strip()]
-        # Tokens: [AuthorName, optional 'et al.', Year, ...JournalWords...]
-        author = tokens[0].split()[0] if tokens else ""
-        # Find the year — first token that looks like a 4-digit number
-        year = next((t for t in tokens if t.isdigit() and len(t) == 4), "")
-        if author and year:
-            parts.append(f"{author} {year}")
-        elif author:
-            parts.append(author)
-    return f"[{', '.join(parts)}]" if parts else citation
+        seg = segment.strip().strip(",")
+        if not seg or seg.startswith("("):
+            continue  # parenthetical note, not a citation
+        m = _YEAR_RE.search(seg)
+        if not m:
+            continue  # no year — journal fragment or prose, skip
+        year = m.group(0)
+        head = seg[: m.start()]
+        head = _ETAL_RE.split(head)[0]
+        head = head.split(",")[0].strip(" ,–—-")
+        author = " ".join(head.split()[:3]).strip(" ,")
+        if not author or not any(c.isupper() for c in author):
+            continue
+        entry = f"{author} {year}"
+        if entry not in parts:
+            parts.append(entry)
+    if parts:
+        return f"[{', '.join(parts)}]"
+    # Nothing parseable (e.g. the 'Composite — …' pseudo-citation): keep the
+    # first clause rather than fabricating an author-year.
+    return f"[{re.split(r'[,;—-]', citation)[0].strip()}]"
 
 
 def get_rules_summary_for_llm(
