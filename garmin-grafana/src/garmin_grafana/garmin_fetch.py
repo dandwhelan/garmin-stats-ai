@@ -1358,7 +1358,16 @@ def get_lifestyle_data(date_str):
 
 
 # %%
+# Garmin renamed the menstrual response keys around May 2026: summary/dayData
+# became daySummary/dayLog, and the cycle phase changed from a string
+# ('LUTEAL') to an integer enum. Mapping verified empirically against the
+# fertile window + period days of a live cycle.
+_MENSTRUAL_PHASE_NAMES = {1: "MENSTRUAL", 2: "FOLLICULAR", 3: "OVULATORY", 4: "LUTEAL"}
+_menstrual_shape_warned = False
+
+
 def get_menstrual_data(date_str):
+    global _menstrual_shape_warned
     points_list = []
     try:
         data = garmin_obj.get_menstrual_data_for_date(date_str)
@@ -1366,19 +1375,39 @@ def get_menstrual_data(date_str):
             logging.debug(f"No menstrual data available for date {date_str}")
             return []
 
-        summary = data.get('summary') or {}
-        day = data.get('dayData') or data.get('day') or {}
+        # Parse both the pre- and post-May-2026 shapes — the old parser
+        # silently skipped every date for ~8 weeks after the rename.
+        summary = data.get('summary') or data.get('daySummary') or {}
+        day = data.get('dayData') or data.get('day') or data.get('dayLog') or {}
+        if not isinstance(summary, dict):
+            summary = {}
+        if not isinstance(day, dict):
+            day = {}
 
         symptoms = day.get('symptoms')
         if isinstance(symptoms, list):
             symptoms = ','.join(str(s.get('name', s) if isinstance(s, dict) else s) for s in symptoms)
 
         cycle_start = summary.get('cycleStartDate') or summary.get('startDate')
+        day_of_cycle = (summary.get('currentDayOfCycle') or day.get('currentDayOfCycle')
+                        or summary.get('dayInCycle'))
         cycle_phase = summary.get('currentCyclePhase') or day.get('cyclePhase')
+        if not cycle_phase and summary.get('currentPhase') is not None:
+            cycle_phase = _MENSTRUAL_PHASE_NAMES.get(summary['currentPhase'],
+                                                     str(summary['currentPhase']))
         flow = day.get('menstrualFlow') or day.get('flow')
 
         # Skip silently if there's no meaningful menstrual data for the day.
-        if not any([cycle_start, cycle_phase, flow, summary.get('currentDayOfCycle')]):
+        if not any([cycle_start, cycle_phase, flow, day_of_cycle]):
+            # A payload with real content we failed to parse means the shape
+            # changed AGAIN — surface it once per run instead of going
+            # silently dark like last time. Non-tracking users get {} or
+            # all-None values, which stays quiet.
+            if any(v for v in data.values() if v) and not _menstrual_shape_warned:
+                _menstrual_shape_warned = True
+                logging.warning(f"Menstrual response for {date_str} has keys {list(data.keys())} "
+                                "but no recognisable cycle fields — Garmin may have changed the "
+                                "response shape again")
             logging.debug(f"No menstrual data tracked for date {date_str}")
             return []
 
@@ -1392,7 +1421,7 @@ def get_menstrual_data(date_str):
             "fields": {
                 "date": date_str,
                 "cycleStartDate": cycle_start,
-                "currentDayOfCycle": summary.get('currentDayOfCycle') or day.get('currentDayOfCycle'),
+                "currentDayOfCycle": day_of_cycle,
                 "currentCyclePhase": cycle_phase,
                 "cycleLength": summary.get('cycleLength'),
                 "predictedCycleLength": summary.get('predictedCycleLength') or summary.get('predictedMenstrualCycleLength'),
@@ -1405,7 +1434,7 @@ def get_menstrual_data(date_str):
                 "rawJson": json.dumps(data),
             }
         })
-        logging.info(f"Success : Fetching menstrual cycle data for date {date_str}")
+        logging.info(f"Success : Fetching menstrual cycle data for date {date_str} (phase={cycle_phase}, day {day_of_cycle})")
     except Exception as e:
         # Silent skip on error - user may not have cycle tracking enabled.
         logging.debug(f"Skipping menstrual data for date {date_str}: {e}")
