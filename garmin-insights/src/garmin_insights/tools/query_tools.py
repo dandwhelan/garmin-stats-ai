@@ -9,6 +9,7 @@ from typing import Any
 
 from garmin_insights.db.sqlite_repo import SqliteRepo
 from garmin_insights.db.memory import MemoryStore
+from garmin_insights.stats_utils import metabolic_age_years
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 
 logger = logging.getLogger(__name__)
@@ -327,9 +328,16 @@ class QueryToolHandler:
         for col in ("weight", "muscle_mass", "bone_mass"):
             if col in df.columns:
                 df[col] = df[col].where(df[col] <= 1000, df[col] / 1000.0)
+        # Garmin returns metabolic age as a ms duration — normalise to years
+        # (guarded, so rows already stored in years pass through). NaN-safe:
+        # v == v is False for NaN.
+        if "metabolic_age" in df.columns:
+            df["metabolic_age"] = df["metabolic_age"].apply(
+                lambda v: metabolic_age_years(v) if v == v else v)
         df = df.rename(columns={"weight": "weight_kg", "muscle_mass": "muscle_mass_kg",
                                 "bone_mass": "bone_mass_kg", "body_fat": "body_fat_pct",
-                                "body_water": "body_water_pct"})
+                                "body_water": "body_water_pct",
+                                "metabolic_age": "metabolic_age_years"})
         return _df_to_clean_json(df)
 
     def get_training_readiness(self, start_date: str, end_date: str) -> str:
@@ -650,7 +658,8 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
             "name": "get_body_composition",
             "description": "Query body composition readings for a date range: weight_kg, BMI, "
                            "body_fat_pct, body_water_pct, muscle_mass_kg, bone_mass_kg, "
-                           "visceral_fat (rating). Smart-scale entries carry all fields; "
+                           "visceral_fat (rating), metabolic_age_years. Smart-scale entries "
+                           "carry all fields; "
                            "watch-entered manual weights carry weight only. Readings are "
                            "sparse (only on weigh-in days) and the composition figures are "
                            "bio-impedance estimates — prefer multi-week trends over single "

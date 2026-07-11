@@ -45,6 +45,26 @@ def to_kg(value: float | None) -> float | None:
     return value / 1000.0 if value > 1000 else value
 
 
+# Gregorian year (365.2425 days) in milliseconds — closest match to the ms
+# durations Garmin returns (observed: 725,809,298,000 ms for a 23-year value).
+_MS_PER_YEAR = 31_556_952_000
+
+
+def metabolic_age_years(value: float | None) -> float | None:
+    """Normalise a Garmin metabolic-age reading to years.
+
+    Garmin Connect returns ``metabolicAge`` as a millisecond *duration*
+    (e.g. ~7.26e11 ms ≈ 23 years), not plain years — the fetcher's original
+    timestamp parse mis-read it for the same reason. Rows written before the
+    fetcher-side conversion landed carry raw milliseconds, so this guard (no
+    human metabolic age exceeds a millennium) makes reads idempotent either
+    way, mirroring ``to_kg``. Rounded to 1 d.p. — ms precision is spurious.
+    """
+    if value is None:
+        return None
+    return round(value / _MS_PER_YEAR if value > 1000 else value, 1)
+
+
 def pearson_r_p(
     x: Sequence[float], y: Sequence[float]
 ) -> tuple[float | None, float | None, int]:
