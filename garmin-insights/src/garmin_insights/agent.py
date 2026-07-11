@@ -501,11 +501,12 @@ class HealthAgent:
         """Wrap a tool result.
 
         We deliberately do NOT attach cache_control here. The Anthropic API caps
-        cache_control markers at 4 per request; the system prompt and tools list
-        already claim 2 of those, and a multi-tool-round conversation can easily
-        produce 3+ large tool results — which would push the total over 4 and
-        cause a 400. The static system + tools caches alone deliver most of the
-        cost saving; per-result caching is not worth the failure mode.
+        cache_control markers at 4 per request; 3 are already claimed (the last
+        static system block, the last per-day system block, and the tools list),
+        leaving exactly 1 spare — a single per-result marker here would hit the
+        cap on the second tool round and cause a 400. The static system + tools
+        caches alone deliver most of the cost saving; per-result caching is not
+        worth the failure mode.
         """
         return {"type": "tool_result", "tool_use_id": tool_id, "content": result}
 
@@ -563,6 +564,11 @@ class HealthAgent:
 
             break
 
+        # History ends with a user-role tool_results message; close the
+        # exchange with an assistant turn so the next message doesn't create
+        # two consecutive user-role messages (a 400).
+        history.append({"role": "assistant", "content": [
+            {"type": "text", "text": "_Maximum tool-calling rounds reached._"}]})
         return "Maximum tool-calling rounds reached. Please try a simpler question."
 
     # ------------------------------------------------------------------
@@ -589,61 +595,85 @@ class HealthAgent:
         base_len = len(history)
         history.append({"role": "user", "content": user_message})
 
-        for round_num in range(10):
-            try:
-                with self._client.messages.stream(
-                    model=self._settings.claude_model,
-                    max_tokens=16000,
-                    system=self._system_for_call(),
-                    tools=self._tools_cache,
-                    messages=history,
-                    thinking=self._thinking,
-                    **self._extra_call_params,
-                ) as stream:
-                    # Stream text deltas as they arrive
-                    for event in stream:
-                        if event.type == "content_block_delta":
-                            delta = event.delta
-                            if getattr(delta, "type", None) == "text_delta":
-                                yield {"type": "text", "text": delta.text}
-                    final = stream.get_final_message()
-            except Exception as e:
-                logger.error("Stream error: %s", e)
+        # A browser disconnect (page refresh mid-answer) abandons this
+        # generator at whichever `yield` it is paused on — GeneratorExit, not
+        # Exception, so the stream-error handler below never sees it. Without
+        # the finally-rollback, dying between the assistant tool_use append
+        # and the tool_results append left the session history ending in
+        # tool_use blocks with no tool_result — a 400 on every later message
+        # of the (localStorage-persisted) session. `completed` marks the
+        # points where history is a consistent exchange worth keeping.
+        completed = False
+        try:
+            for round_num in range(10):
+                try:
+                    with self._client.messages.stream(
+                        model=self._settings.claude_model,
+                        max_tokens=16000,
+                        system=self._system_for_call(),
+                        tools=self._tools_cache,
+                        messages=history,
+                        thinking=self._thinking,
+                        **self._extra_call_params,
+                    ) as stream:
+                        # Stream text deltas as they arrive
+                        for event in stream:
+                            if event.type == "content_block_delta":
+                                delta = event.delta
+                                if getattr(delta, "type", None) == "text_delta":
+                                    yield {"type": "text", "text": delta.text}
+                        final = stream.get_final_message()
+                except Exception as e:
+                    logger.error("Stream error: %s", e)
+                    del history[base_len:]
+                    completed = True  # already rolled back — nothing to undo
+                    yield {"type": "error", "error": str(e)}
+                    return
+
+                history.append({"role": "assistant", "content": final.content})
+
+                if final.stop_reason == "end_turn":
+                    completed = True
+                    return
+
+                if final.stop_reason == "max_tokens":
+                    # See chat(): strip dangling tool_use blocks so the truncated
+                    # turn can't 400 every later message in this session.
+                    self._sanitize_truncated_turn(history, base_len, final.content)
+                    completed = True
+                    yield {"type": "text", "text": "\n\n_Response truncated (output token limit reached)._"}
+                    return
+
+                if final.stop_reason == "tool_use":
+                    tool_results = []
+                    tool_names = []
+                    for block in final.content:
+                        if block.type == "tool_use":
+                            tool_names.append(block.name)
+                            tool_results.append(
+                                self._build_tool_result(block.id, self._dispatch_tool_call(block))
+                            )
+
+                    # Append BEFORE yielding: history must never sit in the
+                    # tool_use-without-tool_result state across a yield.
+                    history.append({"role": "user", "content": tool_results})
+                    yield {"type": "tool", "names": tool_names}
+                    logger.info("Stream round %d: dispatched %d tool calls",
+                                round_num + 1, len(tool_results))
+                    continue
+
+                break
+
+            # Max rounds: history ends with a user-role tool_results message.
+            # Close the exchange with a synthetic assistant turn so the next
+            # user message doesn't create two consecutive user-role messages.
+            history.append({"role": "assistant", "content": [
+                {"type": "text", "text": "_Maximum tool-calling rounds reached._"}]})
+            completed = True
+            yield {"type": "text", "text": "\n\n_Maximum tool-calling rounds reached._"}
+        finally:
+            if not completed:
                 del history[base_len:]
-                yield {"type": "error", "error": str(e)}
-                return
-
-            history.append({"role": "assistant", "content": final.content})
-
-            if final.stop_reason == "end_turn":
-                return
-
-            if final.stop_reason == "max_tokens":
-                # See chat(): strip dangling tool_use blocks so the truncated
-                # turn can't 400 every later message in this session.
-                self._sanitize_truncated_turn(history, base_len, final.content)
-                yield {"type": "text", "text": "\n\n_Response truncated (output token limit reached)._"}
-                return
-
-            if final.stop_reason == "tool_use":
-                tool_results = []
-                tool_names = []
-                for block in final.content:
-                    if block.type == "tool_use":
-                        tool_names.append(block.name)
-                        tool_results.append(
-                            self._build_tool_result(block.id, self._dispatch_tool_call(block))
-                        )
-
-                yield {"type": "tool", "names": tool_names}
-                history.append({"role": "user", "content": tool_results})
-                logger.info("Stream round %d: dispatched %d tool calls",
-                            round_num + 1, len(tool_results))
-                continue
-
-            break
-
-        yield {"type": "text", "text": "\n\n_Maximum tool-calling rounds reached._"}
 
     # ------------------------------------------------------------------
     # Portable prompt (copy/paste into a free LLM chat)
@@ -674,6 +704,19 @@ class HealthAgent:
         if snapshot_days is None:
             snapshot_days = _FOCUS_SNAPSHOT_DAYS.get(focus or "", 30)
 
+        # A one-sided range (an easy UI state — only one date box filled) used
+        # to silently produce an unbounded snapshot with no range note. Resolve
+        # the missing bound so the range is treated as fully explicit
+        # (restriction header + re-anchored phrasing) whenever either is set.
+        if start_date and not end_date:
+            end_date = datetime.now().date().isoformat()
+        elif end_date and not start_date:
+            try:
+                _end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except ValueError:
+                _end = datetime.now().date()
+            start_date = (_end - timedelta(days=snapshot_days)).isoformat()
+
         user_text = message
         if focus:
             scan = _SCAN_PROMPTS.get(focus, _SCAN_PROMPTS["general"])
@@ -696,6 +739,12 @@ class HealthAgent:
             r" — use get_my_baselines for [^\n.]+",
             " — use the Baselines section in the DATA SNAPSHOT",
             user_text,
+        )
+        # The weekly scan names a live tool; point the tool-less reader at the
+        # snapshot section carrying the same data instead.
+        user_text = user_text.replace(
+            "(get_body_composition)",
+            "(see the Fitness markers section — its reading dates show whether any landed this week)",
         )
 
         # Resolve snapshot window (default last 30 days; respect explicit bounds).
@@ -1101,6 +1150,13 @@ class HealthAgent:
                         kb_behaviors.add(it["behavior"])
                     if it.get("rule_name"):
                         kb_rule_names.add(it["rule_name"])
+            # Scan findings only see summary metrics, which can lag the
+            # body_composition table — when the snapshot embeds body-comp
+            # series, keep their interpretive rules (e.g. visceral_fat_hrv)
+            # rather than stripping them on the very day a reading lands.
+            if any(k in fitness_markers for k in
+                   ("weight_kg", "body_fat_pct", "visceral_fat_rating", "muscle_mass_kg")):
+                kb_metrics.update({"weight", "body_fat", "visceral_fat", "muscle_mass"})
             keep = select_relevant_rule_names(
                 metrics=kb_metrics,
                 behaviors=kb_behaviors,
@@ -1296,7 +1352,9 @@ class HealthAgent:
             )
             + f"## Daily summaries ({len(clean_summaries)} days, keyed by date — "
             f"`lifestyle` = actions the user did, `states_symptoms` = "
-            f"outcomes/confounders, not causes)\n"
+            f"outcomes/confounders, not causes; `averageSpo2` = daytime average "
+            f"SpO2 %, `averageSpO2Value` = overnight (sleep) average SpO2 % — "
+            f"similar names, different windows)\n"
             "```json\n"
             f"{json.dumps(clean_summaries, default=str)}\n"
             "```\n\n"
@@ -1366,6 +1424,19 @@ class HealthAgent:
     ) -> str:
         """Generate a proactive insight report without user prompting."""
         base_prompt = _SCAN_PROMPTS.get(focus, _SCAN_PROMPTS["general"])
+
+        # One-sided ranges used to fall through the gate below and get
+        # silently IGNORED (the scan ran its default window). Resolve the
+        # missing bound instead: start-only means "from start to today";
+        # end-only anchors a 30-day window ending there.
+        if start_date and not end_date:
+            end_date = datetime.now().date().isoformat()
+        elif end_date and not start_date:
+            try:
+                _end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except ValueError:
+                _end = datetime.now().date()
+            start_date = (_end - timedelta(days=30)).isoformat()
 
         if start_date and end_date:
             # Lazily backfill the daily_summaries cache for the selected window

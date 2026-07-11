@@ -183,7 +183,9 @@ def _marker_series(df, value_col: str, scale: float = 1.0, ndp: int = 1, keep: i
         v = row.get(value_col)
         if v is None:
             continue
-        date = str(row.get("time", ""))[:10]
+        # Prefer a repo-computed local `date` column (body_composition rows
+        # carry one — a UTC time slice mislabels post-midnight BST readings).
+        date = str(row.get("date") or row.get("time", ""))[:10]
         if not date:
             continue
         try:
@@ -396,6 +398,15 @@ class QueryToolHandler:
         `air_quality_recovery_confounder` and `allergy_next_day_rhr_systemic`
         rules in the knowledge base.
         """
+        # environment_daily deliberately holds a few FUTURE days of Open-Meteo
+        # forecast (the dashboard's pollen chart shows them as such). The
+        # model has no way to tell forecast from measurement, so clamp the
+        # tool to completed history — otherwise "this week" queries quantify
+        # exposure on days that haven't happened yet.
+        today = datetime.now().strftime("%Y-%m-%d")
+        clamped = end_date > today
+        if clamped:
+            end_date = today
         df = self._repo.query_environment(start_date, end_date)
         if df is None or df.empty:
             return json.dumps({
@@ -412,7 +423,11 @@ class QueryToolHandler:
                         if k not in ("date", "latitude", "longitude", "fetched_at")}
             for r in cleaned if "date" in r
         }
-        return json.dumps({"available": True, "entries": by_date}, default=str)
+        payload: dict = {"available": True, "entries": by_date}
+        if clamped:
+            payload["note"] = ("end_date clamped to today — later rows are weather "
+                               "forecasts, not measurements")
+        return json.dumps(payload, default=str)
 
     def get_fitness_markers(
         self,
@@ -585,7 +600,9 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
             "name": "get_daily_metrics",
             "description": (
                 "Query daily health metrics (RHR, stress, body battery, steps, sleep score, etc.) "
-                "for a date range. Uses the fast cached summaries — call this first."
+                "for a date range. Uses the fast cached summaries — call this first. "
+                "Note: averageSpo2 = daytime average SpO2 %; averageSpO2Value = overnight "
+                "(sleep) average SpO2 % — similar names, different measurement windows."
             ),
             "input_schema": {
                 "type": "object",

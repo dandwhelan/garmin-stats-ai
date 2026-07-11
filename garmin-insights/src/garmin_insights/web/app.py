@@ -11,7 +11,9 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
+import time
 from typing import Any
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -170,7 +172,15 @@ def _resolve_range(start: str | None, end: str | None, default_days: int = 30) -
     # UTC "today" points at yesterday during the BST offset window after
     # local midnight (same fix as build_portable_prompt).
     end = end or datetime.now().strftime("%Y-%m-%d")
-    start = start or (datetime.now() - timedelta(days=default_days)).strftime("%Y-%m-%d")
+    if not start:
+        # Anchor the default start to the RESOLVED end, not today — an
+        # end-only historical query otherwise got start > end (an empty,
+        # inverted window indistinguishable from "no data").
+        try:
+            end_d = datetime.strptime(end, "%Y-%m-%d")
+        except ValueError:
+            end_d = datetime.now()
+        start = (end_d - timedelta(days=default_days)).strftime("%Y-%m-%d")
     return start, end
 
 
@@ -716,6 +726,13 @@ async def activity_export(
             return "—"
         return f"{mps * 3.6:.1f} km/h"
 
+    def _fmt_pace_from_speed(mps) -> str:
+        if not mps or mps <= 0:
+            return "—"
+        sec_per_km = 1000 / mps
+        m, s = int(sec_per_km // 60), int(sec_per_km % 60)
+        return f"{m}:{s:02d} /km"
+
     def _zone_line(key, label) -> str:
         val = s.get(key)
         if val is None:
@@ -740,7 +757,10 @@ async def activity_export(
         + (f" ({_fmt_duration(s.get('moving_duration'))} moving)" if s.get("moving_duration") else ""),
         f"**Distance:** {dist_km}",
         f"**Avg pace / speed:** {_fmt_pace(dist_m, s.get('elapsed_duration'))} / {_fmt_speed(s.get('average_speed'))}",
-        f"**Best pace / speed:** {_fmt_pace(dist_m, s.get('moving_duration'))} / {_fmt_speed(s.get('max_speed'))}",
+        # Best pace derives from max_speed so it agrees with the speed printed
+        # beside it — distance/moving_duration is the AVERAGE moving pace and
+        # was exported under this label, contradicting the adjacent max speed.
+        f"**Best pace / speed:** {_fmt_pace_from_speed(s.get('max_speed'))} / {_fmt_speed(s.get('max_speed'))}",
         f"**Calories:** {int(s['calories'])} kcal" + (f" (+ {int(s['bmr_calories'])} BMR)" if s.get("bmr_calories") else "")
         if s.get("calories") else "",
         "",
@@ -891,6 +911,15 @@ async def behavior_environment(
     bundle = _require_user(user)
     s, e = _resolve_range(start, end, default_days=90)
     env_cols = [c.strip() for c in drivers.split(",") if c.strip()]
+    # The columns are interpolated into a SELECT list downstream — allowlist
+    # them (same pattern as intraday_heatmap) so a crafted driver can't run
+    # arbitrary read subqueries against the user's DB.
+    bad = [c for c in env_cols if c not in _ENV_NUMERIC_KEYS]
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown driver(s): {', '.join(bad)}. Valid: {', '.join(_ENV_NUMERIC_KEYS)}",
+        )
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(
@@ -1019,15 +1048,30 @@ async def upload_weigh_in(req: WeighInRequest):
     _require_user(req.user)
     if not (20 <= req.weight_kg <= 400):
         raise HTTPException(status_code=400, detail="weight_kg must be between 20 and 400")
-    for name in ("body_fat_pct", "body_water_pct"):
+    # Bounds mirror the form's min/max. Beyond plausibility: out-of-range
+    # values crash garminconnect's FIT integer packer, which surfaced as a
+    # misleading 502 "Garmin Connect rejected the upload" for what is really
+    # bad client input — and absurd-but-packable values (500 kg of muscle)
+    # uploaded fine and synced back into the AI's data.
+    _WEIGH_IN_BOUNDS = {
+        "body_fat_pct": (0, 100), "body_water_pct": (0, 100),
+        "muscle_mass_kg": (1, 150), "bone_mass_kg": (0.5, 15),
+        "visceral_fat": (1, 60), "metabolic_age": (10, 120),
+        "physique_rating": (1, 9), "bmi": (5, 80),
+    }
+    for name, (lo, hi) in _WEIGH_IN_BOUNDS.items():
         v = getattr(req, name)
-        if v is not None and not (0 < v < 100):
-            raise HTTPException(status_code=400, detail=f"{name} must be between 0 and 100")
+        if v is not None and not (lo <= v <= hi):
+            raise HTTPException(status_code=400, detail=f"{name} must be between {lo} and {hi}")
     if req.timestamp is not None:
         try:
-            datetime.fromisoformat(req.timestamp)
+            ts = datetime.fromisoformat(req.timestamp)
         except ValueError:
             raise HTTPException(status_code=400, detail="timestamp must be ISO format")
+        # Pre-1990 crashes the FIT uint32 date packer; future readings would
+        # sit invisibly ahead of every dashboard window.
+        if not (datetime(1990, 1, 1) <= ts.replace(tzinfo=None) <= datetime.now() + timedelta(days=1)):
+            raise HTTPException(status_code=400, detail="timestamp must be between 1990 and now")
 
     user_settings = get_settings().settings_for_user(req.user)
     loop = asyncio.get_event_loop()
@@ -1048,7 +1092,23 @@ async def upload_weigh_in(req: WeighInRequest):
         ))
     except GarminUploadError as err:
         raise HTTPException(status_code=502, detail=str(err))
-    return {"uploaded": True, "weight_kg": req.weight_kg}
+
+    # Backdated readings upload fine, but the fetcher only re-scans the
+    # trailing RESYNC_WINDOW_DAYS (default 7) — anything older lands in
+    # Garmin Connect yet never flows back into the local DB, so the user
+    # would believe it was logged while the dashboard and AI never see it.
+    note = None
+    if req.timestamp is not None:
+        resync_days = int(os.getenv("RESYNC_WINDOW_DAYS", "7") or 7)
+        ts_date = datetime.fromisoformat(req.timestamp).date()
+        if ts_date < (datetime.now().date() - timedelta(days=resync_days)):
+            note = (
+                f"Uploaded to Garmin Connect, but readings older than {resync_days} days "
+                f"are outside the fetcher's automatic re-scan window and won't appear in "
+                f"the local dashboard or AI data. To pull it in, run a one-off backfill: "
+                f"MANUAL_START_DATE={ts_date.isoformat()} python -m garmin_grafana.garmin_fetch"
+            )
+    return {"uploaded": True, "weight_kg": req.weight_kg, "note": note}
 
 
 @app.post("/api/chat")
@@ -1068,6 +1128,38 @@ async def chat(body: ChatRequest):
         sentinel = object()
         streamed_parts: list[str] = []
 
+        def _close_and_persist() -> None:
+            # Runs in a worker thread (never on the event loop — the SQLite
+            # write can block up to its 10s lock timeout, and close() may run
+            # generator code). Closing the agent generator FIRST matters: when
+            # the browser disconnects mid-answer (page refresh), the abandoned
+            # generator would otherwise sit paused forever and its exchange
+            # rollback (chat_stream's finally) would never run. close() while
+            # the in-flight next() is still executing in another thread raises
+            # ValueError — retry until the round's API call finishes.
+            for _ in range(240):  # up to ~2 min for an in-flight round
+                try:
+                    gen.close()
+                except ValueError:  # "generator already executing"
+                    time.sleep(0.5)
+                    continue
+                except Exception:
+                    logger.warning("Agent generator close failed", exc_info=True)
+                break
+            try:
+                assistant_text = "".join(streamed_parts).strip()
+                if not assistant_text:
+                    # Fallback: parse it back out of history (SDK-aware).
+                    assistant_text = _extract_assistant_text(history)
+                bundle.agent._memory.save_chat_memory(
+                    user_id=body.user,
+                    user_text=body.message,
+                    assistant_text=assistant_text[:2000] if assistant_text else None,
+                    tags=_extract_chat_tags(body.message),
+                )
+            except Exception:
+                logger.warning("Failed to persist chat memory", exc_info=True)
+
         try:
             while True:
                 event = await loop.run_in_executor(None, next, gen, sentinel)
@@ -1083,20 +1175,12 @@ async def chat(body: ChatRequest):
             logger.exception("Chat stream failed")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         finally:
-            try:
-                assistant_text = "".join(streamed_parts).strip()
-                if not assistant_text:
-                    # Fallback: parse it back out of history (SDK-aware).
-                    assistant_text = _extract_assistant_text(history)
-                bundle.agent._memory.save_chat_memory(
-                    user_id=body.user,
-                    user_text=body.message,
-                    assistant_text=assistant_text[:2000] if assistant_text else None,
-                    tags=_extract_chat_tags(body.message),
-                )
-            except Exception:
-                logger.warning("Failed to persist chat memory", exc_info=True)
-            yield "data: [DONE]\n\n"
+            # No yield in here: on client disconnect this generator is being
+            # closed (GeneratorExit) and a yield would raise. Fire the
+            # cleanup/persistence job into the executor un-awaited — awaiting
+            # inside a cancelled task's finally would re-raise immediately.
+            loop.run_in_executor(None, _close_and_persist)
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         sse_generator(),

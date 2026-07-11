@@ -230,12 +230,24 @@ class MemoryStore:
     # ------------------------------------------------------------------
     # Daily notes (user-authored free text about a given day)
     # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_note_date(date: str) -> str:
+        """Zero-pad and validate a note date; raises ValueError on junk.
+
+        daily_notes is keyed by the literal string — strptime tolerates
+        unpadded inputs like '2026-7-1', which would otherwise become a junk
+        primary key invisible to every zero-padded range comparison (the AI's
+        save_daily_note tool passes dates through with no other validation).
+        """
+        return datetime.strptime(str(date).strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+
     def upsert_daily_note(self, date: str, note: str) -> None:
         """Save (or replace) the free-text note for a calendar day.
 
         An empty/whitespace-only note deletes the row so blank days don't
         clutter the AI's context.
         """
+        date = self._normalize_note_date(date)
         if note is None or not note.strip():
             self.delete_daily_note(date)
             return
@@ -265,6 +277,7 @@ class MemoryStore:
         """
         if note is None or not note.strip():
             return
+        date = self._normalize_note_date(date)
         addition = note.strip()
         existing = self.get_daily_note(date)
         if not existing:

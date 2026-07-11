@@ -7,6 +7,7 @@ no LLM cost).  The LLM only ever sees the compact cached summaries.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -63,6 +64,9 @@ class CacheBuilder:
     def __init__(self, repo: SqliteRepo, memory: MemoryStore) -> None:
         self._repo = repo
         self._memory = memory
+        # Which local calendar day last got its trailing-window force rebuild
+        # (see refresh) — in-memory is fine; a restart just rebuilds once more.
+        self._last_trailing_rebuild_day: str | None = None
 
     def build_daily_summary(self, date: str, is_complete: bool = True) -> dict[str, Any]:
         """Compute and cache a full daily metric snapshot for one date.
@@ -282,5 +286,17 @@ class CacheBuilder:
                 self.build_daily_summary(entry["date"], is_complete=True)
         # Build any other missing days (these are complete)
         self.build_range(start, yesterday)
+        # Raw data lands AFTER a day is cached complete all the time: the
+        # fetcher's trailing resync picks up retroactive Garmin edits, a
+        # weigh-in flows back on the next watch sync, sleep syncs late after
+        # a travel day. Once per calendar day, force-rebuild the same trailing
+        # window the fetcher re-scans so those late arrivals reach the cache
+        # (cheap: ~7 rebuilds), instead of freezing the day's first snapshot
+        # forever.
+        if self._last_trailing_rebuild_day != today:
+            self._last_trailing_rebuild_day = today
+            resync_days = int(os.getenv("RESYNC_WINDOW_DAYS", "7") or 7)
+            trail_start = (datetime.now() - timedelta(days=resync_days)).strftime("%Y-%m-%d")
+            self.build_range(trail_start, yesterday, force=True)
         # Update baselines (excludes today)
         self.update_baselines()
