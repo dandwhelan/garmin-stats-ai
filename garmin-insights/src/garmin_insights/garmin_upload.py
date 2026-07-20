@@ -33,9 +33,9 @@ def _verify_token_owner(garmin, token_dir: str, expected_email: str) -> None:
 
     Same two-step identity check as the fetcher: the profile userName when it
     is email-form, else the owner marker the fetcher wrote at credential
-    login. Unverifiable ownership only warns (single-user setups without a
-    marker), but a positive mismatch is a hard error — uploading a weigh-in
-    to someone else's Garmin account is worse than failing.
+    login. Both unverifiable ownership and a positive mismatch are hard
+    errors — uploading a weigh-in to someone else's Garmin account is worse
+    than failing, so we never proceed on tokens we can't attribute.
     """
     if not expected_email:
         return
@@ -58,11 +58,12 @@ def _verify_token_owner(garmin, token_dir: str, expected_email: str) -> None:
             actual = None
 
     if actual is None:
-        logger.warning(
-            "Cannot verify which Garmin account the tokens in '%s' belong to — "
-            "proceeding with upload for '%s'.", token_dir, expected,
+        raise GarminUploadError(
+            f"Cannot verify which Garmin account the tokens in '{token_dir}' "
+            "belong to — refusing to upload rather than risk writing to the "
+            "wrong account. Run the fetcher once (it re-authenticates and "
+            "stamps an owner marker), then retry."
         )
-        return
     if actual != expected:
         raise GarminUploadError(
             f"The Garmin tokens in '{token_dir}' belong to '{actual}', not "

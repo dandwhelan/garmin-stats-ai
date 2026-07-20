@@ -179,7 +179,16 @@ let userProfileHeight = ''; // HEIGHT_CM from users/<id>.env via /api/health
 let userProfileAge = null;  // derived server-side from BIRTH_DATE
 let _weighInProfileUser = null; // which user the scan-profile fields are keyed to
 
+// Monotonic id for dashboard loads. Bumped whenever a fresh load starts (user
+// switch, range change, auto-refresh). Every async loader captures it at entry
+// and discards its response if a newer load started while the fetch was in
+// flight — without this, a slow response for user A overwrites user B's charts
+// after switching (each request bakes the user into its URL at build time).
+// Declared before its first reader (checkHealth) to stay clear of the `let` TDZ.
+let loadEpoch = 0;
+
 async function checkHealth() {
+  const epoch = loadEpoch;
   try {
     const res = await fetch(withUser('/api/health'));
     if (res.ok) {
@@ -187,6 +196,7 @@ async function checkHealth() {
       statusDot.title = 'Connected';
       try {
         const data = await res.json();
+        if (epoch !== loadEpoch) return; // stale — user switched mid-flight
         renderUserBadge(data.user);
         renderSyncBadge(data.last_sync);
         userBiologicalSex = (data.user?.biological_sex || '').toLowerCase();
@@ -602,10 +612,13 @@ let activeHeatmapMetric = 'stress';
 let activeBehaviorMetric = 'sleep';
 
 async function loadDashboard() {
+  const epoch = ++loadEpoch;
   try {
     const res = await fetch(buildDashboardUrl());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    dashboardData = await res.json();
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    dashboardData = data;
     const { summaries, baselines, date_range } = dashboardData;
     updateChartTitles(date_range);
     renderCards(summaries, baselines);
@@ -845,54 +858,6 @@ function renderEntitiesChart() {
       emptyMsg.style.display = '';
     }
   }
-
-  const sorted = [...dashboardData.summaries]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-days);
-  const labels = sorted.map(s => s.date.slice(5));
-
-  const datasets = metrics.map((key, i) => {
-    const color = ENTITY_COLORS[i % ENTITY_COLORS.length];
-    return {
-      label: entityLabel(key),
-      data: sorted.map(s => (s[key] != null ? s[key] : null)),
-      borderColor: color,
-      backgroundColor: type === 'bar' ? color : color + '22',
-      tension: 0.3,
-      spanGaps: true,
-      pointRadius: type === 'line' ? 3 : 0,
-      borderWidth: 2,
-    };
-  });
-
-  // Show the container BEFORE instantiating so Chart.js can measure the canvas
-  // (a chart created inside a display:none parent sizes to 0 and the reused
-  // canvas can get stuck, which broke every build after the first).
-  container.classList.add('active');
-  emptyMsg.style.display = 'none';
-
-  // Destroy whatever chart is actually bound to the canvas — use Chart.getChart
-  // as the source of truth so a stale `entitiesChart` reference can never strand
-  // a chart on the canvas and block re-creation. Guarded so a failed teardown
-  // can't abort the rebuild (this is what stopped Clear and re-Build working).
-  const canvas = document.getElementById('entities-chart');
-  const existing = entitiesChart || Chart.getChart(canvas);
-  if (existing) {
-    try { existing.destroy(); } catch (e) { console.warn('entities chart destroy failed', e); }
-  }
-  entitiesChart = null;
-
-  entitiesChart = new Chart(canvas, {
-    type,
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      scales: commonScales(),
-      plugins: commonPlugins(),
-    },
-  });
 }
 
 // Wire up Entities controls (deferred so DOM exists)
@@ -928,6 +893,7 @@ function safeRender(name, fn) {
 }
 
 async function loadVisualizations(start, end) {
+  const epoch = loadEpoch;
   try {
     const params = new URLSearchParams();
     if (start) params.set('start', start);
@@ -935,7 +901,9 @@ async function loadVisualizations(start, end) {
     addUserParam(params);
     const res = await fetch(`/api/visualizations?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    vizData = await res.json();
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    vizData = data;
     safeRender('acwr', () => renderAcwrChart(vizData.training));
     safeRender('readiness', () => renderReadinessChart(vizData.training));
     safeRender('heatAcclimation', () => renderHeatAcclimationChart(vizData.training));
@@ -954,10 +922,12 @@ async function loadVisualizations(start, end) {
 }
 
 async function loadIntradayHeatmap(metric) {
+  const epoch = loadEpoch;
   try {
     const res = await fetch(withUser(`/api/intraday/heatmap?metric=${metric}&days=14`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     renderIntradayHeatmap(data);
   } catch (e) {
     console.error('Intraday heatmap load failed:', e);
@@ -2340,6 +2310,7 @@ let lifestyleData = null;
 let activeDoseBehavior = null;
 
 async function loadLifestyle(start, end) {
+  const epoch = loadEpoch;
   try {
     const params = new URLSearchParams();
     if (start) params.set('start', start);
@@ -2347,7 +2318,9 @@ async function loadLifestyle(start, end) {
     addUserParam(params);
     const res = await fetch(`/api/lifestyle?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    lifestyleData = await res.json();
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    lifestyleData = data;
     safeRender('illnessRadar',    () => renderIllnessRadar(lifestyleData.illness_radar));
     safeRender('researchScorecard', () => renderResearchScorecard(lifestyleData.research_scorecard));
     safeRender('recoveryDebt',    () => renderRecoveryDebt(lifestyleData.recovery_debt));
@@ -2393,6 +2366,7 @@ function renderResearchScorecard(payload) {
 
 let menstrualChart = null;
 async function loadMenstrual(start, end) {
+  const epoch = loadEpoch;
   const section = document.getElementById('menstrual-section');
   if (!section) return;
   try {
@@ -2403,6 +2377,7 @@ async function loadMenstrual(start, end) {
     const res = await fetch(`/api/menstrual?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!data.tracked || !data.entries?.length) {
       section.style.display = 'none';
       return;
@@ -2486,6 +2461,7 @@ function gradientCssBar(generator) {
 }
 
 async function loadActivityMap(start, end) {
+  const epoch = loadEpoch;
   const section = document.getElementById('activity-map-section');
   const picker = document.getElementById('activity-map-picker');
   if (!section || !picker) return;
@@ -2497,6 +2473,7 @@ async function loadActivityMap(start, end) {
     const res = await fetch(`/api/activities/gps?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     activityList = (data.activities || []).slice().reverse(); // newest first
     if (!activityList.length) {
       section.style.display = 'none';
@@ -4112,6 +4089,7 @@ let envAqiChart = null;
 let envPollenChart = null;
 
 async function loadEnvironment(start, end) {
+  const epoch = loadEpoch;
   const section = document.getElementById('environment-section');
   const extraRow = document.getElementById('environment-extra-row');
   if (!section) return;
@@ -4123,6 +4101,7 @@ async function loadEnvironment(start, end) {
     const res = await fetch(`/api/environment?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!data.available || !data.entries?.length) {
       section.style.display = 'none';
       if (extraRow) extraRow.style.display = 'none';
@@ -4211,6 +4190,7 @@ function renderEnvironment(entries) {
 let haBedroomChart = null;
 
 async function loadHABedroom(start, end) {
+  const epoch = loadEpoch;
   const section = document.getElementById('ha-bedroom-section');
   if (!section) return;
   const params = new URLSearchParams();
@@ -4221,6 +4201,7 @@ async function loadHABedroom(start, end) {
     const res = await fetch(`/api/ha_sensors?${params.toString()}`);
     if (!res.ok) return;
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     const entries = (data.entries || []).filter(e => e.entity_id === 'sensor.bedroom_temp_xi_temperature');
     if (!data.available || !entries.length) { section.style.display = 'none'; return; }
     section.style.display = '';
@@ -4333,10 +4314,12 @@ async function loadPollenChart() {
   const e = new Date(today); e.setDate(today.getDate() + 5);
   const params = new URLSearchParams({ start: pad(s), end: pad(e) });
   addUserParam(params);
+  const epoch = loadEpoch;
   try {
     const res = await fetch(`/api/environment?${params.toString()}`);
     if (!res.ok) return;
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!data.available || !data.entries?.length) return;
     renderPollenChart(data.entries);
   } catch (err) {
@@ -4479,6 +4462,7 @@ function renderPollenChart(entries) {
 let envRecoveryChart = null;
 
 async function loadEnvironmentRecovery(start, end) {
+  const epoch = loadEpoch;
   const section = document.getElementById('env-recovery-section');
   if (!section) return;
   try {
@@ -4489,6 +4473,7 @@ async function loadEnvironmentRecovery(start, end) {
     const res = await fetch(`/api/environment/recovery?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!data.available || !data.entries?.length) {
       section.style.display = 'none';
       return;
@@ -4607,10 +4592,13 @@ async function loadBehaviorEnvironment(key, behavior, drivers, start, end) {
   if (start) params.set('start', start);
   if (end)   params.set('end', end);
   addUserParam(params);
+  const epoch = loadEpoch;
   try {
     const res = await fetch(`/api/behavior-environment?${params.toString()}`);
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!res.ok) { section.style.display = 'none'; return; }
     const data = await res.json();
+    if (epoch !== loadEpoch) return;
     if (!data.available || !data.entries?.length || data.n_logged === 0) {
       section.style.display = 'none';
       return;
@@ -4716,10 +4704,13 @@ async function loadBedroomSleep(start, end) {
   if (start) params.set('start', start);
   if (end)   params.set('end', end);
   addUserParam(params);
+  const epoch = loadEpoch;
   try {
     const res = await fetch(`/api/bedroom-temp-sleep?${params.toString()}`);
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!res.ok) { section.style.display = 'none'; return; }
     const data = await res.json();
+    if (epoch !== loadEpoch) return;
     if (!data.available || !data.entries?.length) { section.style.display = 'none'; return; }
     // Overnight bedroom temp depends on the HA sensor logging samples between
     // 22:00–08:00. Home Assistant's recorder only retains recent detailed
@@ -4850,10 +4841,13 @@ async function loadBehaviorRootCause(key, behavior, lookbackHours, start, end) {
   if (start) params.set('start', start);
   if (end)   params.set('end', end);
   addUserParam(params);
+  const epoch = loadEpoch;
   try {
     const res = await fetch(`/api/behavior-root-cause?${params.toString()}`);
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
     if (!res.ok) { section.style.display = 'none'; return; }
     const data = await res.json();
+    if (epoch !== loadEpoch) return;
     if (!data.available || !data.events?.length) { section.style.display = 'none'; return; }
     section.style.display = '';
     renderBehaviorRootCause(key, data);

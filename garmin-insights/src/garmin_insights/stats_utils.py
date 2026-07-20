@@ -31,6 +31,20 @@ except Exception:  # pragma: no cover - defensive: never break a render
 # a Pearson r on a handful of points is meaningless.
 MIN_PAIRS = 7
 
+# Single behavior→outcome lag policy, shared by every feature that joins a
+# logged behavior on day X to a night-derived outcome. Daily-summary rows key
+# sleep (and the metrics measured during/at the end of that sleep) to the
+# WAKE-UP date, so the night affected by day X's behavior is recorded on
+# day X+1 — joining on X pairs the behavior with the night BEFORE it, which
+# can reverse or erase real associations. RHR and wake body battery are in
+# the set because Garmin derives both from the same overnight window.
+NEXT_DAY_LAG_METRICS = frozenset({
+    "sleepScore", "deepSleepSeconds", "remSleepSeconds", "lightSleepSeconds",
+    "awakeSleepSeconds", "sleepTimeSeconds", "avgOvernightHrv",
+    "lowestHeartRate", "restingHeartRate", "bodyBatteryAtWakeTime",
+    "restStressDuration", "avgStressLevel",
+})
+
 
 def to_kg(value: float | None) -> float | None:
     """Normalise a Garmin mass reading to kilograms.

@@ -167,21 +167,51 @@ def _require_user(user: str) -> UserBundle:
         raise HTTPException(status_code=500, detail=f"Failed to load user: {e}")
 
 
+# Widest window any endpoint may serve. Bounds the work a single request can
+# trigger — the dashboard feeds this range into build_range, which constructs
+# every missing day, so an unchecked multi-year (or malformed) span meant
+# thousands of per-day cache builds from one request.
+MAX_RANGE_DAYS = 366
+
+
 def _resolve_range(start: str | None, end: str | None, default_days: int = 30) -> tuple[str, str]:
     # Local calendar day, not UTC — daily rows are keyed by local date, and a
     # UTC "today" points at yesterday during the BST offset window after
     # local midnight (same fix as build_portable_prompt).
-    end = end or datetime.now().strftime("%Y-%m-%d")
-    if not start:
+    def _parse(value: str, param: str) -> datetime:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid '{param}' date '{value}' — expected YYYY-MM-DD",
+            )
+
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Allow a small future window: environment_daily carries 5 forecast days
+    # (Open-Meteo forecast_days=5) that the pollen chart requests explicitly.
+    max_end = today + timedelta(days=7)
+    end_d = min(_parse(end, "end"), max_end) if end else today
+    if start:
+        start_d = _parse(start, "start")
+        if start_d > end_d:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'start' ({start}) must not be after 'end' ({end_d:%Y-%m-%d})",
+            )
+        if (end_d - start_d).days > MAX_RANGE_DAYS:
+            start_d = end_d - timedelta(days=MAX_RANGE_DAYS)
+            logger.warning(
+                "Requested range %s→%s exceeds %d days — clamping start to %s",
+                start, end_d.strftime("%Y-%m-%d"), MAX_RANGE_DAYS,
+                start_d.strftime("%Y-%m-%d"),
+            )
+    else:
         # Anchor the default start to the RESOLVED end, not today — an
         # end-only historical query otherwise got start > end (an empty,
         # inverted window indistinguishable from "no data").
-        try:
-            end_d = datetime.strptime(end, "%Y-%m-%d")
-        except ValueError:
-            end_d = datetime.now()
-        start = (end_d - timedelta(days=default_days)).strftime("%Y-%m-%d")
-    return start, end
+        start_d = end_d - timedelta(days=default_days)
+    return start_d.strftime("%Y-%m-%d"), end_d.strftime("%Y-%m-%d")
 
 
 def _extract_chat_tags(text: str) -> list[str]:

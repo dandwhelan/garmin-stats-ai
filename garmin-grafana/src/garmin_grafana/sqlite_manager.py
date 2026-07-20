@@ -266,6 +266,24 @@ class GarminDB:
         """)
         # Index for faster querying by activity
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_gps_id ON activity_gps(activity_id)")
+        # One-time migration: activity_gps used to be blind-inserted, so
+        # re-fetching an activity (FORCE_REPROCESS_ACTIVITIES defaults to on)
+        # duplicated every GPS point. Dedupe historical rows, then enforce
+        # uniqueness so re-processing upserts instead of duplicating.
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_activity_gps_unique'"
+        )
+        if cursor.fetchone() is None:
+            cursor.execute("""
+                DELETE FROM activity_gps WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM activity_gps
+                    GROUP BY activity_id, time, device
+                )
+            """)
+            cursor.execute(
+                "CREATE UNIQUE INDEX idx_activity_gps_unique "
+                "ON activity_gps(activity_id, time, device)"
+            )
 
 
         # Lifestyle Journal
@@ -701,26 +719,30 @@ class GarminDB:
                     }, ['activity_id'])
                 
                 elif measurement == 'ActivityGPS':
-                    # We usually don't update GPS points individually by key, simpler to just insert.
-                    # But if re-fetching, we want to avoid dups. 
-                    # For bulk GPS, might be better to check existence or delete-insert for session.
-                    # Here we just do insert for now, assuming conflict resolution on PK if we had one.
-                    # Since we don't have unique constraint on time+activity (multiple points same second?), just insert.
-                    # Actually, we should probably rely on a composite index or let duplication happen if not strict.
-                    # For efficiency, standard insert.
-                    cursor.execute("""
-                        INSERT INTO activity_gps (
-                            time, activity_id, device, latitude, longitude, altitude, distance, 
-                            duration_seconds, heart_rate, speed, grade_adjusted_speed, running_efficiency, 
-                            cadence, fractional_cadence, temperature, accumulated_power, power, activity_name
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        timestamp, tags.get('ActivityID'), device, 
-                        fields.get('Latitude'), fields.get('Longitude'), fields.get('Altitude'), fields.get('Distance'),
-                        fields.get('DurationSeconds'), fields.get('HeartRate'), fields.get('Speed'), fields.get('GradeAdjustedSpeed'),
-                        fields.get('RunningEfficiency'), fields.get('Cadence'), fields.get('Fractional_Cadence'),
-                        fields.get('Temperature'), fields.get('Accumulated_Power'), fields.get('Power'), fields.get('ActivityName')
-                    ))
+                    # Upsert on (activity_id, time, device) — enforced by
+                    # idx_activity_gps_unique — so re-fetching an activity
+                    # (FORCE_REPROCESS_ACTIVITIES) updates points in place
+                    # instead of duplicating the whole track.
+                    self._upsert(cursor, 'activity_gps', {
+                        'time': timestamp,
+                        'activity_id': tags.get('ActivityID'),
+                        'device': device,
+                        'latitude': fields.get('Latitude'),
+                        'longitude': fields.get('Longitude'),
+                        'altitude': fields.get('Altitude'),
+                        'distance': fields.get('Distance'),
+                        'duration_seconds': fields.get('DurationSeconds'),
+                        'heart_rate': fields.get('HeartRate'),
+                        'speed': fields.get('Speed'),
+                        'grade_adjusted_speed': fields.get('GradeAdjustedSpeed'),
+                        'running_efficiency': fields.get('RunningEfficiency'),
+                        'cadence': fields.get('Cadence'),
+                        'fractional_cadence': fields.get('Fractional_Cadence'),
+                        'temperature': fields.get('Temperature'),
+                        'accumulated_power': fields.get('Accumulated_Power'),
+                        'power': fields.get('Power'),
+                        'activity_name': fields.get('ActivityName'),
+                    }, ['activity_id', 'time', 'device'])
 
                 elif measurement == 'LifestyleJournal':
                    self._upsert(cursor, 'lifestyle_journal', {
@@ -883,6 +905,10 @@ class GarminDB:
         except Exception as e:
             logger.error(f"Failed to insert points: {e}")
             conn.rollback()
+            # Re-raise so callers know the batch was NOT persisted — swallowing
+            # this let the fetcher log success and advance its sync cursor past
+            # data that was silently rolled back (disk-full, lock, schema errors).
+            raise
         finally:
             conn.close()
 
