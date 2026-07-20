@@ -5,6 +5,8 @@ environment variables.  No-ops silently when any of these are unset.
 
 Data is stored in ha_sensor_daily: one row per (date, entity_id) with daily
 stats and an overnight mean (22:00–08:00) for sleep-quality correlation.
+Means are duration-weighted (each state held until the next change), since
+HA only records state *changes* and samples are irregularly spaced.
 """
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ import logging
 import os
 import sqlite3
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 import requests
@@ -61,10 +63,39 @@ def fetch_entity_history(
     return data[0] if data and data[0] else []
 
 
+def _aware_local(d: date, hour: int, tz) -> datetime:
+    """Aware datetime at `hour` on local day `d` (tz=None → system local)."""
+    naive = datetime.combine(d, time(hour))
+    return naive.replace(tzinfo=tz) if tz is not None else naive.astimezone()
+
+
+def _window_mean(
+    intervals: list[tuple[datetime, datetime, float]],
+    win_start: datetime,
+    win_end: datetime,
+) -> float | None:
+    """Duration-weighted mean of a step function over [win_start, win_end)."""
+    total = weight = 0.0
+    for start, end, val in intervals:
+        s, e = max(start, win_start), min(end, win_end)
+        if e > s:
+            w = (e - s).total_seconds()
+            total += val * w
+            weight += w
+    return total / weight if weight else None
+
+
 def build_daily_rows(
     ha_url: str, token: str, entity_id: str, past_days: int = DEFAULT_PAST_DAYS
 ) -> list[dict[str, Any]]:
-    """Aggregate HA state history to one row per calendar day."""
+    """Aggregate HA state history to one row per calendar day.
+
+    HA only records a sample when the state *changes*, so samples are
+    irregularly spaced and a plain arithmetic mean over-weights volatile
+    periods.  Means are duration-weighted instead: each state's value counts
+    for the time until the next state change (the trailing state runs to
+    "now", and every interval is clipped at the aggregation-window edges).
+    """
     states = fetch_entity_history(ha_url, token, entity_id, past_days)
     if not states:
         return []
@@ -72,9 +103,7 @@ def build_daily_rows(
     unit = (states[0].get("attributes") or {}).get("unit_of_measurement", "")
 
     tz = _local_tz()
-    daily: dict[str, list[float]] = defaultdict(list)
-    overnight: dict[str, list[float]] = defaultdict(list)  # keyed to morning date
-
+    samples: list[tuple[datetime, float]] = []
     for s in states:
         try:
             val = float(s["state"])
@@ -87,27 +116,42 @@ def build_daily_rows(
             continue
         if dt.tzinfo is None:  # HA timestamps are UTC when the offset is absent
             dt = dt.replace(tzinfo=timezone.utc)
-        dt = dt.astimezone(tz)  # bucket by LOCAL day/hour, not UTC
-        day = dt.date().isoformat()
-        daily[day].append(val)
-        hour = dt.hour
-        if hour >= 22 or hour < 8:
-            # Attribute to the date of the morning (i.e. the "night of")
-            night_key = (dt.date() if hour < 8 else dt.date() + timedelta(days=1)).isoformat()
-            overnight[night_key].append(val)
+        samples.append((dt.astimezone(tz), val))  # bucket by LOCAL day/hour, not UTC
+    if not samples:
+        return []
+    samples.sort(key=lambda p: p[0])
+
+    now_local = datetime.now(timezone.utc).astimezone(tz)
+    intervals: list[tuple[datetime, datetime, float]] = []
+    for i, (start, val) in enumerate(samples):
+        end = samples[i + 1][0] if i + 1 < len(samples) else max(now_local, start)
+        intervals.append((start, end, val))
+
+    daily: dict[date, list[float]] = defaultdict(list)  # sample values, for min/max
+    for start, _end, val in intervals:
+        daily[start.date()].append(val)
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     rows = []
     for day in sorted(daily):
         vals = daily[day]
-        night_vals = overnight.get(day, [])
+        day_mean = _window_mean(
+            intervals, _aware_local(day, 0, tz), _aware_local(day + timedelta(days=1), 0, tz)
+        )
+        if day_mean is None:  # zero-width coverage (duplicate timestamps) — fall back
+            day_mean = sum(vals) / len(vals)
+        # Overnight window 22:00–08:00 local, keyed to the morning date
+        # (i.e. the night that *ended* on `day`).
+        night_mean = _window_mean(
+            intervals, _aware_local(day - timedelta(days=1), 22, tz), _aware_local(day, 8, tz)
+        )
         rows.append({
-            "date":           day,
+            "date":           day.isoformat(),
             "entity_id":      entity_id,
-            "mean_value":     round(sum(vals) / len(vals), 3),
+            "mean_value":     round(day_mean, 3),
             "min_value":      round(min(vals), 3),
             "max_value":      round(max(vals), 3),
-            "overnight_mean": round(sum(night_vals) / len(night_vals), 3) if night_vals else None,
+            "overnight_mean": round(night_mean, 3) if night_mean is not None else None,
             "unit":           unit,
             "fetched_at":     fetched_at,
         })

@@ -6,7 +6,8 @@ Covers:
   * weigh-in upload fails closed on unverifiable token ownership;
   * behavior_impact joins behavior day X to the night recorded on X+1;
   * _resolve_range rejects malformed / inverted ranges and bounds the window;
-  * HA overnight aggregation buckets by local (USER_TIMEZONE) hours, not UTC.
+  * HA overnight aggregation buckets by local (USER_TIMEZONE) hours, not UTC;
+  * HA daily/overnight means are duration-weighted, not per-sample arithmetic.
 """
 
 from __future__ import annotations
@@ -212,6 +213,49 @@ def test_ha_overnight_uses_local_hours(monkeypatch):
     monkeypatch.setattr(ha_fetch, "fetch_entity_history", lambda *a, **k: states)
     rows = ha_fetch.build_daily_rows("http://x", "tok", "sensor.bedroom", 14)
     by_date = {r["date"]: r for r in rows}
-    assert by_date["2026-07-02"]["overnight_mean"] == 20.0
+    # Duration-weighted: 21.0 holds 22:30→07:30 BST (9 h); 19.0 holds
+    # 07:30→08:30 but is clipped at the 08:00 window edge (0.5 h).
+    assert by_date["2026-07-02"]["overnight_mean"] == round((21.0 * 9 + 19.0 * 0.5) / 9.5, 3)
     # 22:30 BST belongs to local day 07-01 even though it's 07-01 21:30 UTC
     assert by_date["2026-07-01"]["mean_value"] == 21.0
+
+
+def test_ha_means_are_duration_weighted(monkeypatch):
+    """A stable overnight state must not be out-voted by a burst of morning
+    state changes — each state counts for how long it held, not for how often
+    HA happened to record a change."""
+    monkeypatch.setenv("USER_TIMEZONE", "Europe/London")
+    states = [
+        # 22:00 local: 18.0 holds for the whole night (no changes until 07:00)
+        {"state": "18.0", "last_changed": "2026-07-01T21:00:00Z",
+         "attributes": {"unit_of_measurement": "C"}},
+        # Burst of changes 07:00–08:00 local, 20 min apart
+        {"state": "22.0", "last_changed": "2026-07-02T06:00:00Z"},
+        {"state": "23.0", "last_changed": "2026-07-02T06:20:00Z"},
+        {"state": "24.0", "last_changed": "2026-07-02T06:40:00Z"},
+        # 08:00 local: outside the 22:00–08:00 window; also ends the 24.0 interval
+        {"state": "30.0", "last_changed": "2026-07-02T07:00:00Z"},
+    ]
+    monkeypatch.setattr(ha_fetch, "fetch_entity_history", lambda *a, **k: states)
+    rows = ha_fetch.build_daily_rows("http://x", "tok", "sensor.bedroom", 14)
+    by_date = {r["date"]: r for r in rows}
+
+    # Plain arithmetic mean of the 4 in-window samples was (18+22+23+24)/4 = 21.75,
+    # dominated by the volatile morning hour. Duration-weighted:
+    # 18.0 × 9 h + (22+23+24) × 20 min each, over 10 h = 18.5.
+    assert by_date["2026-07-02"]["overnight_mean"] == 18.5
+
+    # The daily mean is duration-weighted too, over the 00:00–24:00 local day:
+    # 18.0 × 7 h + (22+23+24) × ⅓ h + 30.0 × 16 h (trailing state clipped at day end).
+    assert by_date["2026-07-02"]["mean_value"] == round((18 * 7 + 23 + 30 * 16) / 24, 3)
+
+    # min/max stay sample-based; the 18.0 sample sits on local day 07-01 (22:00 BST).
+    assert by_date["2026-07-02"]["min_value"] == 22.0
+    assert by_date["2026-07-02"]["max_value"] == 30.0
+
+    # 07-01: only the 18.0 state overlaps the day (22:00→midnight); no coverage
+    # of the previous night's window. The trailing 30.0 interval runs to "now"
+    # but must not fabricate rows for sample-less later days.
+    assert by_date["2026-07-01"]["mean_value"] == 18.0
+    assert by_date["2026-07-01"]["overnight_mean"] is None
+    assert set(by_date) == {"2026-07-01", "2026-07-02"}
