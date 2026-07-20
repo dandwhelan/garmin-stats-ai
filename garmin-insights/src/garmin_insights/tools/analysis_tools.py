@@ -16,7 +16,7 @@ from scipy import stats
 import difflib
 
 from garmin_insights.db.memory import MemoryStore
-from garmin_insights.stats_utils import benjamini_hochberg, pearson_r_p
+from garmin_insights.stats_utils import NEXT_DAY_LAG_METRICS, benjamini_hochberg, pearson_r_p
 
 logger = logging.getLogger(__name__)
 
@@ -218,16 +218,10 @@ class AnalysisEngine:
         vals_with: list[float] = []
         vals_without: list[float] = []
 
-        # Auto-detect lag for sleep metrics
-        # Behavior on Day T affects Sleep on Day T+1
-        shift_days = 0
-        SLEEP_METRICS = {
-            "sleepScore", "deepSleepSeconds", "remSleepSeconds", "lightSleepSeconds",
-            "awakeSleepSeconds", "avgOvernightHrv", "lowestHeartRate",
-            "restStressDuration", "avgStressLevel"  # Sometimes overnight stress
-        }
-        if metric in SLEEP_METRICS:
-            shift_days = 1
+        # Auto-detect lag for night-derived metrics: behavior on Day T affects
+        # the night recorded on Day T+1. Policy shared with the dashboard's
+        # behavior-impact chart via stats_utils.NEXT_DAY_LAG_METRICS.
+        shift_days = 1 if metric in NEXT_DAY_LAG_METRICS else 0
 
         # Find the canonical behavior name from the data to ensure consistency
         # We scan all summaries to find available behaviors first

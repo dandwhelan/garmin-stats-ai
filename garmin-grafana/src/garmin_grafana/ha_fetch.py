@@ -22,6 +22,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_PAST_DAYS = 14
 
 
+def _local_tz():
+    """Timezone for day/hour bucketing: USER_TIMEZONE if set, else system local.
+
+    HA returns UTC timestamps; grouping by their raw date/hour shifts the
+    documented 22:00–08:00 overnight window during DST (23:00–09:00 local in
+    BST) and can key readings near midnight to the wrong day.
+    """
+    tz_name = os.getenv("USER_TIMEZONE", "").strip()
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_name)
+        except Exception:
+            logger.warning("ha_fetch: unknown USER_TIMEZONE %r — using system local time", tz_name)
+    return None  # astimezone(None) converts to the system local timezone
+
+
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -54,6 +71,7 @@ def build_daily_rows(
 
     unit = (states[0].get("attributes") or {}).get("unit_of_measurement", "")
 
+    tz = _local_tz()
     daily: dict[str, list[float]] = defaultdict(list)
     overnight: dict[str, list[float]] = defaultdict(list)  # keyed to morning date
 
@@ -67,6 +85,9 @@ def build_daily_rows(
             dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         except Exception:
             continue
+        if dt.tzinfo is None:  # HA timestamps are UTC when the offset is absent
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(tz)  # bucket by LOCAL day/hour, not UTC
         day = dt.date().isoformat()
         daily[day].append(val)
         hour = dt.hour

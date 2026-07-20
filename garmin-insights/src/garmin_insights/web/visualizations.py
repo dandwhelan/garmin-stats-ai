@@ -16,7 +16,11 @@ import numpy as np
 import pandas as pd
 
 from garmin_insights.db.sqlite_repo import utc_to_local_day
-from garmin_insights.stats_utils import correlate_pair, finalize_correlations
+from garmin_insights.stats_utils import (
+    NEXT_DAY_LAG_METRICS,
+    correlate_pair,
+    finalize_correlations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -331,8 +335,16 @@ class VisualizationService:
             with_dates = set(lj[lj["behavior"] == behavior]["date"])
             if len(with_dates) < min_occurrences:
                 continue
-            ds_with = ds[ds["date"].isin(with_dates)]
-            ds_without = ds[~ds["date"].isin(with_dates)]
+            # Summary rows key sleep / overnight HRV / RHR to the WAKE-UP date,
+            # so the night affected by day X's behavior is the row dated X+1.
+            # Joining on X paired each behavior with the night BEFORE it —
+            # shift to the next calendar day (policy: NEXT_DAY_LAG_METRICS).
+            next_dates = {
+                (datetime.strptime(d[:10], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                for d in with_dates
+            }
+            ds_with = ds[ds["date"].isin(next_dates)]
+            ds_without = ds[~ds["date"].isin(next_dates)]
             row: dict = {
                 "behavior": behavior,
                 "n_with": int(len(ds_with)),
@@ -341,8 +353,12 @@ class VisualizationService:
             for k, label in (("sleepScore", "sleep"),
                               ("avgOvernightHrv", "hrv"),
                               ("restingHeartRate", "rhr")):
-                w = ds_with[k].dropna().astype(float)
-                wo = ds_without[k].dropna().astype(float)
+                if k not in NEXT_DAY_LAG_METRICS:  # same-day metric — no lag
+                    w = ds[ds["date"].isin(with_dates)][k].dropna().astype(float)
+                    wo = ds[~ds["date"].isin(with_dates)][k].dropna().astype(float)
+                else:
+                    w = ds_with[k].dropna().astype(float)
+                    wo = ds_without[k].dropna().astype(float)
                 w_mean = round(float(w.mean()), 1) if len(w) else None
                 wo_mean = round(float(wo.mean()), 1) if len(wo) else None
                 row[f"{label}_with"] = w_mean

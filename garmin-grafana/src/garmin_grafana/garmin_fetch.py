@@ -151,13 +151,19 @@ def _verify_token_owner(garmin):
 
     actual = username.strip().lower() if "@" in username else _read_token_owner()
     if actual is None:
+        # Fail CLOSED: unverifiable tokens could belong to anyone, and fetching
+        # through them would silently fill this user's DB with another account's
+        # data. Raising here sends the caller down the credential-login path,
+        # which re-authenticates as GARMINCONNECT_EMAIL and stamps the owner
+        # marker so future token logins are verifiable.
         logging.warning(
             f"Cannot verify which Garmin account the tokens in '{TOKEN_DIR}' belong to "
-            f"(no email-form profile userName and no owner marker). If the fetched data "
-            f"looks like another user's, delete '{TOKEN_DIR}' to force a fresh login as "
-            f"{GARMINCONNECT_EMAIL}."
+            f"(no email-form profile userName and no owner marker) — discarding them and "
+            f"re-authenticating as {GARMINCONNECT_EMAIL}."
         )
-        return
+        raise GarminConnectAuthenticationError(
+            f"Token store ownership unverifiable for '{TOKEN_DIR}' — re-authentication required"
+        )
     if actual != expected:
         logging.error(
             f"Stored tokens in '{TOKEN_DIR}' belong to Garmin account '{actual}', but this "
@@ -230,16 +236,16 @@ def garmin_login():
 
 # %%
 def write_points_to_db(points):
-    try:
-        if len(points) != 0:
-            if TAG_MEASUREMENTS_WITH_USER_EMAIL:
-                for item in points:
-                    item['tags'].update({'User_ID': getattr(garmin_obj, 'display_name', None) or 'Unknown'})
-            
-            garmin_db.insert_points(points)
-            logging.info("Success : updated SQLite database with new points")
-    except Exception as err:
-        logging.error("Write failed : Unable to interact with database! " + str(err))
+    # Deliberately does NOT swallow exceptions: a failed insert must propagate
+    # so fetch_write_bulk's per-date error handling runs and the main loop
+    # never advances last_influxdb_sync_time_UTC past unpersisted data.
+    if len(points) != 0:
+        if TAG_MEASUREMENTS_WITH_USER_EMAIL:
+            for item in points:
+                item['tags'].update({'User_ID': getattr(garmin_obj, 'display_name', None) or 'Unknown'})
+
+        garmin_db.insert_points(points)
+        logging.info("Success : updated SQLite database with new points")
 
 # %%
 def get_daily_stats(date_str):
@@ -775,7 +781,7 @@ def fetch_activity_GPS(activityIDdict): # Uses FIT file by default, falls back t
         activity_type = activityIDdict[activityID]
         if (activityID in PARSED_ACTIVITY_ID_LIST) and (not FORCE_REPROCESS_ACTIVITIES):
             logging.info(f"Skipping : Activity ID {activityID} has already been processed within current runtime")
-            return []
+            continue  # skip just this activity — a return here dropped every later activity of the day
         if (activityID in PARSED_ACTIVITY_ID_LIST) and (FORCE_REPROCESS_ACTIVITIES):
             logging.info(f"Re-processing : Activity ID {activityID} (FORCE_REPROCESS_ACTIVITIES is on)")
         try:
@@ -940,10 +946,10 @@ def fetch_activity_GPS(activityIDdict): # Uses FIT file by default, falls back t
                     logging.info(f"Success : Activity ID {activityID} stored in output file {tcx_path}")
             except requests.exceptions.Timeout as err:
                 logging.warning(f"Request timeout for fetching large activity record {activityID} - skipping record")
-                return []
+                continue  # a return here also threw away points already parsed for earlier activities
             except Exception as err:
                 logging.exception(f"Unable to fetch TCX for activity record {activityID} : skipping record")
-                return []
+                continue
 
             for activity in root.findall("tcx:Activities/tcx:Activity", ns):
                 activity_start_time = datetime.fromisoformat(activity.find("tcx:Id", ns).text.strip("Z"))
