@@ -40,6 +40,10 @@ _BASELINE_METRICS = [
     # anomaly / correlation tools only see metrics that live in the summaries
     # and baselines. visceral_fat is required by the visceral_fat_hrv KB rule.
     "weight_kg", "body_fat_pct", "visceral_fat",
+    # overnight_spo2_disordered_breathing keys on overnight SpO2 dips;
+    # sedentary_stress_coupling needs sedentary time. Neither rule could fire
+    # while these lived only in the raw tables.
+    "lowestSpo2Value", "sedentarySeconds",
 ]
 
 # body_composition db column → summary key. Masses are normalised to kg via

@@ -1246,7 +1246,7 @@ async def chat_history(
 async def scan(body: ScanRequest):
     bundle = _require_user(body.user)
 
-    valid_focus = {"general", "morning", "midday", "evening", "weekly"}
+    valid_focus = {"general", "morning", "midday", "evening", "night", "weekly"}
     if body.focus not in valid_focus:
         raise HTTPException(status_code=400, detail=f"focus must be one of {valid_focus}")
 
@@ -1263,6 +1263,25 @@ async def scan(body: ScanRequest):
         }
     except Exception as e:
         logger.error("Scan failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scans")
+async def list_scan_reports(
+    user: str = Query(default="default"),
+    limit: int = Query(default=10, ge=1, le=50),
+    focus: str | None = Query(default=None),
+):
+    """Persisted AI scan reports for this user, newest first."""
+    bundle = _require_user(user)
+    loop = asyncio.get_event_loop()
+    try:
+        reports = await loop.run_in_executor(
+            None, lambda: bundle.agent.get_scan_history(limit=limit, focus=focus)
+        )
+        return {"user": user, "reports": reports}
+    except Exception as e:
+        logger.error("Scan history fetch failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

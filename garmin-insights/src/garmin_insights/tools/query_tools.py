@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+import pandas as pd
+
 from garmin_insights.db.sqlite_repo import SqliteRepo
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.stats_utils import metabolic_age_years
@@ -150,6 +152,75 @@ def aggregate_workouts(activities: list[dict]) -> list[dict]:
     return out
 
 
+def _truncate_long_lists(obj: Any, keep: int = 45) -> Any:
+    """Recursively cap list lengths in a nested payload, keeping the LAST
+    ``keep`` entries (analytics lists are chronological, so the tail is the
+    most recent data). A marker string notes how much was dropped — dashboard
+    analytics can carry 90+ per-day rows, which is pure token waste in a tool
+    result."""
+    if isinstance(obj, list):
+        if len(obj) > keep:
+            omitted = len(obj) - keep
+            return [f"... {omitted} earlier entries omitted ..."] + [
+                _truncate_long_lists(v, keep) for v in obj[-keep:]
+            ]
+        return [_truncate_long_lists(v, keep) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _truncate_long_lists(v, keep) for k, v in obj.items()}
+    return obj
+
+
+def hourly_intraday_digest(df: pd.DataFrame, date: str, agg: str = "mean") -> dict | None:
+    """Collapse a timestamped intraday series to an hourly digest for one
+    LOCAL calendar day.
+
+    ``df`` is time-indexed with a single ``value`` column (UTC timestamps —
+    naive ones are treated as UTC). Returns hour-keyed stats plus the day's
+    peak/low sample, or None when the day has no valid samples. Negative
+    values are Garmin's "unmeasured" sentinels (-1/-2 in stress) and are
+    dropped.
+    """
+    if df is None or df.empty or "value" not in df.columns:
+        return None
+    idx = pd.to_datetime(df.index)
+    if getattr(idx, "tz", None) is None:
+        idx = idx.tz_localize("UTC")
+    local = idx.tz_convert(datetime.now().astimezone().tzinfo)
+    frame = pd.DataFrame(
+        {"value": pd.to_numeric(df["value"], errors="coerce").values}, index=local
+    ).dropna()
+    frame = frame[frame["value"] >= 0]
+    frame = frame[frame.index.strftime("%Y-%m-%d") == date]
+    if frame.empty:
+        return None
+
+    grouped = frame.groupby(frame.index.hour)["value"]
+    hourly: dict[str, Any] = {}
+    if agg == "sum":
+        for hour, total in grouped.sum().items():
+            hourly[f"{int(hour):02d}:00"] = int(round(float(total)))
+        peak_hour = max(hourly, key=hourly.get)
+        extremes = {"peak_hour": {"hour": peak_hour, "sum": hourly[peak_hour]}}
+    else:
+        stats = grouped.agg(["mean", "min", "max"])
+        for hour, row in stats.iterrows():
+            hourly[f"{int(hour):02d}:00"] = {
+                "avg": float(row["mean"]), "min": float(row["min"]), "max": float(row["max"]),
+            }
+        t_peak = frame["value"].idxmax()
+        t_low = frame["value"].idxmin()
+        extremes = {
+            "peak": {"value": float(frame["value"].max()), "time": t_peak.strftime("%H:%M")},
+            "low": {"value": float(frame["value"].min()), "time": t_low.strftime("%H:%M")},
+        }
+    return _round_floats({
+        "date": date,
+        "n_samples": int(len(frame)),
+        "hourly": hourly,
+        **extremes,
+    })
+
+
 def _df_to_clean_json(df) -> str:
     """Convert a DataFrame to compact JSON with nulls stripped and floats rounded."""
     records = json.loads(df.to_json(orient="records"))
@@ -229,6 +300,23 @@ class QueryToolHandler:
         self._repo = repo
         self._memory = memory
         self._analysis = analysis
+        # Dashboard analytics services, built lazily on first use — most chat
+        # turns never touch them, and constructing them here would couple every
+        # agent start-up to the web package.
+        self._lifestyle_service = None
+        self._viz_service = None
+
+    def _get_lifestyle_service(self):
+        if self._lifestyle_service is None:
+            from garmin_insights.web.lifestyle_viz import LifestyleService
+            self._lifestyle_service = LifestyleService(self._repo.db_path)
+        return self._lifestyle_service
+
+    def _get_viz_service(self):
+        if self._viz_service is None:
+            from garmin_insights.web.visualizations import VisualizationService
+            self._viz_service = VisualizationService(self._repo.db_path)
+        return self._viz_service
 
     # ------------------------------------------------------------------
     # Data query tools
@@ -309,10 +397,20 @@ class QueryToolHandler:
         # SQLite columns are snake_case (the Influx schema was camelCase). Using
         # the old camelCase names here silently dropped everything except
         # calories/distance, so the agent could not tell a run from a strength
-        # session.
+        # session. HR zones / speed / power / running dynamics are kept too —
+        # zone seconds exist on every activity and the grey_zone_training KB
+        # rule is unanswerable without them (nulls are stripped, so the sparse
+        # dynamics fields cost nothing on activities that lack them).
         keep_cols = [
             "activity_name", "activity_type", "average_hr", "max_hr",
             "calories", "distance", "elapsed_duration", "moving_duration",
+            "average_speed", "max_speed",
+            "hr_time_in_zone_1", "hr_time_in_zone_2", "hr_time_in_zone_3",
+            "hr_time_in_zone_4", "hr_time_in_zone_5",
+            "avg_power", "max_power", "norm_power",
+            "avg_run_cadence", "avg_stride_length",
+            "avg_vertical_oscillation", "avg_vertical_ratio",
+            "avg_ground_contact_time",
         ]
         available = [c for c in keep_cols if c in df.columns]
         df = df[available].reset_index()
@@ -514,9 +612,177 @@ class QueryToolHandler:
                                "predictions / endurance / hill) for this range"})
         return json.dumps(out, default=str)
 
+    def get_training_status(self, start_date: str, end_date: str) -> str:
+        """Garmin training status + load: status phrase, weekly load, ACWR,
+        acute/chronic load, fitness trend, and heat/altitude acclimation.
+        Latest reading per day (Garmin can report several times a day)."""
+        df = self._repo.query_training_status(start_date, end_date)
+        if df.empty:
+            return json.dumps({"message": "No training status data found — the "
+                               "device/account may not report training load"})
+        cols = [c for c in (
+            "training_status", "training_status_feedback_phrase",
+            "weekly_training_load", "fitness_trend", "acwr_percent",
+            "daily_training_load_acute", "daily_training_load_chronic",
+            "daily_acute_chronic_workload_ratio",
+            "heat_acclimation_percentage", "altitude_acclimation_percentage",
+        ) if c in df.columns]
+        d = df.reset_index() if df.index.name is not None else df
+        by_date: dict[str, dict] = {}
+        for row in sorted(d.to_dict(orient="records"), key=lambda r: str(r.get("time", ""))):
+            day = str(row.get("time", ""))[:10]
+            vals = {k: row[k] for k in cols
+                    if row.get(k) is not None and row.get(k) == row.get(k)}
+            if day and vals:
+                by_date[day] = vals
+        if not by_date:
+            return json.dumps({"message": "No training status values recorded for this range"})
+        # 2 d.p. — ACWR lives in 0.8-1.3, where 1 d.p. erases the signal
+        # (0.95 and 1.04 are different training states, both round to ~1).
+        return json.dumps(_round_floats(dict(sorted(by_date.items())), ndigits=2), default=str)
+
+    def get_intraday_data(self, date: str, metric: str = "stress") -> str:
+        """Hourly digest of one day's intraday samples for a metric."""
+        try:
+            df = self._repo.query_intraday_series(metric, date)
+        except ValueError:
+            return json.dumps({
+                "error": f"unknown metric '{metric}'",
+                "available_metrics": sorted(SqliteRepo.INTRADAY_SERIES),
+            })
+        agg = SqliteRepo.INTRADAY_SERIES[metric][2]
+        digest = hourly_intraday_digest(df, date, agg)
+        if digest is None:
+            return json.dumps({"message": f"No intraday {metric} samples recorded for {date}"})
+        return json.dumps({"metric": metric, **digest}, default=str)
+
+    def get_lifestyle_analytics(self, analytic: str, days: int = 60) -> str:
+        """Run one of the dashboard's precomputed lifestyle analytics."""
+        allowed = {
+            "sleep_regularity", "social_jet_lag", "caffeine_cutoff",
+            "behavior_dose_response", "behavior_recovery_cost",
+            "stress_resilience", "body_battery_decay", "illness_radar",
+            "inflammation_index", "recovery_debt", "habit_half_life",
+            "step_distribution", "who_intensity_target",
+            "stress_hour_fingerprint", "stress_trigger_leaderboard",
+            "research_signal_scorecard",
+        }
+        if analytic not in allowed:
+            return json.dumps({"error": f"unknown analytic '{analytic}'",
+                               "available": sorted(allowed)})
+        days = max(14, min(int(days), 180))
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        svc = self._get_lifestyle_service()
+        try:
+            if analytic == "habit_half_life":
+                result = svc.habit_half_life(today, lookback_days=days)
+            else:
+                result = getattr(svc, analytic)(start, today)
+        except Exception as e:
+            logger.error("Lifestyle analytic %s failed: %s", analytic, e)
+            return json.dumps({"error": f"analytic '{analytic}' failed: {e}"})
+        payload = _round_floats(_truncate_long_lists(result))
+        return json.dumps({"analytic": analytic, "window_days": days,
+                           "result": payload}, default=str)
+
+    def get_behavior_root_cause(self, behavior: str, days: int = 180,
+                                lookback_hours: int = 48) -> str:
+        """Per-event root-cause scan for a logged behavior (e.g. 'Migraines')."""
+        days = max(14, min(int(days), 365))
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        try:
+            result = self._get_viz_service().behavior_root_cause(
+                behavior, start, today, lookback_hours=lookback_hours
+            )
+        except Exception as e:
+            logger.error("behavior_root_cause failed: %s", e)
+            return json.dumps({"error": f"root-cause scan failed: {e}"})
+        return json.dumps(_round_floats(_truncate_long_lists(result)), default=str)
+
+    def get_bedroom_environment(self, start_date: str, end_date: str) -> str:
+        """Home Assistant daily sensor aggregates (e.g. bedroom temperature)."""
+        df = self._repo.query_ha_sensors(start_date, end_date)
+        if df is None or df.empty:
+            return json.dumps({
+                "available": False,
+                "message": "No Home Assistant sensor data — HA integration not configured",
+            })
+        if df.index.name is not None:
+            df = df.reset_index()
+        sensors: dict[str, dict] = {}
+        for row in df.to_dict(orient="records"):
+            entity = row.get("entity_id")
+            day = str(row.get("date", ""))[:10]
+            if not entity or not day:
+                continue
+            ent = sensors.setdefault(str(entity), {"unit": row.get("unit"), "days": {}})
+            vals = {label: row[col] for label, col in (
+                ("overnight", "overnight_mean"), ("mean", "mean_value"),
+                ("min", "min_value"), ("max", "max_value"),
+            ) if row.get(col) is not None and row.get(col) == row.get(col)}
+            if vals:
+                ent["days"][day] = vals
+        sensors = {k: v for k, v in sensors.items() if v["days"]}
+        if not sensors:
+            return json.dumps({"available": False,
+                               "message": "No sensor values recorded for this range"})
+        return json.dumps(_round_floats({
+            "available": True,
+            "note": "overnight = 22:00-08:00 mean — the value relevant to sleep quality",
+            "sensors": sensors,
+        }), default=str)
+
+    def get_environment_forecast(self) -> str:
+        """Open-Meteo FORECAST rows for today + coming days (planning only)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        end = (datetime.now() + timedelta(days=6)).strftime("%Y-%m-%d")
+        df = self._repo.query_environment(today, end)
+        if df is None or df.empty:
+            return json.dumps({
+                "available": False,
+                "message": "No environment data — HOME_LAT/HOME_LON not configured for this user",
+            })
+        if df.index.name is not None:
+            df = df.reset_index()
+        keys = (
+            "temp_max_c", "temp_min_c", "apparent_temp_max_c",
+            "precipitation_mm", "uv_index_max", "european_aqi", "pm25",
+            "pollen_alder", "pollen_birch", "pollen_grass",
+            "pollen_mugwort", "pollen_olive", "pollen_ragweed",
+        )
+        by_date = {}
+        for row in df.to_dict(orient="records"):
+            d = str(row.get("date", ""))[:10]
+            if not d:
+                continue
+            by_date[d] = {
+                k: row[k] for k in keys
+                if row.get(k) is not None and row.get(k) == row.get(k)
+                and not (k.startswith("pollen_") and row[k] in (0, 0.0))
+            }
+        return json.dumps(_round_floats({
+            "available": True,
+            "note": ("FORECAST data, not measurements — use only for "
+                     "planning/warnings (e.g. high-pollen or heat days ahead), "
+                     "never to explain metrics that already happened. "
+                     f"Rows after {today} are Open-Meteo forecasts; today's row "
+                     "mixes measurement and forecast."),
+            "entries": dict(sorted(by_date.items())),
+        }), default=str)
+
     # ------------------------------------------------------------------
     # Analysis tools
     # ------------------------------------------------------------------
+    def scan_all_anomalies(self) -> str:
+        """Anomaly scan across every baselined metric (last 3 days vs 30-day
+        baseline) — one call instead of naming metrics individually."""
+        results = self._analysis.run_full_anomaly_scan()
+        if not results:
+            return json.dumps({"message": "No anomalies vs 30-day baselines in the last 3 days"})
+        return json.dumps(_round_floats([r.to_dict() for r in results]), default=str)
+
     def compare_behavior_impact(self, behavior: str, metric: str, days: int = 30) -> str:
         result = self._analysis.compare_metric_with_behavior(behavior, metric, days)
         if result:
@@ -594,8 +860,13 @@ _DATE_PROP = {"type": "string", "description": "Date in YYYY-MM-DD format."}
 
 
 def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
-    """Return all tools as Anthropic-format tool definitions."""
-    return [
+    """Return all tools as Anthropic-format tool definitions.
+
+    The LAST definition gets a cache_control marker (added programmatically at
+    the end of this function) so the whole list is prompt-cached — Anthropic
+    bills these ~4k tokens on every round otherwise.
+    """
+    tools = [
         {
             "name": "get_daily_metrics",
             "description": (
@@ -655,8 +926,14 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
         {
             "name": "get_activity_history",
             "description": (
-                "Query exercise/activity summaries (type, avg HR, max HR, calories, distance, duration) "
-                "for a date range."
+                "Query exercise/activity summaries for a date range: type, avg/max "
+                "HR, calories, distance, durations, avg/max speed (m/s), "
+                "hr_time_in_zone_1..5 (seconds per HR zone — use for intensity "
+                "distribution, 80/20 polarization and grey-zone questions: "
+                "zones 1-2 = easy, zone 3 = grey zone, zones 4-5 = hard), and "
+                "when present: power (avg/max/norm) and running dynamics "
+                "(cadence, stride length, vertical oscillation/ratio, ground "
+                "contact time). Null fields are omitted."
             ),
             "input_schema": {
                 "type": "object",
@@ -1017,8 +1294,181 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 },
                 "required": ["start_date", "end_date"],
             },
-            # Cache the entire tool definitions list — it never changes at runtime
-            # and Anthropic charges for these ~2,500 tokens on every round otherwise.
-            "cache_control": {"type": "ephemeral"},
+        },
+        {
+            "name": "get_training_status",
+            "description": (
+                "Query Garmin training status & load for a date range: status "
+                "phrase (productive/maintaining/strained...), weekly training "
+                "load, acute & chronic load, ACWR (acute:chronic workload "
+                "ratio — a load-spike context signal, NOT an injury "
+                "predictor), fitness trend, and heat/altitude acclimation. "
+                "Returns the latest reading per day, date-keyed. Use for "
+                "training-load balance, overreaching and acwr_injury_risk "
+                "rule questions. Empty if the device doesn't report "
+                "training status."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        },
+        {
+            "name": "get_intraday_data",
+            "description": (
+                "Hourly digest of one day's intraday samples for a metric: "
+                "per-local-hour avg/min/max (sum for steps), total sample "
+                "count, and the day's peak/low sample with clock time. Use "
+                "this to answer WHEN something happened within a day — 'when "
+                "did my stress spike?', 'what time did body battery crash?', "
+                "'was my heart rate elevated overnight?'. Metrics: "
+                "heart_rate, stress, body_battery, steps, breathing_rate."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "date": {**_DATE_PROP, "description": "The day to analyse, YYYY-MM-DD."},
+                    "metric": {
+                        "type": "string",
+                        "enum": ["heart_rate", "stress", "body_battery", "steps", "breathing_rate"],
+                        "description": "Which intraday series to digest. Default 'stress'.",
+                    },
+                },
+                "required": ["date"],
+            },
+        },
+        {
+            "name": "get_lifestyle_analytics",
+            "description": (
+                "Run one of the dashboard's precomputed lifestyle analytics "
+                "and return its result — the same numbers the user sees on "
+                "their dashboard, so prefer this over re-deriving. Options: "
+                "sleep_regularity (SRI proxy), social_jet_lag, "
+                "caffeine_cutoff (late vs early vs none), "
+                "behavior_dose_response, behavior_recovery_cost (days for "
+                "HRV to recover per behavior), stress_resilience, "
+                "body_battery_decay, illness_radar, inflammation_index "
+                "(composite strain z-score, NOT biomarkers), recovery_debt, "
+                "habit_half_life, step_distribution, who_intensity_target, "
+                "stress_hour_fingerprint, stress_trigger_leaderboard, "
+                "research_signal_scorecard."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "analytic": {
+                        "type": "string",
+                        "enum": [
+                            "sleep_regularity", "social_jet_lag", "caffeine_cutoff",
+                            "behavior_dose_response", "behavior_recovery_cost",
+                            "stress_resilience", "body_battery_decay", "illness_radar",
+                            "inflammation_index", "recovery_debt", "habit_half_life",
+                            "step_distribution", "who_intensity_target",
+                            "stress_hour_fingerprint", "stress_trigger_leaderboard",
+                            "research_signal_scorecard",
+                        ],
+                        "description": "Which analytic to run.",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Look-back window in days (14-180). Default 60.",
+                    },
+                },
+                "required": ["analytic"],
+            },
+        },
+        {
+            "name": "get_behavior_root_cause",
+            "description": (
+                "Root-cause scan for a logged behavior/symptom (e.g. "
+                "'Migraines', 'Asthma symptoms'): for each day it was logged, "
+                "returns the prior ~48h of other logged behaviors, same-day "
+                "environmental extremes, and the day's recovery-marker deltas "
+                "(sleep / HRV / RHR). Use when the user asks WHY a recurring "
+                "symptom happens. Treat output as candidate confounders to "
+                "rank, never a single proven cause."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "behavior": {
+                        "type": "string",
+                        "description": "The logged behavior/symptom name (fuzzy matching NOT applied — use the exact journal name).",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Look-back window in days (14-365). Default 180.",
+                    },
+                    "lookback_hours": {
+                        "type": "integer",
+                        "description": "How many hours before each event to scan for confounders. Default 48.",
+                    },
+                },
+                "required": ["behavior"],
+            },
+        },
+        {
+            "name": "get_bedroom_environment",
+            "description": (
+                "Home Assistant daily sensor aggregates for a date range — "
+                "e.g. bedroom temperature/humidity. Each sensor returns "
+                "per-day overnight (22:00-08:00), mean, min and max values. "
+                "Use to check bedroom-climate effects on sleep (Baniassadi "
+                "2023: sleep efficiency drops as overnight bedroom "
+                "temperature rises above ~25°C). Returns available:false "
+                "when no HA integration is configured."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        },
+        {
+            "name": "get_environment_forecast",
+            "description": (
+                "Open-Meteo FORECAST for today + the next ~6 days at the "
+                "user's home location: temperature, precipitation, UV, air "
+                "quality (EU AQI / PM2.5) and per-species pollen. Use ONLY "
+                "for forward-looking planning and warnings (e.g. 'high grass "
+                "pollen tomorrow — expect possible next-day RHR elevation, "
+                "Buekers 2023'; 'apparent 30°C Thursday — hydrate and expect "
+                "heat strain'). NEVER cite forecast rows to explain metrics "
+                "that already happened — use get_environment_data for "
+                "measured history."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+        {
+            "name": "scan_all_anomalies",
+            "description": (
+                "Run anomaly detection across EVERY baselined metric at once "
+                "(last 3 days vs 30-day baselines, |z| >= 1.5). Returns all "
+                "deviations with z-scores and directions. Prefer this over "
+                "multiple find_anomalies calls when doing a broad health "
+                "check or scan."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
         },
     ]
+    # Cache the entire tool definitions list — it never changes at runtime and
+    # Anthropic bills these tokens on every round otherwise. Applied to the
+    # last element programmatically so reordering/appending tools can't
+    # silently strand the marker mid-list.
+    tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+    return tools

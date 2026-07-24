@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS daily_notes (
     note TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS scan_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    focus TEXT NOT NULL,
+    report TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_scan_reports_created ON scan_reports (created_at);
 """
 
 class MemoryStore:
@@ -458,6 +468,59 @@ class MemoryStore:
             )
             row = cursor.fetchone()
             return (row["cnt"] or 0) > 0
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Scan reports (persisted LLM scan narratives)
+    # ------------------------------------------------------------------
+    def save_scan_report(
+        self,
+        focus: str,
+        report: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> int:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO scan_reports (focus, report, start_date, end_date, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
+                (focus, report, start_date, end_date),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_scan_reports(
+        self, limit: int = 10, focus: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Most recent persisted scan reports, newest first."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            where = "WHERE focus = ?" if focus else ""
+            params: tuple = (focus, max(1, min(limit, 50))) if focus else (max(1, min(limit, 50)),)
+            cursor.execute(
+                f"SELECT id, focus, report, start_date, end_date, created_at "
+                f"FROM scan_reports {where} ORDER BY id DESC LIMIT ?",
+                params,
+            )
+            return [
+                {
+                    "id": r["id"],
+                    "focus": r["focus"],
+                    "report": r["report"],
+                    "start_date": r["start_date"],
+                    "end_date": r["end_date"],
+                    "created_at": r["created_at"],
+                }
+                for r in cursor.fetchall()
+            ]
         finally:
             conn.close()
 

@@ -167,6 +167,16 @@ _SCAN_PROMPTS = {
         "and analyze recent trends (7-day) for the key metrics. Prioritize actionable insights. "
         "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
     ),
+    "night": (
+        "Generate a pre-bed wind-down summary. Review today's physiological "
+        "strain arc and body battery trajectory, note any evening behaviors "
+        "logged today that research links to worse sleep (late caffeine, "
+        "alcohol, late/heavy meals, late exercise, screens) and say how "
+        "tonight's sleep and overnight recovery may be affected — remember "
+        "those effects will appear on TOMORROW's record. Close with at most "
+        "2 concrete wind-down suggestions. "
+        "Fetch at most 3 days of raw data — use get_my_baselines for context."
+    ),
     "weekly": (
         "Generate a weekly health summary. Analyze the last 7 days: "
         "1) Overall trends in sleep, stress, HRV, and body battery. "
@@ -195,9 +205,27 @@ _FOCUS_SNAPSHOT_DAYS = {
     "morning": 5,
     "midday": 5,
     "evening": 5,
+    "night": 5,
     "general": 14,
     "weekly": 14,
 }
+
+# Reasoning-effort floor per scan focus. The default INSIGHTS_EFFORT is "low"
+# (right for chat + quick briefings), but the deep-dive scans synthesise a
+# week-plus of multi-signal data — exactly where low effort under-thinks.
+# The user's configured effort is only ever raised to the floor, never lowered.
+_EFFORT_RANK = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
+_SCAN_MIN_EFFORT = {"weekly": "medium", "general": "medium"}
+
+
+def _effort_for_focus(focus: str, configured: str) -> str | None:
+    """Effort override for a scan focus, or None to keep the configured value."""
+    floor = _SCAN_MIN_EFFORT.get(focus)
+    if floor is None:
+        return None
+    if _EFFORT_RANK.get(configured, 0) >= _EFFORT_RANK[floor]:
+        return None
+    return floor
 
 
 class HealthAgent:
@@ -513,9 +541,28 @@ class HealthAgent:
     # ------------------------------------------------------------------
     # Non-streaming chat (CLI / scan reports)
     # ------------------------------------------------------------------
-    def chat(self, user_message: str, history: list[dict] | None = None) -> str:
-        """Send a message and get a response, executing tool calls as needed."""
+    def chat(
+        self,
+        user_message: str,
+        history: list[dict] | None = None,
+        *,
+        effort: str | None = None,
+    ) -> str:
+        """Send a message and get a response, executing tool calls as needed.
+
+        ``effort`` overrides the configured reasoning effort for this exchange
+        only (used by scan reports); ignored on legacy models that don't
+        support output_config.
+        """
         history = self._history if history is None else history
+        # Per-call copy — never mutate the shared _extra_call_params: one
+        # agent instance serves concurrent web requests.
+        call_params = self._extra_call_params
+        if effort and "output_config" in call_params:
+            call_params = {
+                **call_params,
+                "output_config": {**call_params["output_config"], "effort": effort},
+            }
         # Remember where this exchange started so a failed API call can roll
         # the history back — otherwise a dangling user turn (no assistant
         # reply) breaks role alternation and poisons every later call in the
@@ -532,7 +579,7 @@ class HealthAgent:
                     tools=self._tools_cache,
                     messages=history,
                     thinking=self._thinking,
-                    **self._extra_call_params,
+                    **call_params,
                 )
             except Exception as e:
                 logger.error("Claude API error: %s", e)
@@ -1473,11 +1520,26 @@ class HealthAgent:
                 pass  # malformed date — leave the relative phrasing alone
             base_prompt = date_context + base_prompt
 
+        # Every scan path used to reach here with empty context except the CLI
+        # `scan` command (which pre-builds its own) — so the web scan, the
+        # scheduler and chat /scan re-derived anomalies with tool calls the
+        # deterministic scanner had already computed better. Inject the local
+        # findings ourselves when the caller didn't. Skipped for explicit
+        # historical ranges: the scanner's windows are anchored to today and
+        # would contradict a "restrict to <range>" instruction.
+        if not context and not (start_date or end_date):
+            context = self._local_scan_context()
+
         if context:
             prompt = (
-                f"Here are some preliminary findings from a local analysis:\n\n"
+                "Here are precomputed findings from the local deterministic "
+                "analysis (anomalies vs 30-day baseline, composite recovery "
+                "strain, behavior impacts with p-values, 14-day trends — each "
+                "computed over its own window anchored to today):\n\n"
                 f"{context}\n\n"
-                f"Please verify these findings if necessary, and then proceed with the request:\n"
+                "Lead with these findings rather than re-deriving them from raw "
+                "rows; verify with tools only where genuinely needed, then "
+                "proceed with the request:\n"
                 f"{base_prompt}"
             )
         else:
@@ -1485,7 +1547,70 @@ class HealthAgent:
 
         # Scans use a fresh transient history so they don't pollute conversations
         scan_history: list[dict] = []
-        return self.chat(prompt, history=scan_history)
+        report = self.chat(
+            prompt,
+            history=scan_history,
+            effort=_effort_for_focus(focus, self._settings.claude_effort),
+        )
+        self._persist_scan_report(focus, report, start_date, end_date)
+        return report
+
+    def _local_scan_context(self) -> str:
+        """Run the deterministic InsightScanner and serialise its findings for
+        prompt injection — compact JSON with the per-finding prose (medical
+        context / citations / confounders) stripped, since the medical KB is
+        already in the cached system prompt."""
+        try:
+            from garmin_insights.insights.proactive import InsightScanner
+
+            scanner = InsightScanner(
+                self._memory, self._analysis, self._settings.biological_sex
+            )
+            findings = scanner.run_full_scan()
+        except Exception as e:
+            logger.warning("Local scan for context injection failed: %s", e)
+            return ""
+        drop = {
+            "medical_context", "citation", "confounders",
+            "claim_strength", "measurement_confidence",
+        }
+        compact = {
+            category: [
+                {k: v for k, v in item.items() if k not in drop}
+                for item in items
+            ]
+            for category, items in findings.items() if items
+        }
+        if not compact:
+            return ""
+        return json.dumps(_round_floats(compact), default=str)
+
+    def _persist_scan_report(
+        self,
+        focus: str,
+        report: str,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> None:
+        """Save the LLM scan narrative so users can review past reports.
+
+        Error shapes returned by chat() are not reports — don't archive them.
+        """
+        if not report or report.startswith((
+            "Error communicating with Claude",
+            "Maximum tool-calling rounds reached",
+        )):
+            return
+        try:
+            self._memory.save_scan_report(focus, report, start_date, end_date)
+        except Exception as e:
+            logger.warning("Failed to persist scan report: %s", e)
+
+    def get_scan_history(
+        self, limit: int = 10, focus: str | None = None
+    ) -> list[dict]:
+        """Recent persisted scan reports, newest first."""
+        return self._memory.get_scan_reports(limit=limit, focus=focus)
 
     def save_session(self, history: list[dict] | None = None) -> None:
         """Save a summary of a conversation to memory."""
