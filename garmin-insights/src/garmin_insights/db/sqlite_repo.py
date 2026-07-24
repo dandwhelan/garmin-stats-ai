@@ -49,6 +49,10 @@ _DAILY_STATS_COLS: dict[str, str] = {
     "moderateIntensityMinutes":"moderate_intensity_minutes",
     "vigorousIntensityMinutes":"vigorous_intensity_minutes",
     "averageSpo2":             "average_spo2",
+    # sedentary_stress_coupling KB rule needs sedentary time; the overnight
+    # body-battery level is a recovery marker the summaries otherwise lack.
+    "sedentarySeconds":        "sedentary_seconds",
+    "bodyBatteryDuringSleep":  "body_battery_during_sleep",
 }
 
 _SLEEP_COLS: dict[str, str] = {
@@ -66,6 +70,9 @@ _SLEEP_COLS: dict[str, str] = {
     "awakeCount":              "awake_count",
     "restlessMomentsCount":    "restless_moments_count",
     "averageRespirationValue": "average_respiration_value",
+    # overnight_spo2_disordered_breathing keys on dips, not the average —
+    # without the overnight LOW in the cache the rule could never fire.
+    "lowestSpo2Value":         "lowest_spo2_value",
 }
 
 
@@ -421,6 +428,37 @@ class SqliteRepo:
     # ------------------------------------------------------------------
     # Intraday (high-frequency) measurements
     # ------------------------------------------------------------------
+    # metric name → (table, value column, hourly aggregation) for the
+    # timestamped intraday series exposed to the AI agent. Whitelist keys —
+    # never interpolate caller-supplied names into the SQL.
+    INTRADAY_SERIES = {
+        "heart_rate":     ("heart_rate_intraday",     "heart_rate",         "mean"),
+        "stress":         ("stress_intraday",         "stress_level",       "mean"),
+        "body_battery":   ("body_battery_intraday",   "body_battery_level", "mean"),
+        "steps":          ("steps_intraday",          "steps_count",        "sum"),
+        "breathing_rate": ("breathing_rate_intraday", "breathing_rate",     "mean"),
+    }
+
+    def query_intraday_series(self, metric: str, date: str) -> pd.DataFrame:
+        """Timestamped intraday samples for one metric on one local date.
+
+        Unlike the legacy per-table helpers below (which select only the value
+        column), this keeps the time index so callers can bucket by local hour.
+        Intraday timestamps are stored in UTC; during BST a local day spans
+        23:00 the previous UTC day → 22:59 — widen the raw window a day each
+        side and let the caller trim to local time.
+        """
+        if metric not in self.INTRADAY_SERIES:
+            raise ValueError(f"unknown intraday metric '{metric}'")
+        table, col, _ = self.INTRADAY_SERIES[metric]
+        try:
+            start_wide = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+            end_wide = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            start_wide = end_wide = date
+        q = f"SELECT time, {col} AS value FROM {table} WHERE {self._TIME_RANGE}"
+        return self._query(q, self._time_params(start_wide, end_wide))
+
     def query_stress_intraday(
         self, date: str, start_hour: int = 0, end_hour: int = 24
     ) -> pd.DataFrame:

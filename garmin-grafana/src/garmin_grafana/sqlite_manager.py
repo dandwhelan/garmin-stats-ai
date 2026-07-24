@@ -619,6 +619,29 @@ class GarminDB:
                         'resting_heart_rate': fields.get('restingHeartRate'),
                     }, ['date'])
 
+                elif measurement == 'SleepIntraday':
+                    # Overnight per-sample series (SpO2 / respiration / sleep HR /
+                    # stress / body battery / HRV / stage / movement / restless).
+                    # The fetcher emits each sample type as its OWN point, and
+                    # types can share (time, device) — the plain _upsert would
+                    # null out every other type's column on conflict, so merge
+                    # with COALESCE instead.
+                    self._merge_upsert(cursor, 'sleep_intraday', {
+                        'time': timestamp,
+                        'device': device,
+                        'activity_level': fields.get('SleepMovementActivityLevel'),
+                        'activity_seconds': fields.get('SleepMovementActivitySeconds'),
+                        'stage_level': fields.get('SleepStageLevel'),
+                        'stage_seconds': fields.get('SleepStageSeconds'),
+                        'restless_value': fields.get('sleepRestlessValue'),
+                        'spo2_reading': fields.get('spo2Reading'),
+                        'respiration_value': fields.get('respirationValue'),
+                        'heart_rate': fields.get('heartRate'),
+                        'stress_value': fields.get('stressValue'),
+                        'body_battery': fields.get('bodyBattery'),
+                        'hrv_value': fields.get('hrvData'),
+                    }, ['time', 'device'])
+
                 elif measurement == 'HeartRateIntraday':
                     self._upsert(cursor, 'heart_rate_intraday', {
                         'time': timestamp,
@@ -917,10 +940,28 @@ class GarminDB:
         columns = ', '.join(data.keys())
         placeholders = ', '.join(['?'] * len(data))
         updates = ', '.join([f"{k}=Excluded.{k}" for k in data.keys() if k not in keys])
-        
+
         # SQLite's ON CONFLICT clause
         sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT({', '.join(keys)}) DO UPDATE SET {updates}"
-        
+
+        cursor.execute(sql, list(data.values()))
+
+    def _merge_upsert(self, cursor, table, data, keys):
+        """Upsert that MERGES on conflict: an incoming NULL never overwrites a
+        stored value (COALESCE keeps the existing one). Needed where distinct
+        sample types legitimately share a primary key — e.g. sleep_intraday,
+        where an SpO2 point and a heart-rate point can carry the same
+        (time, device) and each fills only its own column."""
+        columns = ', '.join(data.keys())
+        placeholders = ', '.join(['?'] * len(data))
+        updates = ', '.join(
+            f"{k}=COALESCE(Excluded.{k}, {table}.{k})"
+            for k in data.keys() if k not in keys
+        )
+        sql = (
+            f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT({', '.join(keys)}) DO UPDATE SET {updates}"
+        )
         cursor.execute(sql, list(data.values()))
 
     def get_latest_heart_rate_time(self):
