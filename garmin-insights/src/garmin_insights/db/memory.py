@@ -85,6 +85,23 @@ CREATE TABLE IF NOT EXISTS scan_reports (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_scan_reports_created ON scan_reports (created_at);
+
+CREATE TABLE IF NOT EXISTS experiments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    hypothesis TEXT NOT NULL,
+    behavior TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    expected_direction TEXT NOT NULL DEFAULT 'increase',
+    lag_days INTEGER NOT NULL DEFAULT 1,
+    min_days_per_arm INTEGER NOT NULL DEFAULT 5,
+    status TEXT NOT NULL DEFAULT 'active',
+    verdict TEXT,
+    result_json TEXT,
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments (status);
 """
 
 class MemoryStore:
@@ -521,6 +538,130 @@ class MemoryStore:
                 }
                 for r in cursor.fetchall()
             ]
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Experiments (n-of-1 personal behaviour trials)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _experiment_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        """Materialise an experiments row, parsing result_json inline under a
+        `result` key (the raw JSON column is dropped)."""
+        d = {k: row[k] for k in row.keys()}
+        raw = d.pop("result_json", None)
+        if raw:
+            try:
+                d["result"] = json.loads(raw)
+            except (ValueError, TypeError):
+                d["result"] = None
+        return d
+
+    def create_experiment(
+        self,
+        name: str,
+        hypothesis: str,
+        behavior: str,
+        metric: str,
+        expected_direction: str = "increase",
+        lag_days: int = 1,
+        min_days_per_arm: int = 5,
+    ) -> int:
+        """Register a new active experiment. Raises sqlite3.IntegrityError when
+        the name is already taken (the UNIQUE constraint)."""
+        conn = self._get_conn()
+        # started_at written via datetime('now') so it lands in SQLite's own
+        # space-separated UTC format, like every other timestamp here — a
+        # Python isoformat() 'T' separator sorts after a space and would break
+        # range comparisons (see the save_insight note above).
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO experiments
+                    (name, hypothesis, behavior, metric, expected_direction,
+                     lag_days, min_days_per_arm, status, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+                """,
+                (name, hypothesis, behavior, metric, expected_direction,
+                 int(lag_days), int(min_days_per_arm)),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_experiments(self, status: str | None = None) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            if status:
+                cursor.execute(
+                    "SELECT * FROM experiments WHERE status = ? "
+                    "ORDER BY started_at DESC, id DESC",
+                    (status,),
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM experiments ORDER BY started_at DESC, id DESC"
+                )
+            return [self._experiment_row_to_dict(r) for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_experiment(self, name: str) -> dict[str, Any] | None:
+        """Exact name match, case-insensitive."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM experiments WHERE name = ? COLLATE NOCASE", (name,)
+            )
+            row = cursor.fetchone()
+            return self._experiment_row_to_dict(row) if row else None
+        finally:
+            conn.close()
+
+    def record_experiment_result(self, name: str, result: dict) -> None:
+        """Store an interim evaluation — updates result_json only."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE experiments SET result_json = ? WHERE name = ? COLLATE NOCASE",
+                (json.dumps(result), name),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def conclude_experiment(self, name: str, verdict: str, result: dict) -> None:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE experiments
+                   SET status = 'completed', verdict = ?, result_json = ?,
+                       ended_at = datetime('now')
+                 WHERE name = ? COLLATE NOCASE
+                """,
+                (verdict, json.dumps(result), name),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def abandon_experiment(self, name: str) -> None:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE experiments SET status = 'abandoned', "
+                "ended_at = datetime('now') WHERE name = ? COLLATE NOCASE",
+                (name,),
+            )
+            conn.commit()
         finally:
             conn.close()
 

@@ -128,6 +128,15 @@ trends and correlations, and recall/save context from previous sessions.
   never overwrites or removes anything the user wrote by hand, so their own notes are preserved.
 - Fetch the minimum date range needed: use get_my_baselines for 30-day context rather than \
   requesting 30 days of raw data unless you need day-by-day detail
+- **Personal experiments.** When the user states a testable behavior→metric hypothesis \
+  ("magnesium improves my deep sleep", "late caffeine hurts my HRV"), offer to register it \
+  with start_experiment — and explain the behavior must be logged in the Garmin Connect \
+  lifestyle journal on the days it happens (and left unlogged otherwise), since the trial \
+  splits days on that log. When the user asks how an experiment is going, call \
+  evaluate_experiment (conclude=false for an interim read) and present the verdict WITH its \
+  caveats, framing it as the user's own n-of-1 evidence — the strongest form of "your own \
+  logs confirm it", but still an association in personal data, not clinical proof. Suggest \
+  concluding (conclude=true) only once BOTH arms have enough days.
 
 {medical_knowledge}
 """
@@ -190,6 +199,9 @@ _SCAN_PROMPTS = {
         "weight / body fat / muscle trend vs earlier readings — impedance estimates, so frame "
         "as personal trend, and skip this section entirely when there are no new readings. "
         "5) Top 3 actionable recommendations for next week. "
+        "6) Check get_experiments for active experiments — for each, report compliance "
+        "(on/off day counts) and the interim effect from evaluate_experiment, flagging "
+        "experiments ready to conclude. Skip this section silently when there are none. "
         "Compare this week to the 30-day baseline. "
         "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
     ),

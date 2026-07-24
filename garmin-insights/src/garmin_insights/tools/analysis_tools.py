@@ -304,6 +304,120 @@ class AnalysisEngine:
             cohens_d=_cohens_d(vals_with, vals_without),
         )
 
+    def evaluate_experiment(
+        self,
+        behavior: str,
+        metric: str,
+        start_date: str,
+        lag_days: int = 1,
+        min_days_per_arm: int = 5,
+    ) -> dict | None:
+        """Evaluate an n-of-1 self-experiment: a target metric on days the user
+        performed a behaviour vs days they did not, since ``start_date``.
+
+        Reuses ``compare_metric_with_behavior``'s date-based lag join. With
+        ``lag_days=1`` a behaviour logged the evening of day X is paired with
+        the metric recorded on day X+1 — the repo's "align behaviours to the
+        night they affect" rule — since sleep/overnight metrics are keyed to the
+        wake-up date. ``lag_days=0`` compares the same calendar day. Today is
+        excluded (its data is incomplete). Behaviour names are resolved fuzzily
+        against what's actually logged in the window.
+
+        Returns ``None`` only when the metric never appears in the window;
+        otherwise a dict of arm sizes, means, effect and significance — even
+        when one arm is still empty (the caller reports insufficient data).
+        """
+        from datetime import datetime, timedelta
+
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        summaries = self._memory.get_daily_summaries_range(start_date, yesterday)
+        summaries = self._filter_summaries(summaries, metric)
+
+        # Metric never recorded in the window → nothing to evaluate.
+        if not any(s.get(metric) is not None for s in summaries):
+            return None
+
+        try:
+            start_d = datetime.strptime(start_date, "%Y-%m-%d").date()
+            yest_d = datetime.strptime(yesterday, "%Y-%m-%d").date()
+            days_elapsed = max(0, (yest_d - start_d).days + 1)
+        except ValueError:
+            days_elapsed = len(summaries)
+
+        # Resolve the behaviour against what's logged in the window (fuzzy).
+        all_behaviors: set[str] = set()
+        for s in summaries:
+            all_behaviors.update(s.get("lifestyle", {}).keys())
+        canonical = self.find_matching_behavior(behavior, list(all_behaviors))
+
+        # Look the lagged target date up explicitly so a missing day (unworn
+        # watch / sync gap) never pairs a behaviour with the wrong night.
+        by_date = {s["date"]: s for s in summaries if s.get("date")}
+
+        vals_on: list[float] = []
+        vals_off: list[float] = []
+        for s in summaries:
+            behavior_date = s.get("date")
+            if behavior_date is None:
+                continue
+            if lag_days:
+                try:
+                    target = datetime.strptime(behavior_date, "%Y-%m-%d") + timedelta(days=lag_days)
+                except ValueError:
+                    continue
+                metric_row = by_date.get(target.strftime("%Y-%m-%d"))
+            else:
+                metric_row = s
+            if metric_row is None:
+                continue
+            metric_val = metric_row.get(metric)
+            if metric_val is None:
+                continue
+
+            behavior_data = s.get("lifestyle", {}).get(canonical) if canonical else None
+            # Presence convention shared across the codebase: status==1 OR value>0.
+            on = bool(behavior_data) and (
+                behavior_data.get("status") == 1 or (behavior_data.get("value") or 0) > 0
+            )
+            (vals_on if on else vals_off).append(float(metric_val))
+
+        n_on, n_off = len(vals_on), len(vals_off)
+        mean_on = float(np.mean(vals_on)) if vals_on else None
+        mean_off = float(np.mean(vals_off)) if vals_off else None
+        difference = (mean_on - mean_off) if (mean_on is not None and mean_off is not None) else None
+        pct_change = (difference / abs(mean_off) * 100) if (difference is not None and mean_off) else None
+
+        # Welch t-test when both arms have >=2 points; graceful p=None otherwise
+        # (matches stats_utils' SciPy-absent fallback rather than crashing).
+        p_value: float | None = None
+        if n_on >= 2 and n_off >= 2:
+            try:
+                _t, p_value = stats.ttest_ind(vals_on, vals_off, equal_var=False)
+                p_value = float(p_value)
+                if p_value != p_value:  # NaN (zero-variance arm)
+                    p_value = None
+            except Exception:  # pragma: no cover - defensive
+                p_value = None
+        cohens_d = _cohens_d(vals_on, vals_off)
+
+        return {
+            "behavior": canonical or behavior,
+            "metric": metric,
+            "start_date": start_date,
+            "days_elapsed": days_elapsed,
+            "n_on": n_on,
+            "n_off": n_off,
+            "mean_on": mean_on,
+            "mean_off": mean_off,
+            "difference": difference,
+            "pct_change": pct_change,
+            "p_value": p_value,
+            "cohens_d": cohens_d,
+            "effect_size": _effect_size_label(cohens_d),
+            "compliance": round(n_on / days_elapsed, 2) if days_elapsed else None,
+            "sufficient_data": n_on >= min_days_per_arm and n_off >= min_days_per_arm,
+        }
+
     def detect_trend(
         self, metric: str, days: int = 30
     ) -> TrendResult | None:

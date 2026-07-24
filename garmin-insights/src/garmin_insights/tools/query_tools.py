@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -286,6 +287,67 @@ def _night_label(wake_date: str) -> str:
         return f"{(d - timedelta(days=1)).isoformat()}→{d.isoformat()}"
     except (TypeError, ValueError):
         return wake_date
+
+
+# Common valid metric names, shown as examples when a proposed experiment
+# names a metric that isn't in the user's baselines or recent summaries.
+_EXAMPLE_METRICS = (
+    "sleepScore", "deepSleepSeconds", "remSleepSeconds", "lightSleepSeconds",
+    "sleepTimeSeconds", "awakeSleepSeconds", "avgOvernightHrv",
+    "restingHeartRate", "bodyBatteryAtWakeTime", "averageRespirationValue",
+    "avgStressLevel", "stressPercentage", "totalSteps", "bodyBatteryChange",
+    "restStressDuration",
+)
+
+
+def _experiment_verdict(
+    result: dict, expected_direction: str, min_days_per_arm: int
+) -> tuple[str, str]:
+    """Turn an evaluate_experiment result into a verdict + one-line rationale.
+
+    Verdicts: inconclusive_insufficient_data (an arm is still too small),
+    supported (significant in the predicted direction), opposite_effect
+    (significant but the wrong way), not_supported_yet (no significant
+    difference). Significance is the raw two-sided Welch p at 0.05 — n-of-1,
+    so no multiple-comparison correction is applied.
+    """
+    n_on = result.get("n_on", 0) or 0
+    n_off = result.get("n_off", 0) or 0
+    if not result.get("sufficient_data"):
+        need_on = max(0, min_days_per_arm - n_on)
+        need_off = max(0, min_days_per_arm - n_off)
+        parts = []
+        if need_on:
+            parts.append(f"{need_on} more day(s) WITH the behaviour")
+        if need_off:
+            parts.append(f"{need_off} more day(s) WITHOUT it")
+        detail = (
+            "Need " + " and ".join(parts) + f" (target {min_days_per_arm} per arm)."
+            if parts
+            else f"Need at least {min_days_per_arm} paired days per arm."
+        )
+        return "inconclusive_insufficient_data", detail
+
+    p = result.get("p_value")
+    diff = result.get("difference")
+    if p is not None and p < 0.05 and diff is not None:
+        matches = (
+            (expected_direction == "increase" and diff > 0)
+            or (expected_direction == "decrease" and diff < 0)
+        )
+        if matches:
+            return "supported", (
+                f"Significant change in the predicted direction "
+                f"(p={p:.3g}, difference {diff:+.2f})."
+            )
+        return "opposite_effect", (
+            f"Significant change, but OPPOSITE to the prediction "
+            f"(p={p:.3g}, difference {diff:+.2f})."
+        )
+    p_txt = "n/a" if p is None else f"{p:.3g}"
+    return "not_supported_yet", (
+        f"No statistically significant difference yet (p={p_txt}); keep logging."
+    )
 
 
 class QueryToolHandler:
@@ -850,6 +912,204 @@ class QueryToolHandler:
         if not notes:
             return json.dumps({"message": "No daily notes recorded for this range"})
         return json.dumps(notes, default=str)
+
+    # ------------------------------------------------------------------
+    # Experiment tools (n-of-1 personal behaviour trials)
+    # ------------------------------------------------------------------
+    def _known_metric_names(self) -> set[str]:
+        """Metrics the user actually has: baselined metrics + any numeric field
+        seen in the last 30 days of summaries. Used to validate an experiment's
+        target metric so it can't register something un-evaluable."""
+        names = set(self._memory.get_baselines().keys())
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        for s in self._memory.get_daily_summaries_range(start, today):
+            for k, v in s.items():
+                if k in ("date", "lifestyle", "note", "is_complete"):
+                    continue
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    names.add(k)
+        return names
+
+    def _behaviors_seen(self, days: int = 90) -> set[str]:
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        seen: set[str] = set()
+        for s in self._memory.get_daily_summaries_range(start, today):
+            seen.update(s.get("lifestyle", {}).keys())
+        return seen
+
+    def start_experiment(
+        self,
+        name: str,
+        hypothesis: str,
+        behavior: str,
+        metric: str,
+        expected_direction: str = "increase",
+        lag_days: int = 1,
+        min_days_per_arm: int = 5,
+    ) -> str:
+        """Register an n-of-1 experiment tying a lifestyle behaviour to a metric."""
+        direction = (expected_direction or "").strip().lower()
+        if direction not in ("increase", "decrease"):
+            return json.dumps({
+                "error": "expected_direction must be 'increase' or 'decrease'.",
+            })
+
+        known = self._known_metric_names()
+        if metric not in known:
+            examples = sorted(known)[:15] or list(_EXAMPLE_METRICS)
+            return json.dumps({
+                "error": f"unknown metric '{metric}' — it is not in the user's "
+                         "baselines or the last 30 days of summaries.",
+                "example_metrics": examples,
+            })
+
+        # Reject a duplicate name up front (the column is globally UNIQUE).
+        existing = self._memory.get_experiment(name)
+        if existing:
+            if existing.get("status") == "active":
+                return json.dumps({
+                    "error": f"An active experiment named '{name}' already exists. "
+                             "Evaluate or conclude it, or choose a different name.",
+                    "existing": _round_floats(existing),
+                })
+            return json.dumps({
+                "error": f"An experiment named '{name}' already exists "
+                         f"(status: {existing.get('status')}). Choose a different name.",
+            })
+
+        # Resolve the behaviour against what's been logged; warn (don't fail)
+        # when it hasn't been logged yet so the user can start before day one.
+        canonical = self._analysis.find_matching_behavior(
+            behavior, list(self._behaviors_seen(90))
+        )
+        resolved = canonical or behavior
+        warning = None
+        if not canonical:
+            warning = (
+                f"behavior not yet logged — log '{behavior}' in the Garmin Connect "
+                "lifestyle journal on days you do it, and skip logging on days you don't"
+            )
+
+        try:
+            self._memory.create_experiment(
+                name=name, hypothesis=hypothesis, behavior=resolved, metric=metric,
+                expected_direction=direction, lag_days=int(lag_days),
+                min_days_per_arm=int(min_days_per_arm),
+            )
+        except sqlite3.IntegrityError:
+            return json.dumps({
+                "error": f"An experiment named '{name}' already exists.",
+            })
+
+        lag_txt = ("compared same-day" if int(lag_days) == 0
+                   else f"paired with the metric {int(lag_days)} day(s) later "
+                        "(the night it affects)")
+        protocol = (
+            f"Log '{resolved}' in the Garmin Connect lifestyle journal every day it "
+            f"happens, and leave it unlogged on days it doesn't. Aim for at least "
+            f"{int(min_days_per_arm)} days with and {int(min_days_per_arm)} days without, "
+            f"then evaluate after ~2-3 weeks. Each behaviour day is {lag_txt}."
+        )
+        payload: dict[str, Any] = {
+            "created": True,
+            "experiment": _round_floats(self._memory.get_experiment(name)),
+            "protocol": protocol,
+        }
+        if warning:
+            payload["warning"] = warning
+        return json.dumps(payload, default=str)
+
+    def get_experiments(self, status: str = "active") -> str:
+        """List experiments by status (active/completed/abandoned/all)."""
+        status = (status or "active").strip().lower()
+        if status not in ("active", "completed", "abandoned", "all"):
+            return json.dumps({
+                "error": "status must be one of active, completed, abandoned, all.",
+            })
+        rows = self._memory.get_experiments(None if status == "all" else status)
+        if not rows:
+            return json.dumps({"message": f"No {status} experiments."})
+        today = datetime.now().date()
+        for r in rows:
+            if r.get("status") == "active" and r.get("started_at"):
+                try:
+                    started = datetime.strptime(str(r["started_at"])[:10], "%Y-%m-%d").date()
+                    r["days_elapsed"] = max(0, (today - started).days)
+                except ValueError:
+                    pass
+        return json.dumps(_round_floats(rows), default=str)
+
+    def evaluate_experiment(
+        self, name: str, conclude: bool = False, abandon: bool = False
+    ) -> str:
+        """Evaluate (or abandon/conclude) a registered experiment."""
+        row = self._memory.get_experiment(name)
+        if row is None:
+            active = [r["name"] for r in self._memory.get_experiments("active")]
+            return json.dumps({
+                "error": f"No experiment named '{name}'.",
+                "active_experiments": active,
+            })
+
+        if abandon:
+            self._memory.abandon_experiment(row["name"])
+            return json.dumps({
+                "abandoned": True,
+                "name": row["name"],
+                "message": f"Experiment '{row['name']}' marked abandoned.",
+            })
+
+        min_days = int(row.get("min_days_per_arm") or 5)
+        lag_days = int(row.get("lag_days") or 0)
+        start_date = str(row.get("started_at", ""))[:10]
+        expected_direction = row.get("expected_direction") or "increase"
+
+        result = self._analysis.evaluate_experiment(
+            row["behavior"], row["metric"], start_date,
+            lag_days=lag_days, min_days_per_arm=min_days,
+        )
+        if result is None:
+            return json.dumps({
+                "name": row["name"],
+                "metric": row["metric"],
+                "message": (f"Metric '{row['metric']}' has no data since {start_date} "
+                            "— nothing to evaluate yet."),
+            })
+
+        # Verdict from the RAW result, before rounding (2 d.p. on p is fine for
+        # display but the < 0.05 test must see the unrounded value).
+        verdict, detail = _experiment_verdict(result, expected_direction, min_days)
+        caveats = [
+            "Single n-of-1 comparison — no multiple-comparison correction applied.",
+            "Non-randomized: you chose which days to do the behaviour, so day-of-week, "
+            "motivation and co-occurring habits can travel with it.",
+            "Confounders are not controlled — sleep debt, alcohol, stress, illness, "
+            "travel and environment (heat / air quality / pollen) all move these metrics.",
+            "The metric is a device estimate (e.g. Garmin sleep-stage / HRV figures), "
+            "not a clinical measurement.",
+            "This is an association in your own personal data, not clinical evidence.",
+        ]
+
+        # 2 d.p. — 1 d.p. would collapse p=0.04 vs 0.4 (mirrors get_training_status).
+        result = _round_floats(result, ndigits=2)
+        payload: dict[str, Any] = {
+            "name": row["name"],
+            "hypothesis": row["hypothesis"],
+            "expected_direction": expected_direction,
+            "verdict": verdict,
+            "verdict_detail": detail,
+            "result": result,
+            "caveats": caveats,
+        }
+        if conclude:
+            self._memory.conclude_experiment(row["name"], verdict, result)
+            payload["concluded"] = True
+        else:
+            self._memory.record_experiment_result(row["name"], result)
+            payload["interim"] = True
+        return json.dumps(payload, default=str)
 
 
 # ------------------------------------------------------------------
@@ -1463,6 +1723,112 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        },
+        {
+            "name": "start_experiment",
+            "description": (
+                "Register a personal n-of-1 experiment when the user states a "
+                "TESTABLE hypothesis linking something they can log to a Garmin "
+                "metric (e.g. 'does magnesium improve my deep sleep?', 'I think "
+                "a late coffee wrecks my HRV'). It ties a lifestyle-journal "
+                "behaviour to a target daily metric so you can later measure "
+                "behaviour-days vs non-behaviour-days. The behaviour MUST be "
+                "logged by the user in the Garmin Connect lifestyle journal on "
+                "the days it happens (and left unlogged otherwise) — tell them "
+                "so. Offer this proactively whenever a user proposes a cause→"
+                "effect they want to test. Returns the created experiment plus a "
+                "protocol; a `warning` field appears if the behaviour isn't "
+                "logged yet."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Short unique name for the experiment (e.g. 'magnesium-deep-sleep').",
+                    },
+                    "hypothesis": {
+                        "type": "string",
+                        "description": "The testable hypothesis in the user's words (e.g. 'Magnesium before bed increases my deep sleep').",
+                    },
+                    "behavior": {
+                        "type": "string",
+                        "description": "The lifestyle-journal behaviour to split on (e.g. 'Magnesium'). Fuzzy-matched to logged behaviours.",
+                    },
+                    "metric": {
+                        "type": "string",
+                        "description": "Target daily metric (e.g. 'deepSleepSeconds', 'avgOvernightHrv', 'restingHeartRate').",
+                    },
+                    "expected_direction": {
+                        "type": "string",
+                        "enum": ["increase", "decrease"],
+                        "description": "Whether the behaviour is expected to raise or lower the metric. Default 'increase'.",
+                    },
+                    "lag_days": {
+                        "type": "integer",
+                        "description": "Days between the behaviour and the metric it affects. Default 1 (evening behaviour → next morning's overnight metric). Use 0 for same-day metrics like daytime stress or steps.",
+                    },
+                    "min_days_per_arm": {
+                        "type": "integer",
+                        "description": "Minimum behaviour-days AND non-behaviour-days needed before a verdict is trustworthy. Default 5.",
+                    },
+                },
+                "required": ["name", "hypothesis", "behavior", "metric"],
+            },
+        },
+        {
+            "name": "get_experiments",
+            "description": (
+                "List the user's registered n-of-1 experiments. Use when the "
+                "user asks what experiments are running, and in weekly scans to "
+                "check for active experiments worth reporting on. Active rows "
+                "include days_elapsed; each row carries the last stored result."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "completed", "abandoned", "all"],
+                        "description": "Which experiments to list. Default 'active'.",
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "evaluate_experiment",
+            "description": (
+                "Evaluate a registered experiment: compares the target metric on "
+                "days-with-behaviour vs days-without since it started, with a "
+                "Welch t-test + Cohen's d, and returns a verdict (supported / "
+                "not_supported_yet / opposite_effect / "
+                "inconclusive_insufficient_data) with honest n-of-1 caveats. Use "
+                "this when the user asks how an experiment is going ('how's my "
+                "magnesium experiment?') — leave conclude=false for an interim "
+                "read. Set conclude=true only once BOTH arms have enough days and "
+                "the user wants to close it (persists the verdict). Set "
+                "abandon=true to drop an experiment. Present the verdict WITH its "
+                "caveats — it is the user's own personal evidence, not clinical proof."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The experiment name to evaluate.",
+                    },
+                    "conclude": {
+                        "type": "boolean",
+                        "description": "If true, mark the experiment completed and persist the verdict. Default false (interim evaluation).",
+                    },
+                    "abandon": {
+                        "type": "boolean",
+                        "description": "If true, mark the experiment abandoned without evaluating. Default false.",
+                    },
+                },
+                "required": ["name"],
             },
         },
     ]

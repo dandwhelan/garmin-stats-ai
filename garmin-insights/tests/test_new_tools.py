@@ -142,6 +142,7 @@ def test_tool_registry_invariants():
         "get_training_status", "get_intraday_data", "get_lifestyle_analytics",
         "get_behavior_root_cause", "get_bedroom_environment",
         "get_environment_forecast", "scan_all_anomalies",
+        "start_experiment", "get_experiments", "evaluate_experiment",
     ):
         assert expected in names
 
