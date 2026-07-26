@@ -808,6 +808,34 @@ class MemoryStore:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Lifestyle journal (read-only view for the proactive scanner)
+    # ------------------------------------------------------------------
+    def recent_lifestyle_entries(self, hours: int = 48):
+        """Active lifestyle_journal rows whose date falls within the last
+        ``hours`` (day-granular — the journal is keyed by calendar date).
+
+        Feeds InsightScanner's composite-strain contributor ranking, where
+        user-logged behaviours outrank generic confounders. Returns a pandas
+        DataFrame with at least a ``behavior`` column; empty when the fetcher
+        hasn't created the table yet.
+        """
+        import pandas as pd
+
+        cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d")
+        conn = self._get_conn()
+        try:
+            return pd.read_sql_query(
+                "SELECT date, behavior, category, value FROM lifestyle_journal "
+                "WHERE status = 1 AND date >= ?",
+                conn, params=(cutoff,),
+            )
+        except Exception as e:
+            logger.debug("recent_lifestyle_entries unavailable: %s", e)
+            return pd.DataFrame(columns=["date", "behavior", "category", "value"])
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------
     def health_check(self) -> dict[str, Any]:

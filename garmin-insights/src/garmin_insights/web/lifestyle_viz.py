@@ -28,13 +28,8 @@ _LOWER_IS_BETTER = {"restingHeartRate", "stressPercentage", "highStressPercentag
                      "averageRespirationValue"}
 
 
-def _round(x, ndigits: int = 1):
-    try:
-        if x is None or pd.isna(x):
-            return None
-        return round(float(x), ndigits)
-    except Exception:
-        return None
+# NOTE: _round is defined once at the bottom of this module (module-level
+# functions resolve at call time, so a second def here would just shadow it).
 
 
 def _int_or_none(x):
@@ -91,6 +86,12 @@ class LifestyleService:
         now = time.monotonic()
         if hit is not None and (now - hit[0]) < _LOAD_CACHE_TTL_SECONDS:
             return hit[1].copy()
+        # Sweep expired entries on every miss — stale (kind, window) keys from
+        # abandoned date ranges are never re-requested, so without this the
+        # cache holds a DataFrame per window the user ever viewed, forever.
+        for stale in [k for k, (ts, _) in list(self._load_cache.items())
+                      if (now - ts) >= _LOAD_CACHE_TTL_SECONDS]:
+            self._load_cache.pop(stale, None)
         df = self._read_summaries(start, end) if kind == "summaries" \
             else self._read_journal(start, end)
         self._load_cache[key] = (now, df)
@@ -167,9 +168,16 @@ class LifestyleService:
                 continue
             points: list[dict] = []
             for _, r in group.iterrows():
-                # The night affected = sleep recorded on the SAME date the behavior was logged
-                # (Garmin records sleep with the date of waking).
-                row = ds.loc[r["date"]] if r["date"] in ds.index else None
+                # Summary rows key sleep / overnight HRV / RHR to the WAKE-UP
+                # date, so the night affected by day X's behavior is the row
+                # dated X+1 (policy: stats_utils.NEXT_DAY_LAG_METRICS — joining
+                # on X pairs the dose with the night BEFORE it).
+                try:
+                    night = (datetime.strptime(str(r["date"])[:10], "%Y-%m-%d")
+                             + timedelta(days=1)).strftime("%Y-%m-%d")
+                except ValueError:
+                    continue
+                row = ds.loc[night] if night in ds.index else None
                 if row is None:
                     continue
                 points.append({
@@ -198,6 +206,23 @@ class LifestyleService:
 
         late_dates = set(lj[lj["behavior"].str.contains("Late Caffeine", case=False, na=False)]["date"])
         any_dates = set(lj[lj["behavior"].str.contains("Caffeine", case=False, na=False)]["date"])
+
+        # Sleep metrics are keyed to the WAKE-UP date, so caffeine on day X
+        # affects the night recorded on X+1 (policy: NEXT_DAY_LAG_METRICS —
+        # the old same-day join graded each caffeine day by the night BEFORE
+        # the coffee was drunk).
+        def _next_days(dates: set) -> set[str]:
+            out = set()
+            for d in dates:
+                try:
+                    out.add((datetime.strptime(str(d)[:10], "%Y-%m-%d")
+                             + timedelta(days=1)).strftime("%Y-%m-%d"))
+                except ValueError:
+                    continue
+            return out
+
+        late_dates = _next_days(late_dates)
+        any_dates = _next_days(any_dates)
         early_dates = any_dates - late_dates
 
         def _stats(dates: set[str], label: str) -> dict:
@@ -571,8 +596,14 @@ class LifestyleService:
             cells = []
             seen = set(sub["date"])
             for d in dates:
-                v = sub[sub["date"] == d]["value"].mean() if d in seen else None
-                cells.append(None if pd.isna(v) else (1.0 if v is None else round(float(v), 2)))
+                if d not in seen:
+                    cells.append(None)
+                    continue
+                # Logged day with no numeric value (binary yes/no behavior)
+                # still marks the cell — the mean is NaN there, and the old
+                # ordering routed it to None, rendering it as "not logged".
+                v = sub[sub["date"] == d]["value"].mean()
+                cells.append(1.0 if pd.isna(v) else round(float(v), 2))
             out.append({
                 "behavior": behavior,
                 "count": int(counts[behavior]),
