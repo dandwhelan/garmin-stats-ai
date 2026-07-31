@@ -18,8 +18,13 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from garmin_grafana.sqlite_manager import GarminDB
-from garmin_grafana import ha_fetch
+# garmin-grafana is a sibling package, not a dependency of garmin-insights.
+# Without this guard a missing install turns into a collection error that
+# aborts the ENTIRE suite rather than skipping just this module.
+pytest.importorskip("garmin_grafana", reason="garmin-grafana not installed")
+
+from garmin_grafana.sqlite_manager import GarminDB  # noqa: E402
+from garmin_grafana import ha_fetch  # noqa: E402
 from garmin_insights.garmin_upload import GarminUploadError, _verify_token_owner
 from garmin_insights.stats_utils import NEXT_DAY_LAG_METRICS
 from garmin_insights.web.visualizations import VisualizationService

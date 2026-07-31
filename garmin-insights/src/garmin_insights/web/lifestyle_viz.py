@@ -37,6 +37,22 @@ def _round(x, ndigits: int = 1):
         return None
 
 
+def _numeric(df: pd.DataFrame, column: str) -> pd.Series:
+    """``pd.to_numeric(df.get(col))`` that always returns a Series.
+
+    ``DataFrame.get`` returns None for an absent column, and
+    ``pd.to_numeric(None)`` yields a *scalar* NaN — so any downstream Series
+    call (.fillna / .dropna / .rolling) raises AttributeError instead of
+    degrading to "no data". Columns really do go missing: daily_summaries rows
+    are built from whatever the device reported, so a window in which no day
+    carries e.g. bodyBatteryAtWakeTime has no such key at all.
+    """
+    col = df.get(column)
+    if col is None:
+        return pd.Series([float("nan")] * len(df), index=df.index, dtype="float64")
+    return pd.to_numeric(col, errors="coerce")
+
+
 def _int_or_none(x):
     try:
         if x is None or pd.isna(x):
@@ -395,7 +411,7 @@ class LifestyleService:
         ds = self._load_summaries(_prime_start(start), end)
         if ds.empty:
             return []
-        s = pd.to_numeric(ds.get("stressPercentage"), errors="coerce")
+        s = _numeric(ds, "stressPercentage")
         roll = s.rolling(30, min_periods=7)
         z = (s - roll.mean()) / roll.std()
         # Resilience = 50 - 15*z, so high stress (positive z) -> low resilience
@@ -538,7 +554,7 @@ class LifestyleService:
         ds = self._load_summaries(start, end)
         if ds.empty:
             return []
-        bb = pd.to_numeric(ds.get("bodyBatteryAtWakeTime"), errors="coerce")
+        bb = _numeric(ds, "bodyBatteryAtWakeTime")
         deficit = (target - bb).fillna(0)
         cumulative = deficit.cumsum()
         return [
@@ -638,7 +654,7 @@ class LifestyleService:
         ds = self._load_summaries(start, end)
         if ds.empty:
             return {"sorted_steps": [], "median": None, "pct_over_7500": None, "pct_over_10000": None}
-        steps = pd.to_numeric(ds.get("totalSteps"), errors="coerce").dropna().sort_values(ascending=False)
+        steps = _numeric(ds, "totalSteps").dropna().sort_values(ascending=False)
         n = len(steps)
         if n == 0:
             return {"sorted_steps": [], "median": None, "pct_over_7500": None, "pct_over_10000": None}
@@ -674,8 +690,8 @@ class LifestyleService:
         if ds.empty:
             return {"weeks": []}
         ds = ds.assign(
-            mod=pd.to_numeric(ds.get("moderateIntensityMinutes"), errors="coerce").fillna(0),
-            vig=pd.to_numeric(ds.get("vigorousIntensityMinutes"), errors="coerce").fillna(0),
+            mod=_numeric(ds, "moderateIntensityMinutes").fillna(0),
+            vig=_numeric(ds, "vigorousIntensityMinutes").fillna(0),
             ts=pd.to_datetime(ds["date"]),
         )
         ds["week"] = ds["ts"].dt.to_period("W").apply(lambda p: p.start_time.date().isoformat())
@@ -981,7 +997,7 @@ class LifestyleService:
         lj = self._load_journal(start, end)
         if ds.empty or lj.empty:
             return {"top_quintile_threshold": None, "triggers": []}
-        stress = pd.to_numeric(ds.get("stressPercentage"), errors="coerce").dropna()
+        stress = _numeric(ds, "stressPercentage").dropna()
         if not len(stress):
             return {"top_quintile_threshold": None, "triggers": []}
         threshold = stress.quantile(0.8)

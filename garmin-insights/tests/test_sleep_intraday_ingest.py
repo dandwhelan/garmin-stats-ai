@@ -6,7 +6,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from garmin_grafana.sqlite_manager import GarminDB
+import pytest
+
+# garmin-grafana is a sibling package, not a dependency of garmin-insights.
+# Without this guard a missing install turns into a collection error that
+# aborts the ENTIRE suite rather than skipping just this module.
+pytest.importorskip("garmin_grafana", reason="garmin-grafana not installed")
+
+from garmin_grafana.sqlite_manager import GarminDB  # noqa: E402
 
 
 def _point(time: str, fields: dict) -> dict:
