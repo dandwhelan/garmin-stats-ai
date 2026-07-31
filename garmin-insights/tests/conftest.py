@@ -365,7 +365,11 @@ def _write_sample_db(path: str, rows) -> None:
             " avg_overnight_hrv, body_battery_change, resting_heart_rate,"
             " average_spo2_value, lowest_spo2_value)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (r["date"], noon, r["sleep_start"].isoformat(), r["sleep_end"].isoformat(),
+            # sleep_summary.time is the WAKE timestamp (sleepEndTimestampGMT),
+            # not noon — garmin_fetch.py stamps it that way, and the sleep
+            # analytics derive the midpoint from it.
+            (r["date"], r["sleep_end"].isoformat(), r["sleep_start"].isoformat(),
+             r["sleep_end"].isoformat(),
              "testdev", r["sleep_secs"], int(r["sleep_secs"] * 0.19),
              int(r["sleep_secs"] * 0.52), int(r["sleep_secs"] * 0.22),
              int(r["sleep_secs"] * 0.07), r["resp"], 2 + r["drinks"],

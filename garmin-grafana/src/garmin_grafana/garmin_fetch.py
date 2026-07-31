@@ -99,85 +99,42 @@ def iter_days(start_date: str, end_date: str):
 
 
 # %%
-# Token-store ownership guard. Stored tokens carry no visible account identity,
-# so a TOKEN_DIR pointed at (or shared with) another user's tokens silently
-# downloads THAT account's data into this user's database. We verify ownership
-# after every token login: against Garmin's own profile userName when it is an
-# email (password-login accounts), else against an owner marker file this
-# script writes into TOKEN_DIR whenever it logs in with explicit credentials.
-_TOKEN_OWNER_FILE = "account_owner.txt"
+# Token-store ownership guard. The implementation lives in token_owner.py so it
+# can be tested without importing this module (which reads its whole config into
+# globals and opens a DB connection at import time). These wrappers bind the
+# module globals; behaviour is unchanged.
+try:
+    from garmin_grafana.token_owner import (
+        TOKEN_OWNER_FILE as _TOKEN_OWNER_FILE,
+        read_token_owner,
+        token_owner_path,
+        verify_token_owner,
+        write_token_owner,
+    )
+except ImportError:
+    from token_owner import (
+        TOKEN_OWNER_FILE as _TOKEN_OWNER_FILE,
+        read_token_owner,
+        token_owner_path,
+        verify_token_owner,
+        write_token_owner,
+    )
 
 
 def _token_owner_path():
-    return os.path.join(os.path.expanduser(TOKEN_DIR), _TOKEN_OWNER_FILE)
+    return token_owner_path(TOKEN_DIR)
 
 
 def _read_token_owner():
-    try:
-        with open(_token_owner_path()) as f:
-            owner = f.read().strip().lower()
-        return owner or None
-    except OSError:
-        return None
+    return read_token_owner(TOKEN_DIR)
 
 
 def _write_token_owner(email):
-    try:
-        os.makedirs(os.path.expanduser(TOKEN_DIR), exist_ok=True)
-        with open(_token_owner_path(), "w") as f:
-            f.write(email.strip().lower() + "\n")
-    except OSError as err:
-        logging.warning(f"Could not record token owner marker in '{TOKEN_DIR}': {err}")
+    write_token_owner(TOKEN_DIR, email)
 
 
 def _verify_token_owner(garmin):
-    """Raise GarminConnectAuthenticationError if the stored tokens belong to a
-    different Garmin account than GARMINCONNECT_EMAIL. The caller's except
-    path then performs a fresh credential login for the right account, which
-    re-dumps correct tokens (and the owner marker) into TOKEN_DIR."""
-    if not GARMINCONNECT_EMAIL:
-        return  # interactive single-user mode — no expected identity to check
-    expected = GARMINCONNECT_EMAIL.strip().lower()
-
-    # socialProfile.userName is the login email for password accounts; on some
-    # accounts it is an opaque handle instead, in which case we fall back to
-    # the owner marker written at credential login.
-    try:
-        profile = garmin.connectapi("/userprofile-service/socialProfile") or {}
-        username = str(profile.get("userName") or "")
-    except Exception as err:
-        logging.debug(f"Could not read profile userName for ownership check: {err}")
-        username = ""
-
-    actual = username.strip().lower() if "@" in username else _read_token_owner()
-    if actual is None:
-        # Fail CLOSED: unverifiable tokens could belong to anyone, and fetching
-        # through them would silently fill this user's DB with another account's
-        # data. Raising here sends the caller down the credential-login path,
-        # which re-authenticates as GARMINCONNECT_EMAIL and stamps the owner
-        # marker so future token logins are verifiable.
-        logging.warning(
-            f"Cannot verify which Garmin account the tokens in '{TOKEN_DIR}' belong to "
-            f"(no email-form profile userName and no owner marker) — discarding them and "
-            f"re-authenticating as {GARMINCONNECT_EMAIL}."
-        )
-        raise GarminConnectAuthenticationError(
-            f"Token store ownership unverifiable for '{TOKEN_DIR}' — re-authentication required"
-        )
-    if actual != expected:
-        logging.error(
-            f"Stored tokens in '{TOKEN_DIR}' belong to Garmin account '{actual}', but this "
-            f"fetcher is configured for '{expected}' — refusing to download another user's "
-            f"data. Re-authenticating as {expected}. If you run multiple users, every user "
-            f"env MUST set its own distinct TOKEN_DIR."
-        )
-        raise GarminConnectAuthenticationError(
-            f"Token store owner mismatch: {actual} != {expected}"
-        )
-    # Ownership confirmed — persist the marker so future runs can verify even
-    # if the profile userName is unavailable or not email-form.
-    if _read_token_owner() != expected:
-        _write_token_owner(expected)
+    verify_token_owner(garmin, TOKEN_DIR, GARMINCONNECT_EMAIL)
 
 
 def _prompt_interactive(prompt):
