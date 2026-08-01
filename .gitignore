@@ -5,6 +5,12 @@ __pycache__/
 *.pyd
 *.egg-info/
 
+# Test / coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # Environments
 .env
 .venv/

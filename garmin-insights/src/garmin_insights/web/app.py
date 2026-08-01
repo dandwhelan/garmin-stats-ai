@@ -335,6 +335,20 @@ _FLOW_INTENSITY = {"LIGHT": 1, "MEDIUM": 2, "HEAVY": 3}
 _CYCLE_PHASES = ("MENSTRUAL", "FOLLICULAR", "OVULATORY", "LUTEAL")
 
 
+def _cycle_text(value) -> str:
+    """Upper-cased cycle string, tolerating pandas' NaN for a SQL NULL.
+
+    ``menstrual_flow`` is NULL on every non-period day, and pandas surfaces
+    that as float NaN. NaN is *truthy*, so the obvious ``(value or "").upper()``
+    passes the NaN straight through and raises AttributeError — 500-ing the
+    whole dashboard for a cycle-tracking user. The numeric cycle columns
+    alongside this one already carry an explicit NaN guard.
+    """
+    if value is None or (isinstance(value, float) and value != value):
+        return ""
+    return str(value).upper()
+
+
 def _enrich_summaries_with_cycle(bundle, summaries, start, end):
     """Merge menstrual cycle fields into each daily summary so the Entities
     tab can chart them like any other numeric metric. No-op when the user
@@ -360,10 +374,10 @@ def _enrich_summaries_with_cycle(bundle, summaries, start, end):
                 s["cycleDay"] = int(day)
             except (TypeError, ValueError):
                 pass
-        phase = (row.get("current_cycle_phase") or "").upper()
+        phase = _cycle_text(row.get("current_cycle_phase"))
         for p in _CYCLE_PHASES:
             s[f"cyclePhase{p.title()}"] = 1 if phase == p else 0
-        flow = (row.get("menstrual_flow") or "").upper()
+        flow = _cycle_text(row.get("menstrual_flow"))
         s["cycleFlowIntensity"] = _FLOW_INTENSITY.get(flow, 0)
         clen = row.get("cycle_length") or row.get("predicted_cycle_length")
         if clen is not None and not (isinstance(clen, float) and clen != clen):

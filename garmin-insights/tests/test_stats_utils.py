@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from garmin_insights.stats_utils import (
     MIN_PAIRS,
@@ -99,3 +100,25 @@ def test_finalize_correlations_adds_significance_and_rounds_p():
     assert out[1]["significant"] is False
     assert out[2]["significant"] is False
     assert out[0]["p"] == 0.0  # rounded to 4dp
+
+
+def test_mismatched_lengths_are_truncated_to_the_shorter_series():
+    """Callers join two independently-filtered series (e.g. environment days
+    vs recovery days); a ragged pair must line up on the shorter one rather
+    than raise or silently mis-align."""
+    x = pd.Series(np.arange(20.0))
+    y = pd.Series(np.arange(12.0) * 2)
+    r, p, n = pearson_r_p(x.to_numpy(), y.to_numpy())
+    assert n == 12
+    assert r == pytest.approx(1.0)
+    assert p is not None
+
+
+def test_truncation_pairs_by_position_not_by_value():
+    """The truncation keeps the FIRST n of each series, so a correlation that
+    only exists in the trailing overlap must not appear."""
+    x = pd.Series([0.0, 1, 2, 3, 4, 5, 6, 99, 99, 99])
+    y = pd.Series([0.0, 1, 2, 3, 4, 5, 6])
+    r, _p, n = pearson_r_p(x.to_numpy(), y.to_numpy())
+    assert n == 7
+    assert r == pytest.approx(1.0)

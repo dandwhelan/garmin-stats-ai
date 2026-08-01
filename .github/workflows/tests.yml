@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install garmin-insights (with dev extras)
+        run: pip install -e "garmin-insights[dev]"
+
+      # The fetcher package is only needed by the two test modules that
+      # exercise its SQLite writer + HA aggregation. Those modules
+      # importorskip on it, so a failure here degrades to skipped tests
+      # rather than a red build.
+      - name: Install garmin-grafana (optional)
+        continue-on-error: true
+        run: pip install -e garmin-grafana
+
+      - name: Run tests
+        working-directory: garmin-insights
+        run: python -m pytest --cov=garmin_insights --cov-report=term-missing
