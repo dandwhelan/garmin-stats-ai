@@ -349,6 +349,46 @@ class MemoryStore:
         finally:
             conn.close()
 
+    def recent_lifestyle_entries(self, hours: int = 48):
+        """Lifestyle-journal entries logged within the last ``hours``.
+
+        Returns a DataFrame with ``date`` / ``behavior`` / ``status`` / ``value``
+        columns (empty when the table is absent — it is written by the fetcher,
+        so an insights-only database won't have it).
+
+        ``InsightScanner._recent_logged_behaviors`` uses this to rank the
+        contributors of a composite strain finding: behaviours the user logged
+        themselves are positive evidence and outrank generic confounders.
+
+        ``lifestyle_journal`` is keyed by calendar date with no time component,
+        so the window is rounded up to whole days — 48h means today and the two
+        preceding days, which is what "the last 48 hours" means for a
+        day-granularity log.
+        """
+        import pandas as pd
+
+        days = max(1, -(-int(hours) // 24))
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT date, behavior, status, value FROM lifestyle_journal "
+                "WHERE date >= ? AND date <= ? AND status = 1 ORDER BY date",
+                (start, end),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+        except sqlite3.OperationalError:
+            # Table not created yet — the fetcher owns it.
+            return pd.DataFrame(columns=["date", "behavior", "status", "value"])
+        finally:
+            conn.close()
+        if not rows:
+            return pd.DataFrame(columns=["date", "behavior", "status", "value"])
+        return pd.DataFrame(rows)
+
     # ------------------------------------------------------------------
     # Baselines
     # ------------------------------------------------------------------

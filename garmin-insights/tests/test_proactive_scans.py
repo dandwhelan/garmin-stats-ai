@@ -9,6 +9,7 @@ A wrong tier badge or a leaked cycle confounder ends up phrased as fact.
 from __future__ import annotations
 
 import types
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -364,3 +365,161 @@ def test_run_full_scan_on_real_data_is_json_safe(sample_settings):
     out = scanner.run_full_scan()
     json.dumps(out)  # must not raise
     assert set(out) >= {"anomalies", "composite_strain", "behavior_impacts", "trends"}
+
+
+# ==================================================================
+# Composite-strain enrichment
+# ==================================================================
+# These are what turn the composite finding from "three metrics moved" into a
+# ranked list of plausible causes, and they only run when the memory store
+# actually exposes them — the stub scanner above takes their AttributeError
+# fallbacks, so they need a real store.
+
+def _real_scanner(settings, anomalies, sex="Female"):
+    from garmin_insights.db.memory import MemoryStore
+
+    memory = MemoryStore(settings)
+    memory.initialise_schema()
+    analysis = types.SimpleNamespace(run_full_anomaly_scan=lambda: list(anomalies))
+    return InsightScanner(memory, analysis, biological_sex=sex), memory
+
+
+def _strain_pair():
+    return [_anomaly("restingHeartRate", 2.4), _anomaly("avgOvernightHrv", -2.1)]
+
+
+def test_recent_behaviors_are_read_from_the_journal(sample_settings):
+    scanner, _memory = _real_scanner(sample_settings, _strain_pair())
+    behaviors = scanner._recent_logged_behaviors(hours=24 * 400)
+    assert behaviors == sorted(behaviors), "labels must come back sorted"
+    assert "Alcohol" in behaviors
+
+
+def test_recent_behaviors_are_empty_when_the_store_lacks_the_method():
+    """Best-effort enrichment — a store without the helper must yield [], not
+    break the whole composite finding."""
+    scanner = _scanner(anomalies=_strain_pair())
+    assert scanner._recent_logged_behaviors() == []
+
+
+def test_environmental_extremes_are_read_from_environment_daily(sample_settings,
+                                                                sample_db):
+    import sqlite3
+
+    # Force today's row over every threshold.
+    conn = sqlite3.connect(sample_db)
+    conn.execute(
+        "UPDATE environment_daily SET apparent_temp_max_c = 34, european_aqi = 90,"
+        " pm25 = 40, pollen_grass = 120 WHERE date >= ?",
+        ((datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),),
+    )
+    conn.commit()
+    conn.close()
+
+    scanner, _memory = _real_scanner(sample_settings, _strain_pair())
+    labels = scanner._recent_environmental_extremes(days=2)
+    joined = " ".join(labels)
+    assert "heat" in joined
+    assert "poor air quality" in joined
+    assert "PM2.5" in joined
+    assert "pollen" in joined
+
+
+def test_environmental_extremes_stay_silent_below_the_thresholds(sample_settings,
+                                                                 sample_db):
+    import sqlite3
+
+    conn = sqlite3.connect(sample_db)
+    conn.execute(
+        "UPDATE environment_daily SET apparent_temp_max_c = 15, european_aqi = 20,"
+        " pm25 = 5, pollen_grass = 1, pollen_birch = 1, pollen_ragweed = 1")
+    conn.commit()
+    conn.close()
+
+    scanner, _memory = _real_scanner(sample_settings, _strain_pair())
+    assert scanner._recent_environmental_extremes(days=2) == []
+
+
+def test_environmental_extremes_are_empty_without_the_table(tmp_path):
+    """No HOME_LAT/HOME_LON means no environment_daily — a no-op, not an error."""
+    from garmin_insights.db.memory import MemoryStore
+
+    settings = types.SimpleNamespace(sqlite_db_path=str(tmp_path / "bare.db"))
+    memory = MemoryStore(settings)
+    memory.initialise_schema()
+    scanner = InsightScanner(memory, types.SimpleNamespace(run_full_anomaly_scan=list))
+    assert scanner._recent_environmental_extremes(days=2) == []
+
+
+def test_logged_behaviors_outrank_generic_confounders(sample_settings, sample_db):
+    """Documented ranking: the user's own logged behaviours are positive
+    evidence and must lead, with environmental extremes next and generic
+    confounders last."""
+    import sqlite3
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect(sample_db)
+    conn.execute(
+        "INSERT OR REPLACE INTO lifestyle_journal"
+        " (date, behavior, category, status, value, device) VALUES (?,?,?,?,?,?)",
+        (today, "Alcohol", "action", 1, 3.0, "testdev"))
+    conn.execute(
+        "UPDATE environment_daily SET apparent_temp_max_c = 34 WHERE date = ?", (today,))
+    conn.commit()
+    conn.close()
+
+    scanner, _memory = _real_scanner(sample_settings, _strain_pair())
+    finding = scanner.scan_composite_strain()[0]
+    ranked = finding["ranked_contributors"]
+    assert ranked
+
+    joined = [str(c).lower() for c in ranked]
+    alcohol_at = next((i for i, c in enumerate(joined) if "alcohol" in c), None)
+    heat_at = next((i for i, c in enumerate(joined) if "heat" in c), None)
+    assert alcohol_at is not None, f"logged behaviour missing from {ranked}"
+    if heat_at is not None:
+        assert alcohol_at < heat_at, "logged behaviours must outrank environment"
+
+
+def test_composite_finding_is_json_serialisable(sample_settings):
+    """It is embedded in the scan prompt verbatim."""
+    import json
+
+    scanner, _memory = _real_scanner(sample_settings, _strain_pair())
+    json.dumps(scanner.scan_composite_strain())
+
+
+def test_no_composite_rule_means_no_finding(monkeypatch):
+    """Defensive path: if the meta-rule is ever renamed out of the KB, the
+    scanner must emit nothing rather than a finding with no tier metadata."""
+    import garmin_insights.insights.proactive as proactive
+
+    monkeypatch.setattr(proactive, "INSIGHT_RULES", [])
+    assert _scanner(anomalies=_strain_pair()).scan_composite_strain() == []
+
+
+def test_requires_user_context_is_stamped_when_the_rule_declares_it():
+    """Rules that only apply if the user logged something must say so, or the
+    agent can present them as unconditional."""
+    from garmin_insights.knowledge.medical import INSIGHT_RULES
+    from garmin_insights.insights.proactive import _attach_rule_metadata
+
+    rule = next(r for r in INSIGHT_RULES if r.requires_user_context)
+    finding: dict = {}
+    _attach_rule_metadata(finding, rule, "Female")
+    assert finding["requires_user_context"] is True
+
+
+def test_memory_store_actually_provides_the_enrichment_hook():
+    """Regression: `_recent_logged_behaviors` calls
+    `MemoryStore.recent_lifestyle_entries` inside `except AttributeError:
+    return []`. The method did not exist, so the documented top ranking tier
+    ("user-logged behaviours outrank generic confounders") silently did
+    nothing in production — no error, just an always-empty list.
+
+    Asserting the interface directly is the only thing that catches it, since
+    the caller is designed to swallow its absence.
+    """
+    from garmin_insights.db.memory import MemoryStore
+
+    assert callable(getattr(MemoryStore, "recent_lifestyle_entries", None))

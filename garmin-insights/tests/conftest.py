@@ -707,6 +707,9 @@ class _StubAgent:
     def ensure_cache_fresh(self, days: int = 90) -> None:
         return None
 
+    def get_scan_history(self, limit: int = 10, focus: str | None = None):
+        return self._memory.get_scan_reports(limit=limit, focus=focus)
+
     def close(self) -> None:
         return None
 
@@ -778,3 +781,94 @@ def api_client(sample_settings, monkeypatch):
     monkeypatch.setattr(transport_app.router, "lifespan_context", _noop_lifespan)
     with TestClient(transport_app) as client:
         yield client
+
+
+@pytest.fixture
+def two_user_client(sample_db, tmp_path, monkeypatch):
+    """TestClient with two users on *separate* databases.
+
+    Returns ``(client, marks)`` where ``marks`` maps user id -> a step count
+    written only into that user's DB, so a test can prove which database a
+    response actually came from rather than merely that it succeeded.
+
+    Multi-user mode is the setting where a routing bug is a privacy incident:
+    one user's health data served under another's id.
+    """
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from garmin_insights.web import app as app_module
+    from garmin_insights.web.lifestyle_viz import LifestyleService
+    from garmin_insights.web.sessions import SessionManager
+    from garmin_insights.web.user_context import UserBundle
+    from garmin_insights.web.visualizations import VisualizationService
+
+    marks = {"alice": 11111, "bob": 22222}
+    bundles = {}
+    paths = {}
+    for uid, mark in marks.items():
+        path = tmp_path / f"{uid}.db"
+        shutil.copy(sample_db, path)
+        paths[uid] = str(path)
+
+        # Stamp a value unique to this user on every day, in both the raw
+        # table and the summary cache the endpoints actually read.
+        conn = sqlite3.connect(path)
+        conn.execute("UPDATE daily_stats SET total_steps = ?", (mark,))
+        rows = conn.execute("SELECT date, metric_json FROM daily_summaries").fetchall()
+        for date, metric_json in rows:
+            m = json.loads(metric_json)
+            m["totalSteps"] = mark
+            conn.execute("UPDATE daily_summaries SET metric_json = ? WHERE date = ?",
+                         (json.dumps(m), date))
+        conn.commit()
+        conn.close()
+
+        settings = types.SimpleNamespace(
+            sqlite_db_path=str(path),
+            display_name=uid.capitalize(),
+            garminconnect_email=f"{uid}@example.com",
+            biological_sex="Female" if uid == "alice" else "Male",
+            claude_model="claude-sonnet-5",
+            claude_effort="low",
+            user_timezone="Europe/London",
+            birth_date="",
+            height_cm="",
+        )
+        bundles[uid] = UserBundle(
+            user_id=uid,
+            agent=_StubAgent(settings),
+            viz=VisualizationService(str(path)),
+            lifestyle=LifestyleService(str(path)),
+        )
+
+    class _Pool:
+        user_ids = list(marks)
+
+        def has_user(self, user_id):
+            return user_id in bundles
+
+        def get(self, user_id):
+            if user_id not in bundles:
+                raise KeyError(user_id)
+            return bundles[user_id]
+
+        def list_users(self):
+            return [{"id": u, "db_path": paths[u]} for u in bundles]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app_module, "_users", _Pool(), raising=False)
+    monkeypatch.setattr(
+        app_module, "_sessions", SessionManager(ttl_seconds=60, max_sessions=8),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_module, "_last_cache_refresh",
+        {u: datetime.utcnow() for u in bundles}, raising=False,
+    )
+    monkeypatch.setattr(app_module.app.router, "lifespan_context", _noop_lifespan)
+    with TestClient(app_module.app) as client:
+        yield client, marks
