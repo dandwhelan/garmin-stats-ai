@@ -15,6 +15,16 @@ from garminconnect import (
     GarminConnectConnectionError,
     GarminConnectTooManyRequestsError,
 )
+# GarthHTTPError is referenced in fetch_write_bulk's except clause but was never
+# imported. Python evaluates the whole except tuple before matching, so a
+# NameError fired on EVERY requests HTTPError and dropped the date into the
+# generic handler — the 500 retry/backoff path never ran. garth ships with
+# garminconnect; the fallback keeps the module importable if that ever changes.
+try:
+    from garth.exc import GarthHTTPError
+except ImportError:  # pragma: no cover - garth is a garminconnect dependency
+    class GarthHTTPError(Exception):
+        """Placeholder so the except clause stays valid without garth."""
 garmin_obj = None
 banner_text = """
 
@@ -88,14 +98,15 @@ except Exception as err:
     raise Exception("SQLite connection failed:" + str(err))
 
 # %%
-def iter_days(start_date: str, end_date: str):
-    start = datetime.strptime(start_date, '%Y-%m-%d')
-    end = datetime.strptime(end_date, '%Y-%m-%d')
-    current = end
+# Pure JSON→points transforms live in transforms.py so they can be tested
+# without importing this module (which reads its whole config into globals
+# and opens a DB connection at import time).
+try:
+    from garmin_grafana import transforms
+except ImportError:
+    import transforms
 
-    while current >= start:
-        yield current.strftime('%Y-%m-%d')
-        current -= timedelta(days=1)
+iter_days = transforms.iter_days
 
 
 # %%
@@ -206,81 +217,8 @@ def write_points_to_db(points):
 
 # %%
 def get_daily_stats(date_str):
-    points_list = []
-    stats_json = garmin_obj.get_stats(date_str)
-    if stats_json['wellnessStartTimeGmt'] and datetime.strptime(date_str, "%Y-%m-%d") < datetime.today():
-        points_list.append({
-            "measurement":  "DailyStats",
-            # Use noon UTC of the *requested* date so that timestamp[:10] in the
-            # SQLite writer always equals date_str regardless of the user's timezone.
-            # Previously we used wellnessStartTimeGmt (midnight local time in UTC)
-            # which for BST users (UTC+1) falls on the *previous* UTC day, causing
-            # every daily_stats row to be stored under the wrong date.
-            "time": datetime.strptime(date_str, "%Y-%m-%d").replace(hour=12, tzinfo=pytz.UTC).isoformat(),
-            "tags": {
-                "Device": GARMIN_DEVICENAME,
-                "Database_Name": "GarminDB"
-            },
-            "fields": {
-                "activeKilocalories": stats_json.get('activeKilocalories'),
-                "bmrKilocalories": stats_json.get('bmrKilocalories'),
+    return transforms.daily_stats_points(garmin_obj.get_stats(date_str), date_str, GARMIN_DEVICENAME)
 
-                'totalSteps': stats_json.get('totalSteps'),
-                'totalDistanceMeters': stats_json.get('totalDistanceMeters'),
-
-                "highlyActiveSeconds": stats_json.get("highlyActiveSeconds"),
-                "activeSeconds": stats_json.get("activeSeconds"),
-                "sedentarySeconds": stats_json.get("sedentarySeconds"),
-                "sleepingSeconds": stats_json.get("sleepingSeconds"),
-                "moderateIntensityMinutes": stats_json.get("moderateIntensityMinutes"),
-                "vigorousIntensityMinutes": stats_json.get("vigorousIntensityMinutes"),
-
-                "floorsAscendedInMeters": stats_json.get("floorsAscendedInMeters"),
-                "floorsDescendedInMeters": stats_json.get("floorsDescendedInMeters"),
-                "floorsAscended": stats_json.get("floorsAscended"),
-                "floorsDescended": stats_json.get("floorsDescended"),
-
-                "minHeartRate": stats_json.get("minHeartRate"),
-                "maxHeartRate": stats_json.get("maxHeartRate"),
-                "restingHeartRate": stats_json.get("restingHeartRate"),
-                "minAvgHeartRate": stats_json.get("minAvgHeartRate"),
-                "maxAvgHeartRate": stats_json.get("maxAvgHeartRate"),
-                
-                "stressDuration": stats_json.get("stressDuration"),
-                "restStressDuration": stats_json.get("restStressDuration"),
-                "activityStressDuration": stats_json.get("activityStressDuration"),
-                "uncategorizedStressDuration": stats_json.get("uncategorizedStressDuration"),
-                "totalStressDuration": stats_json.get("totalStressDuration"),
-                "lowStressDuration": stats_json.get("lowStressDuration"),
-                "mediumStressDuration": stats_json.get("mediumStressDuration"),
-                "highStressDuration": stats_json.get("highStressDuration"),
-                
-                "stressPercentage": stats_json.get("stressPercentage"),
-                "restStressPercentage": stats_json.get("restStressPercentage"),
-                "activityStressPercentage": stats_json.get("activityStressPercentage"),
-                "uncategorizedStressPercentage": stats_json.get("uncategorizedStressPercentage"),
-                "lowStressPercentage": stats_json.get("lowStressPercentage"),
-                "mediumStressPercentage": stats_json.get("mediumStressPercentage"),
-                "highStressPercentage": stats_json.get("highStressPercentage"),
-                
-                "bodyBatteryChargedValue": stats_json.get("bodyBatteryChargedValue"),
-                "bodyBatteryDrainedValue": stats_json.get("bodyBatteryDrainedValue"),
-                "bodyBatteryHighestValue": stats_json.get("bodyBatteryHighestValue"),
-                "bodyBatteryLowestValue": stats_json.get("bodyBatteryLowestValue"),
-                "bodyBatteryDuringSleep": stats_json.get("bodyBatteryDuringSleep"),
-                "bodyBatteryAtWakeTime": stats_json.get("bodyBatteryAtWakeTime"),
-                
-                "averageSpo2": stats_json.get("averageSpo2"),
-                "lowestSpo2": stats_json.get("lowestSpo2"),
-            }
-        })
-        if points_list:
-            logging.info(f"Success : Fetching daily metrics for date {date_str}")
-        return points_list
-    else:
-        logging.debug("No daily stat data available for the give date " + date_str)
-        return []
-    
 
 # %%
 def get_last_sync():
@@ -311,351 +249,38 @@ def get_last_sync():
 
 # %%
 def get_sleep_data(date_str):
-    points_list = []
-    all_sleep_data = garmin_obj.get_sleep_data(date_str)
-    sleep_json = all_sleep_data.get("dailySleepDTO", None)
-    if sleep_json["sleepEndTimestampGMT"]:
-        _end_ts   = sleep_json["sleepEndTimestampGMT"]
-        _start_ts = sleep_json.get("sleepStartTimestampGMT")
-        points_list.append({
-        "measurement":  "SleepSummary",
-        "time": datetime.fromtimestamp(_end_ts/1000, tz=pytz.timezone("UTC")).isoformat(),
-        "tags": {
-            "Device": GARMIN_DEVICENAME,
-            "Database_Name": "GarminDB"
-            },
-        "fields": {
-            "sleepStartTime": datetime.fromtimestamp(_start_ts/1000, tz=pytz.timezone("UTC")).isoformat() if _start_ts else None,
-            "sleepEndTime":   datetime.fromtimestamp(_end_ts/1000,   tz=pytz.timezone("UTC")).isoformat(),
-            "sleepTimeSeconds": sleep_json.get("sleepTimeSeconds"),
-            "deepSleepSeconds": sleep_json.get("deepSleepSeconds"),
-            "lightSleepSeconds": sleep_json.get("lightSleepSeconds"),
-            "remSleepSeconds": sleep_json.get("remSleepSeconds"),
-            "awakeSleepSeconds": sleep_json.get("awakeSleepSeconds"),
-            "averageSpO2Value": sleep_json.get("averageSpO2Value"),
-            "lowestSpO2Value": sleep_json.get("lowestSpO2Value"),
-            "highestSpO2Value": sleep_json.get("highestSpO2Value"),
-            "averageRespirationValue": sleep_json.get("averageRespirationValue"),
-            "lowestRespirationValue": sleep_json.get("lowestRespirationValue"),
-            "highestRespirationValue": sleep_json.get("highestRespirationValue"),
-            "awakeCount": sleep_json.get("awakeCount"),
-            "avgSleepStress": sleep_json.get("avgSleepStress"),
-            "sleepScore": ((sleep_json.get("sleepScores") or {}).get("overall") or {}).get("value"),
-            "restlessMomentsCount": all_sleep_data.get("restlessMomentsCount"),
-            "avgOvernightHrv": all_sleep_data.get("avgOvernightHrv"),
-            "bodyBatteryChange": all_sleep_data.get("bodyBatteryChange"),
-            "restingHeartRate": all_sleep_data.get("restingHeartRate")
-            }
-        })
-    sleep_movement_intraday = all_sleep_data.get("sleepMovement")
-    if sleep_movement_intraday:
-        for entry in sleep_movement_intraday:
-            points_list.append({
-                "measurement":  "SleepIntraday",
-                "time": pytz.timezone("UTC").localize(datetime.strptime(entry["startGMT"], "%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                "tags": {
-                    "Device": GARMIN_DEVICENAME,
-                    "Database_Name": "GarminDB"
-                },
-                "fields": {
-                    "SleepMovementActivityLevel": entry.get("activityLevel",-1),
-                    "SleepMovementActivitySeconds": int((datetime.strptime(entry["endGMT"], "%Y-%m-%dT%H:%M:%S.%f") - datetime.strptime(entry["startGMT"], "%Y-%m-%dT%H:%M:%S.%f")).total_seconds())
-                }
-            })
-    sleep_levels_intraday = all_sleep_data.get("sleepLevels")
-    if sleep_levels_intraday:
-        for entry in sleep_levels_intraday:
-            if entry.get("activityLevel") or entry.get("activityLevel") == 0: # Include 0 for Deepsleep but not None - Refer to issue #43
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": pytz.timezone("UTC").localize(datetime.strptime(entry["startGMT"], "%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "SleepStageLevel": entry.get("activityLevel"),
-                        "SleepStageSeconds": int((datetime.strptime(entry["endGMT"], "%Y-%m-%dT%H:%M:%S.%f") - datetime.strptime(entry["startGMT"], "%Y-%m-%dT%H:%M:%S.%f")).total_seconds())
-                    }
-                })
-        # Add additional duplicate terminal data point (see issue #127)
-        if entry.get("endGMT"):
-            points_list.append({
-                "measurement":  "SleepIntraday",
-                "time": pytz.timezone("UTC").localize(datetime.strptime(entry["endGMT"], "%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                "tags": {
-                    "Device": GARMIN_DEVICENAME,
-                    "Database_Name": "GarminDB"
-                },
-                "fields": {"SleepStageLevel": entry.get("activityLevel")} # Duplicating last entry for visualization in Grafana
-            })
-    sleep_restlessness_intraday = all_sleep_data.get("sleepRestlessMoments")
-    if sleep_restlessness_intraday:
-        for entry in sleep_restlessness_intraday:
-            if entry.get("value"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": datetime.fromtimestamp(entry["startGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "sleepRestlessValue": entry.get("value")
-                    }
-                })
-    sleep_spo2_intraday = all_sleep_data.get("wellnessEpochSPO2DataDTOList")
-    if sleep_spo2_intraday:
-        for entry in sleep_spo2_intraday:
-            if entry.get("spo2Reading"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": pytz.timezone("UTC").localize(datetime.strptime(entry["epochTimestamp"], "%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "spo2Reading": entry.get("spo2Reading")
-                    }
-                })
-    sleep_respiration_intraday = all_sleep_data.get("wellnessEpochRespirationDataDTOList")
-    if sleep_respiration_intraday:
-        for entry in sleep_respiration_intraday:
-            if entry.get("respirationValue"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": datetime.fromtimestamp(entry["startTimeGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "respirationValue": entry.get("respirationValue")
-                    }
-                })
-    sleep_heart_rate_intraday = all_sleep_data.get("sleepHeartRate")
-    if sleep_heart_rate_intraday:
-        for entry in sleep_heart_rate_intraday:
-            if entry.get("value"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": datetime.fromtimestamp(entry["startGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "heartRate": entry.get("value")
-                    }
-                })
-    sleep_stress_intraday = all_sleep_data.get("sleepStress")
-    if sleep_stress_intraday:
-        for entry in sleep_stress_intraday:
-            if entry.get("value"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": datetime.fromtimestamp(entry["startGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "stressValue": entry.get("value")
-                    }
-                })
-    sleep_bb_intraday = all_sleep_data.get("sleepBodyBattery")
-    if sleep_bb_intraday:
-        for entry in sleep_bb_intraday:
-            if entry.get("value"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": datetime.fromtimestamp(entry["startGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "bodyBattery": entry.get("value")
-                    }
-                })
-    sleep_hrv_intraday = all_sleep_data.get("hrvData")
-    if sleep_hrv_intraday:
-        for entry in sleep_hrv_intraday:
-            if entry.get("value"):
-                points_list.append({
-                    "measurement":  "SleepIntraday",
-                    "time": datetime.fromtimestamp(entry["startGMT"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "hrvData": entry.get("value")
-                    }
-                })
-    if points_list:
-        logging.info(f"Success : Fetching intraday sleep metrics for date {date_str}")
-    return points_list
+    return transforms.sleep_points(garmin_obj.get_sleep_data(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_intraday_hr(date_str):
-    points_list = []
-    hr_list = garmin_obj.get_heart_rates(date_str).get("heartRateValues") or []
-    for entry in hr_list:
-        if entry[1]:
-            points_list.append({
-                    "measurement":  "HeartRateIntraday",
-                    "time": datetime.fromtimestamp(entry[0]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "HeartRate": entry[1]
-                    }
-                })
-    if points_list:
-        logging.info(f"Success : Fetching intraday Heart Rate for date {date_str}")
-    return points_list
+    return transforms.intraday_hr_points(garmin_obj.get_heart_rates(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_intraday_steps(date_str):
-    points_list = []
-    steps_list = garmin_obj.get_steps_data(date_str)
-    for entry in steps_list:
-        if entry["steps"] or entry["steps"] == 0:
-            points_list.append({
-                    "measurement":  "StepsIntraday",
-                    "time": pytz.timezone("UTC").localize(datetime.strptime(entry['startGMT'], "%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "StepsCount": entry["steps"]
-                    }
-                })
-    if points_list:
-        logging.info(f"Success : Fetching intraday steps for date {date_str}")
-    return points_list
+    return transforms.intraday_steps_points(garmin_obj.get_steps_data(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_intraday_stress(date_str):
-    points_list = []
-    stress_list = garmin_obj.get_stress_data(date_str).get('stressValuesArray') or []
-    for entry in stress_list:
-        if entry[1] or entry[1] == 0:
-            points_list.append({
-                    "measurement":  "StressIntraday",
-                    "time": datetime.fromtimestamp(entry[0]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "stressLevel": entry[1]
-                    }
-                })
-    bb_list = garmin_obj.get_stress_data(date_str).get('bodyBatteryValuesArray') or []
-    for entry in bb_list:
-        if entry[2] or entry[2] == 0:
-            points_list.append({
-                    "measurement":  "BodyBatteryIntraday",
-                    "time": datetime.fromtimestamp(entry[0]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "BodyBatteryLevel": entry[2]
-                    }
-                })
-    if points_list:
-        logging.info(f"Success : Fetching intraday stress and Body Battery values for date {date_str}")
-    return points_list
+    return transforms.intraday_stress_points(garmin_obj.get_stress_data(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_intraday_br(date_str):
-    points_list = []
-    br_list = garmin_obj.get_respiration_data(date_str).get('respirationValuesArray') or []
-    for entry in br_list:
-        if entry[1]:
-            points_list.append({
-                    "measurement":  "BreathingRateIntraday",
-                    "time": datetime.fromtimestamp(entry[0]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "BreathingRate": entry[1]
-                    }
-                })
-    if points_list:
-        logging.info(f"Success : Fetching intraday Breathing Rate for date {date_str}")
-    return points_list
+    return transforms.intraday_br_points(garmin_obj.get_respiration_data(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_intraday_hrv(date_str):
-    points_list = []
-    hrv_list = (garmin_obj.get_hrv_data(date_str) or {}).get('hrvReadings') or []
-    for entry in hrv_list:
-        if entry.get('hrvValue'):
-            points_list.append({
-                    "measurement":  "HRV_Intraday",
-                    "time": pytz.timezone("UTC").localize(datetime.strptime(entry['readingTimeGMT'],"%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {
-                        "hrvValue": entry.get('hrvValue')
-                    }
-                })
-    if points_list:
-        logging.info(f"Success : Fetching intraday HRV for date {date_str}")
-    return points_list
+    return transforms.intraday_hrv_points(garmin_obj.get_hrv_data(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_body_composition(date_str):
-    points_list = []
-    weight_list_all = garmin_obj.get_weigh_ins(date_str, date_str).get('dailyWeightSummaries', [])
-    if weight_list_all:
-        weight_list = weight_list_all[0].get('allWeightMetrics', [])
-        for weight_dict in weight_list:
-            data_fields = {
-                    "weight": weight_dict.get("weight"),
-                    "bmi": weight_dict.get("bmi"),
-                    "bodyFat": weight_dict.get("bodyFat"),
-                    "bodyWater": weight_dict.get("bodyWater"),
-                    "boneMass": weight_dict.get("boneMass"),
-                    "muscleMass": weight_dict.get("muscleMass"),
-                    "physiqueRating": weight_dict.get("physiqueRating"),
-                    "visceralFat": weight_dict.get("visceralFat"),
-                    # Garmin returns metabolicAge as a millisecond DURATION
-                    # (e.g. ~7.26e11 ms ≈ 23 years) — convert to years here so
-                    # the DB stores sane values. The >1000 guard (no metabolic
-                    # age exceeds a millennium) passes through values already
-                    # in years; 31,556,952,000 ms = one Gregorian year.
-                    "metabolicAge": (round(weight_dict["metabolicAge"] / 31_556_952_000, 1)
-                                     if (weight_dict.get("metabolicAge") or 0) > 1000
-                                     else weight_dict.get("metabolicAge")),
-                }
-            if not all(value is None for value in data_fields.values()):
-                points_list.append({
-                    "measurement":  "BodyComposition",
-                    "time": datetime.fromtimestamp((weight_dict['timestampGMT']/1000) , tz=pytz.timezone("UTC")).isoformat() if weight_dict['timestampGMT'] else datetime.strptime(date_str, "%Y-%m-%d").replace(hour=0, tzinfo=pytz.UTC).isoformat(), # Use GMT 00:00 is timestamp is not available (issue #15)
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB",
-                        "Frequency" : "Intraday",
-                        "SourceType" : weight_dict.get('sourceType', "Unknown")
-                    },
-                    "fields": data_fields
-                })
-        logging.info(f"Success : Fetching intraday Body Composition (Weight, BMI etc) for date {date_str}")
-    return points_list
+    return transforms.body_composition_points(garmin_obj.get_weigh_ins(date_str, date_str), date_str, GARMIN_DEVICENAME)
+
 
 # %%
 def get_activity_summary(date_str):
@@ -992,253 +617,42 @@ def get_lactate_threshold(date_str):
     return points_list
     
 def get_training_status(date_str):
-    points_list = []
-    ts_list_all = garmin_obj.get_training_status(date_str)
-    ts_training_data_all = (ts_list_all.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData", {})
+    return transforms.training_status_points(garmin_obj.get_training_status(date_str), date_str, GARMIN_DEVICENAME)
 
-    # Heat & altitude acclimation lives in the same training-status payload, but
-    # Garmin returns it at the TOP LEVEL of the response (verified 2026-06-01
-    # against live responses for both accounts) — not nested inside each device's
-    # dict. Read it from the top level, with a per-device fallback in case Garmin
-    # moves it, and check both historical key spellings.
-    top_acclim = (
-        ts_list_all.get("heatAltitudeAcclimationDTO")
-        or ts_list_all.get("heatAltitudeAcclimation")
-        or {}
-    )
-
-    if ts_training_data_all:
-        for device_id, ts_dict in ts_training_data_all.items():
-            logging.info(f"Success : Processing Training Status for Device {device_id}")
-            acclim = (
-                top_acclim
-                or ts_dict.get("heatAltitudeAcclimationDTO")
-                or ts_dict.get("heatAltitudeAcclimation")
-                or {}
-            )
-            data_fields = {
-                "trainingStatus": ts_dict.get("trainingStatus"),
-                "trainingStatusFeedbackPhrase": ts_dict.get("trainingStatusFeedbackPhrase"),
-                "weeklyTrainingLoad": ts_dict.get("weeklyTrainingLoad"),
-                "fitnessTrend": ts_dict.get("fitnessTrend"),
-                "acwrPercent": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("acwrPercent"),
-                "dailyTrainingLoadAcute": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("dailyTrainingLoadAcute"),
-                "dailyTrainingLoadChronic": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("dailyTrainingLoadChronic"),
-                "maxTrainingLoadChronic": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("maxTrainingLoadChronic"),
-                "minTrainingLoadChronic": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("minTrainingLoadChronic"),
-                "dailyAcuteChronicWorkloadRatio": (ts_dict.get("acuteTrainingLoadDTO") or {}).get("dailyAcuteChronicWorkloadRatio"),
-                "heatAcclimationPercentage": acclim.get("heatAcclimationPercentage"),
-                "altitudeAcclimationPercentage": acclim.get("altitudeAcclimationPercentage"),
-                "heatTrend": acclim.get("heatTrend"),
-                "altitudeTrend": acclim.get("altitudeTrend"),
-                "currentAltitude": acclim.get("currentAltitude"),
-            }
-            if ts_dict.get("timestamp") and any(value is not None for value in data_fields.values()):
-                points_list.append({
-                    "measurement": "TrainingStatus",
-                    "time": datetime.fromtimestamp(ts_dict["timestamp"]/1000, tz=pytz.timezone("UTC")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": data_fields
-                })
-                logging.info(f"Success : Fetching Training Status for date {date_str}")
-    return points_list
 
 # Contribution from PR #17 by @arturgoms 
 def get_training_readiness(date_str):
-    points_list = []
-    tr_list_all = garmin_obj.get_training_readiness(date_str)
-    if tr_list_all:
-        for tr_dict in tr_list_all:
-            data_fields = {
-                    "level": tr_dict.get("level"),
-                    "score": tr_dict.get("score"),
-                    "sleepScore": tr_dict.get("sleepScore"),
-                    "sleepScoreFactorPercent": tr_dict.get("sleepScoreFactorPercent"),
-                    "recoveryTime": tr_dict.get("recoveryTime"),
-                    "recoveryTimeFactorPercent": tr_dict.get("recoveryTimeFactorPercent"),
-                    "acwrFactorPercent": tr_dict.get("acwrFactorPercent"),
-                    "acuteLoad": tr_dict.get("acuteLoad"),
-                    "stressHistoryFactorPercent": tr_dict.get("stressHistoryFactorPercent"),
-                    "hrvFactorPercent": tr_dict.get("hrvFactorPercent"),
-                }
-            if (not all(value is None for value in data_fields.values())) and tr_dict.get('timestamp'):
-                points_list.append({
-                    "measurement":  "TrainingReadiness",
-                    "time": pytz.timezone("UTC").localize(datetime.strptime(tr_dict['timestamp'],"%Y-%m-%dT%H:%M:%S.%f")).isoformat(),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": data_fields
-                })
-                logging.info(f"Success : Fetching Training Readiness for date {date_str}")
-    return points_list
+    return transforms.training_readiness_points(garmin_obj.get_training_readiness(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # Contribution from PR #17 by @arturgoms 
 def get_hillscore(date_str):
-    points_list = []
-    hill = garmin_obj.get_hill_score(date_str)
-    if hill:
-        data_fields = {
-            "strengthScore": hill.get("strengthScore"),
-            "enduranceScore": hill.get("enduranceScore"),
-            "hillScoreClassificationId": hill.get("hillScoreClassificationId"),
-            "overallScore": hill.get("overallScore"),
-            "hillScoreFeedbackPhraseId": hill.get("hillScoreFeedbackPhraseId"),
-            "vo2MaxPreciseValue": hill.get("vo2MaxPreciseValue")
-        }
-        if not all(value is None for value in data_fields.values()):
-            points_list.append({
-                "measurement":  "HillScore",
-                "time": datetime.strptime(date_str,"%Y-%m-%d").replace(hour=0, tzinfo=pytz.UTC).isoformat(), # Use GMT 00:00 for daily record
-                "tags": {
-                    "Device": GARMIN_DEVICENAME,
-                    "Database_Name": "GarminDB"
-                },
-                "fields": data_fields
-            })
-            logging.info(f"Success : Fetching Hill Score for date {date_str}")
-    return points_list
+    return transforms.hill_score_points(garmin_obj.get_hill_score(date_str), date_str, GARMIN_DEVICENAME)
+
 
 # Contribution from PR #17 by @arturgoms 
 def get_race_predictions(date_str):
-    points_list = []
-    rp_all_list = garmin_obj.get_race_predictions(startdate=date_str, enddate=date_str, _type="daily")
-    rp_all = rp_all_list[0] if len(rp_all_list) > 0 else {}
-    if rp_all:
-        data_fields = {
-            "time5K": rp_all.get("time5K"),
-            "time10K": rp_all.get("time10K"),
-            "timeHalfMarathon": rp_all.get("timeHalfMarathon"),
-            "timeMarathon": rp_all.get("timeMarathon"),
-        }
-        if not all(value is None for value in data_fields.values()):
-            points_list.append({
-                "measurement":  "RacePredictions",
-                "time": datetime.strptime(date_str,"%Y-%m-%d").replace(hour=0, tzinfo=pytz.UTC).isoformat(), # Use GMT 00:00 for daily record
-                "tags": {
-                    "Device": GARMIN_DEVICENAME,
-                    "Database_Name": "GarminDB"
-                },
-                "fields": data_fields
-            })
-            logging.info(f"Success : Fetching Race Predictions for date {date_str}")
-    return points_list
+    return transforms.race_prediction_points(garmin_obj.get_race_predictions(startdate=date_str, enddate=date_str, _type="daily"), date_str, GARMIN_DEVICENAME)
+
 
 def get_fitness_age(date_str):
-    points_list = []
-    fitness_age = garmin_obj.get_fitnessage_data(date_str)
+    return transforms.fitness_age_points(garmin_obj.get_fitnessage_data(date_str), date_str, GARMIN_DEVICENAME)
 
-    if fitness_age:
-            data_fields = {
-                "chronologicalAge": float(fitness_age.get("chronologicalAge")) if fitness_age.get("chronologicalAge") else None,
-                "fitnessAge": fitness_age.get("fitnessAge"),
-                "achievableFitnessAge": fitness_age.get("achievableFitnessAge"),
-            }
-
-            if not all(value is None for value in data_fields.values()):
-                points_list.append({
-                    "measurement": "FitnessAge",
-                    "time": datetime.strptime(date_str,"%Y-%m-%d").replace(hour=0, tzinfo=pytz.UTC).isoformat(), # Use GMT 00:00 for daily record
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": data_fields
-                })
-                logging.info(f"Success : Fetching Fitness Age for date {date_str}")
-    return points_list
 
 def get_vo2_max(date_str):
-    points_list = []
-    max_metrics = garmin_obj.get_max_metrics(date_str)
-    try:
-        if max_metrics:
-            vo2_max_value = (max_metrics[0].get("generic") or {}).get("vo2MaxPreciseValue", None)
-            vo2_max_value_cycling = (max_metrics[0].get("cycling") or {}).get("vo2MaxPreciseValue", None)
-            if vo2_max_value or vo2_max_value_cycling:
-                points_list.append({
-                    "measurement":  "VO2_Max",
-                    "time": datetime.strptime(date_str,"%Y-%m-%d").replace(hour=0, tzinfo=pytz.UTC).isoformat(), # Use GMT 00:00 for daily record
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB"
-                    },
-                    "fields": {"VO2_max_value" : vo2_max_value, "VO2_max_value_cycling" : vo2_max_value_cycling}
-                })
-                logging.info(f"Success : Fetching VO2-max for date {date_str}")
-        return points_list
-    except AttributeError as err:
-        return []
+    return transforms.vo2_max_points(garmin_obj.get_max_metrics(date_str), date_str, GARMIN_DEVICENAME)
+
 
 def get_endurance_score(date_str):
-    points_list = []
-    endurance_dict = garmin_obj.get_endurance_score(date_str)
-    if endurance_dict:
-        if endurance_dict.get("overallScore"):
-            points_list.append({
-                "measurement":  "EnduranceScore",
-                "time": pytz.timezone("UTC").localize(datetime.strptime(date_str,"%Y-%m-%d")).isoformat(), # Use GMT 00:00 is timestamp is not available
-                "tags": {
-                    "Device": GARMIN_DEVICENAME,
-                    "Database_Name": "GarminDB"
-                },
-                "fields": {
-                    "EnduranceScore": endurance_dict.get("overallScore")
-                    }
-            })
-            logging.info(f"Success : Fetching Endurance Score for date {date_str}")
-    return points_list
+    return transforms.endurance_score_points(garmin_obj.get_endurance_score(date_str), date_str, GARMIN_DEVICENAME)
+
 
 def get_blood_pressure(date_str):
-    points_list = []
-    bp_all = garmin_obj.get_blood_pressure(date_str, date_str).get('measurementSummaries',[])
-    if len(bp_all) > 0:
-        bp_list = bp_all[0].get('measurements',[])
-        for bp_measurement in bp_list:
-            data_fields = {
-                'Systolic': bp_measurement.get('systolic', None),
-                "Diastolic": bp_measurement.get('diastolic', None),
-                "Pulse": bp_measurement.get('pulse', None)
-            }
-            if not all(value is None for value in data_fields.values()) and 'measurementTimestampGMT' in bp_measurement:
-                points_list.append({
-                    "measurement":  "BloodPressure",
-                    "time": pytz.UTC.localize(datetime.strptime(bp_measurement['measurementTimestampGMT'], '%Y-%m-%dT%H:%M:%S.%f')),
-                    "tags": {
-                        "Device": GARMIN_DEVICENAME,
-                        "Database_Name": "GarminDB",
-                        "Source": bp_measurement.get('sourceType', None)
-                    },
-                    "fields": data_fields
-                })
-        logging.info(f"Success : Fetching Blood Pressure for date {date_str}")
-    return points_list
+    return transforms.blood_pressure_points(garmin_obj.get_blood_pressure(date_str, date_str), date_str, GARMIN_DEVICENAME)
+
 
 def get_hydration(date_str):
-    points_list = []
-    hydration_dict = garmin_obj.get_hydration_data(date_str)
-    data_fields = {
-        'ValueInML': hydration_dict.get('valueInML', None),
-        "SweatLossInML": hydration_dict.get('sweatLossInML', None),
-        "GoalInML": hydration_dict.get('goalInML', None),
-        "ActivityIntakeInML": hydration_dict.get('activityIntakeInML', None)
-    }
-    if not all(value is None for value in data_fields.values()):
-        points_list.append({
-            "measurement":  "Hydration",
-            "time": datetime.strptime(date_str,"%Y-%m-%d").replace(hour=0, tzinfo=pytz.UTC).isoformat(), # Use GMT 00:00 for daily record
-            "tags": {
-                "Device": GARMIN_DEVICENAME,
-                "Database_Name": "GarminDB"
-            },
-            "fields": data_fields
-        })
-        logging.info(f"Success : Fetching Hydration data for date {date_str}")
-    return points_list
+    return transforms.hydration_points(garmin_obj.get_hydration_data(date_str), date_str, GARMIN_DEVICENAME)
 
 
 def get_solar_intensity(date_str):
@@ -1273,56 +687,7 @@ def get_solar_intensity(date_str):
 
 # %%
 def get_lifestyle_data(date_str):
-    points_list = []
-    try:
-        logging.info(f"Fetching Lifestyle Journaling data for date {date_str}")
-        journal_data = garmin_obj.get_lifestyle_logging_data(date_str)
-        
-        daily_logs = journal_data.get('dailyLogsReport', [])
-        
-        for log in daily_logs:
-            behavior_name = log.get('name') or log.get('behavior')
-            if not behavior_name:
-                continue
-
-            category = log.get('category', 'UNKNOWN')
-            log_status = log.get('logStatus')
-            details = log.get('details', [])
-            
-            # status: 1 for YES, 0 for NO
-            status = 1 if log_status == "YES" else 0
-            
-            # value: sum of detail amounts if available, else 0.0
-            value = 0.0
-            if details:
-                for detail in details:
-                    amount = detail.get('amount')
-                    if amount is not None:
-                        value += float(amount)
-
-            fields = {
-                "status": status,
-                "value": value
-            }
-
-            points_list.append({
-                "measurement": "LifestyleJournal",
-                "time": pytz.timezone("UTC").localize(datetime.strptime(date_str, "%Y-%m-%d")).isoformat(),
-                "tags": {
-                    "Device": GARMIN_DEVICENAME,
-                    "Database_Name": "GarminDB",
-                    "behavior": behavior_name,
-                    "category": category
-                },
-                "fields": fields
-            })
-            
-        logging.info(f"Success : Fetching Lifestyle Journaling data for date {date_str}")
-
-    except Exception as e:
-        logging.warning(f"Failed to fetch Lifestyle Journaling data for date {date_str}: {e}")
-    
-    return points_list
+    return transforms.lifestyle_points(garmin_obj.get_lifestyle_logging_data(date_str), date_str, GARMIN_DEVICENAME)
 
 
 # %%
@@ -1335,78 +700,7 @@ _menstrual_shape_warned = False
 
 
 def get_menstrual_data(date_str):
-    global _menstrual_shape_warned
-    points_list = []
-    try:
-        data = garmin_obj.get_menstrual_data_for_date(date_str)
-        if not data or not isinstance(data, dict):
-            logging.debug(f"No menstrual data available for date {date_str}")
-            return []
-
-        # Parse both the pre- and post-May-2026 shapes — the old parser
-        # silently skipped every date for ~8 weeks after the rename.
-        summary = data.get('summary') or data.get('daySummary') or {}
-        day = data.get('dayData') or data.get('day') or data.get('dayLog') or {}
-        if not isinstance(summary, dict):
-            summary = {}
-        if not isinstance(day, dict):
-            day = {}
-
-        symptoms = day.get('symptoms')
-        if isinstance(symptoms, list):
-            symptoms = ','.join(str(s.get('name', s) if isinstance(s, dict) else s) for s in symptoms)
-
-        cycle_start = summary.get('cycleStartDate') or summary.get('startDate')
-        day_of_cycle = (summary.get('currentDayOfCycle') or day.get('currentDayOfCycle')
-                        or summary.get('dayInCycle'))
-        cycle_phase = summary.get('currentCyclePhase') or day.get('cyclePhase')
-        if not cycle_phase and summary.get('currentPhase') is not None:
-            cycle_phase = _MENSTRUAL_PHASE_NAMES.get(summary['currentPhase'],
-                                                     str(summary['currentPhase']))
-        flow = day.get('menstrualFlow') or day.get('flow')
-
-        # Skip silently if there's no meaningful menstrual data for the day.
-        if not any([cycle_start, cycle_phase, flow, day_of_cycle]):
-            # A payload with real content we failed to parse means the shape
-            # changed AGAIN — surface it once per run instead of going
-            # silently dark like last time. Non-tracking users get {} or
-            # all-None values, which stays quiet.
-            if any(v for v in data.values() if v) and not _menstrual_shape_warned:
-                _menstrual_shape_warned = True
-                logging.warning(f"Menstrual response for {date_str} has keys {list(data.keys())} "
-                                "but no recognisable cycle fields — Garmin may have changed the "
-                                "response shape again")
-            logging.debug(f"No menstrual data tracked for date {date_str}")
-            return []
-
-        points_list.append({
-            "measurement": "MenstrualCycle",
-            "time": datetime.strptime(date_str, "%Y-%m-%d").replace(hour=12, tzinfo=pytz.UTC).isoformat(),
-            "tags": {
-                "Device": GARMIN_DEVICENAME,
-                "Database_Name": "GarminDB",
-            },
-            "fields": {
-                "date": date_str,
-                "cycleStartDate": cycle_start,
-                "currentDayOfCycle": day_of_cycle,
-                "currentCyclePhase": cycle_phase,
-                "cycleLength": summary.get('cycleLength'),
-                "predictedCycleLength": summary.get('predictedCycleLength') or summary.get('predictedMenstrualCycleLength'),
-                "periodLength": summary.get('periodLength') or summary.get('predictedPeriodLength'),
-                "menstrualFlow": flow,
-                "pregnancyStatus": summary.get('pregnancyStatus') or day.get('pregnancyStatus'),
-                "symptoms": symptoms,
-                "mood": day.get('mood'),
-                "notes": day.get('notes'),
-                "rawJson": json.dumps(data),
-            }
-        })
-        logging.info(f"Success : Fetching menstrual cycle data for date {date_str} (phase={cycle_phase}, day {day_of_cycle})")
-    except Exception as e:
-        # Silent skip on error - user may not have cycle tracking enabled.
-        logging.debug(f"Skipping menstrual data for date {date_str}: {e}")
-    return points_list
+    return transforms.menstrual_points(garmin_obj.get_menstrual_data_for_date(date_str), date_str, GARMIN_DEVICENAME)
 
 
 # %%
@@ -1507,19 +801,7 @@ def fetch_write_bulk(start_date_str, end_date_str):
                 time.sleep(FETCH_FAILED_WAIT_SECONDS)
                 repeat_loop = True
             except (requests.exceptions.HTTPError, GarthHTTPError) as err:
-                # Check if this is a 500 error
-                is_500_error = False
-                if isinstance(err, requests.exceptions.HTTPError):
-                    if hasattr(err, 'response') and err.response is not None and err.response.status_code == 500:
-                        is_500_error = True
-                elif isinstance(err, GarthHTTPError):
-                    # GarthHTTPError may have status_code attribute or be wrapped around HTTPError
-                    if hasattr(err, 'status_code') and err.status_code == 500:
-                        is_500_error = True
-                    elif hasattr(err, 'response') and err.response is not None and err.response.status_code == 500:
-                        is_500_error = True
-                
-                if is_500_error:
+                if transforms.is_http_500(err):
                     consecutive_500_errors += 1
                     logging.error(f"HTTP 500 error ({consecutive_500_errors}/{MAX_CONSECUTIVE_500_ERRORS}) for date {current_date}: {err}")
                     if consecutive_500_errors >= MAX_CONSECUTIVE_500_ERRORS:
