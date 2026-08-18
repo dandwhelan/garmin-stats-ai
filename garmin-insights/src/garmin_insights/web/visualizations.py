@@ -437,6 +437,13 @@ class VisualizationService:
                     continue
             except Exception:
                 continue
+            # A row can carry sleep_start/sleep_end but a null sleep_time_seconds
+            # (int(NaN) raises, 500ing the whole /api/visualizations gather) —
+            # fall back to the bed→wake window in that case.
+            if secs is not None and not pd.isna(secs) and int(secs) > 0:
+                dur_secs = int(secs)
+            else:
+                dur_secs = int((wake_dt - bed_dt).total_seconds())
             bed_h = bed_dt.hour + bed_dt.minute / 60
             wake_h = wake_dt.hour + wake_dt.minute / 60
             # Normalise: if bed_h is in the morning (after midnight), shift +24
@@ -454,7 +461,7 @@ class VisualizationService:
                 "dow": dow,
                 "bedtime": round(bed_h, 2),
                 "waketime": round(wake_h, 2),
-                "duration_h": round(int(secs) / 3600, 2),
+                "duration_h": round(dur_secs / 3600, 2),
                 "score": int(score) if score is not None and not (isinstance(score, float) and score != score) else None,
             })
         return out

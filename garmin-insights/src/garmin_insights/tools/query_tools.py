@@ -1415,9 +1415,11 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
         {
             "name": "detect_social_jet_lag",
             "description": (
-                "Compare weekday vs weekend sleep duration to detect circadian misalignment "
-                "('social jet lag'). Returns mean sleep duration for each and the variance "
-                "in hours. Variance >1h is considered metabolically significant."
+                "Compare weekday vs weekend sleep MIDPOINT to detect circadian "
+                "misalignment ('social jet lag', Wittmann 2006 definition). Returns "
+                "the mean midpoint for each (hours on a wrap-safe scale where 26 = "
+                "02:00) and the shift between them in hours. A shift >1h is "
+                "considered metabolically significant."
             ),
             "input_schema": {
                 "type": "object",
