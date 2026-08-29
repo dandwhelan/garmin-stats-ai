@@ -39,6 +39,17 @@ def _offset_frame(weight_kg: float) -> bytes:
     return bytes([0x00, 0x00, 0x00]) + raw.to_bytes(3, "big")
 
 
+def _a2_frame(weight_kg: float, status: int, seq: int = 0x00, flag: int = 0x01) -> bytes:
+    """``SEQ 00 07 00 A2 STATUS 00 FLAG W_HI W_LO 00 CKSUM`` layout.
+
+    Checksum is not validated by the decoder, so it is left as a filler
+    byte here rather than computed.
+    """
+    raw = int(round(weight_kg * 100))
+    w_hi, w_lo = (raw >> 8) & 0xFF, raw & 0xFF
+    return bytes([seq, 0x00, 0x07, 0x00, 0xA2, status, 0x00, flag, w_hi, w_lo, 0x00, 0x00])
+
+
 def _impedance_frame(hi: int, lo: int, offset: int = 20) -> bytes:
     """40-byte 0xFF frame, all-0xFF filler with two bytes planted.
 
@@ -130,6 +141,73 @@ def test_variant_b_run_resets_on_change(adapter):
     reading = adapter.decode(frames)
     assert reading is not None
     assert reading.stable is False
+
+
+# --------------------------------------------------------------------------
+# variant C — a2 (real JEETIFxxxx capture)
+# --------------------------------------------------------------------------
+def test_variant_a2_live_frame(adapter):
+    reading = adapter.decode([_a2_frame(103.0, 0x01)])
+    assert reading is not None
+    assert reading.stable is False
+    assert reading.weight_kg == pytest.approx(103.0, abs=TOL)
+    assert reading.variant == "lefu_a2"
+
+
+def test_variant_a2_stable_frame(adapter):
+    reading = adapter.decode([_a2_frame(71.14, 0x03)])
+    assert reading is not None
+    assert reading.stable is True
+    assert reading.weight_kg == pytest.approx(71.14, abs=TOL)
+
+
+def test_variant_a2_unknown_status_ignored(adapter):
+    assert adapter.decode([_a2_frame(71.14, 0x02)]) is None
+
+
+def test_variant_a2_stable_survives_later_reversion(adapter):
+    """Once stable, a later live frame (of any weight) must not erase it.
+
+    Mirrors the ac02 semantics: the caller stops scanning the instant a
+    stable reading comes back, so a reversion after the fact is moot.
+    """
+    frames = [
+        _a2_frame(71.14, 0x01),
+        _a2_frame(71.14, 0x03),
+        _a2_frame(165.5, 0x01),  # a later, unrelated live blip
+    ]
+    reading = adapter.decode(frames)
+    assert reading is not None
+    assert reading.stable is True
+    assert reading.weight_kg == pytest.approx(71.14, abs=TOL)
+
+
+def test_variant_a2_real_capture_regression(adapter):
+    """Verbatim (trimmed) frames from a real Fitdays-paired JEETIF2421 scan.
+
+    The full session climbs from noise (108.5, 103.0 kg as a foot lands),
+    converges on 71.14 kg, briefly reports STATUS=0x03 (stable), reverts to
+    a couple of unrelated live spikes, then settles on the same 71.14 kg
+    for good. This is a regression lock for the lefu_a2 layout discovered
+    against physical hardware, not a synthetic construction.
+    """
+    hex_frames = [
+        "47000700a20100002a62000f",  # live, 108.50 kg (noise)
+        "48000700a2010000283c0007",  # live, 103.00 kg (noise)
+        "9c000700a20100011bca0009",  # live, converged to 71.14 kg
+        "a2000700a20300011bca000b",  # stable, 71.14 kg
+        "a3000700a20300011bca000b",  # stable, 71.14 kg
+        "a7000700a201000040a60009",  # live again, 165.50 kg (unrelated blip)
+        "a8000700a2010000a1220006",  # live again, 412.50 kg (unrelated blip)
+        "ea000700a20300011bca000b",  # stable, 71.14 kg (final, sustained)
+        "66000700a20300011bca000b",  # stable, 71.14 kg (final, sustained)
+    ]
+    reading = adapter.decode(parse_hex_frames(hex_frames))
+    assert reading is not None
+    assert reading.stable is True
+    assert reading.variant == "lefu_a2"
+    assert reading.weight_kg == pytest.approx(71.14, abs=TOL)
+    assert reading.impedance_ohm is None  # no impedance frame ever appeared
 
 
 def test_ac02_family_never_falls_through_to_offset(adapter):

@@ -6,12 +6,21 @@ of the standard Weight Scale service 0x181B. The browser subscribes to
 0xFFB2, writes the five handshake frames to 0xFFB1, then keeps poking the
 last handshake frame once a second so the scale keeps streaming.
 
-Two on-the-wire layouts are known and auto-detected:
+Three on-the-wire layouts are known and auto-detected:
 
 * ``lefu_ac02`` — 8-byte ``AC 02 | D0 D1 D2 D3 | STATUS | CKSUM`` frames,
-  the layout the handshake above elicits.
+  the layout the handshake above elicits on most units.
 * ``lefu_offset`` — the E.volve / ESPHome layout, where bytes 3..5 are a
   big-endian u24 biased by 0x680000 and scaled by 1000.
+* ``lefu_a2`` — a 12-byte layout captured from a real Fitdays-paired unit
+  (device name ``JEETIFxxxx``) that responds to the same ac02 handshake
+  but streams a different frame shape: ``SEQ 00 07 00 A2 STATUS 00 FLAG
+  WEIGHT_HI WEIGHT_LO 00 CKSUM``. ``SEQ`` is a free-running per-notification
+  counter (not data); ``STATUS`` is the device's own live(0x01)/stable(0x03)
+  flag, trusted at face value exactly like ``lefu_ac02``'s; weight is the
+  big-endian u16 at bytes 8-9 divided by 100. No impedance frame was ever
+  observed on this unit in that capture, so it degrades to weight+BMI only
+  via the normal no-impedance path — nothing is invented to fill the gap.
 
 Protocol assumptions worth knowing (documented rather than hidden):
 
@@ -45,6 +54,13 @@ _OFFSET_MIN_KG = 2.0
 _OFFSET_MAX_KG = 300.0
 #: How many consecutive identical offset frames before we call it settled.
 _OFFSET_STABLE_RUN = 3
+
+# --- a2 layout (real JEETIFxxxx capture) -----------------------------------
+_A2_LEN = 12
+_A2_HEADER = (0x00, 0x07, 0x00, 0xA2)  # frame[1:5]
+_A2_STATUS_LIVE = 0x01
+_A2_STATUS_STABLE = 0x03
+_A2_WEIGHT_SCALE = 100.0
 
 # --- impedance ------------------------------------------------------------
 _IMPEDANCE_FRAME_LEN = 40
@@ -98,9 +114,32 @@ def _decode_ac02(frame: bytes) -> tuple[float, bool] | None:
     return weight_kg, status == _STATUS_STABLE
 
 
+def _is_a2_family(frame: bytes) -> bool:
+    """True for any 12-byte frame with the fixed ``00 07 00 A2`` header."""
+    return len(frame) == _A2_LEN and tuple(frame[1:5]) == _A2_HEADER
+
+
+def _decode_a2(frame: bytes) -> tuple[float, bool] | None:
+    """``SEQ 00 07 00 A2 STATUS 00 FLAG W_HI W_LO 00 CKSUM`` -> (kg, stable).
+
+    STATUS is trusted at face value, the same way ``lefu_ac02``'s STATUS
+    byte is: the device knows when its own reading has settled, and a
+    later frame that reverts to "live" only matters if we are still
+    listening — once a stable reading is returned the caller stops the
+    scan, so a brief reversion after the fact is moot.
+    """
+    if not _is_a2_family(frame):
+        return None
+    status = frame[5]
+    if status not in (_A2_STATUS_LIVE, _A2_STATUS_STABLE):
+        return None  # not a weight frame
+    weight_kg = int.from_bytes(frame[8:10], "big") / _A2_WEIGHT_SCALE
+    return weight_kg, status == _A2_STATUS_STABLE
+
+
 def _decode_offset(frame: bytes) -> float | None:
     """E.volve/ESPHome layout: u24 at bytes 3..5, biased and /1000."""
-    if len(frame) < 6 or _is_ac02_family(frame):
+    if len(frame) < 6 or _is_ac02_family(frame) or _is_a2_family(frame):
         return None
     raw = int.from_bytes(frame[3:6], "big")
     weight_kg = (raw - _OFFSET_BIAS) / _OFFSET_SCALE
@@ -181,6 +220,16 @@ class LefuAdapter:
                     best_stable = (weight, "lefu_ac02")
                 else:
                     last_live = (weight, "lefu_ac02")
+                run_value, run_len = None, 0
+                continue
+
+            a2 = _decode_a2(frame)
+            if a2 is not None:
+                weight, stable = a2
+                if stable:
+                    best_stable = (weight, "lefu_a2")
+                else:
+                    last_live = (weight, "lefu_a2")
                 run_value, run_len = None, 0
                 continue
 
