@@ -26,6 +26,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from garmin_insights.config import get_settings
+from garmin_insights.scales.base import parse_hex_frames
+from garmin_insights.scales.composition import compute_body_composition
+from garmin_insights.scales.registry import descriptors as scale_descriptors
+from garmin_insights.scales.registry import get_adapter as get_scale_adapter
 from garmin_insights.web.sessions import SessionManager
 from garmin_insights.web.user_context import UserBundle, UserContext
 
@@ -42,6 +46,18 @@ _sessions: SessionManager | None = None
 # poll reset the clock and starve the other user's refresh indefinitely.
 _last_cache_refresh: dict[str, datetime] = {}
 _CACHE_REFRESH_INTERVAL = timedelta(seconds=60)
+
+# In-memory buffer of in-progress Bluetooth-scale sessions, keyed by
+# (user, session_id). The browser is a dumb BLE pipe that POSTs every notify
+# frame it sees as it sees them — the server folds them into a running
+# reading. This is untrusted browser input (an unknown-firmware scale, a
+# flaky BLE connection, a stuck tab), so every dimension is bounded rather
+# than left to grow: frames per session, live sessions, and time alive.
+_scale_sessions: dict[tuple[str, str], dict[str, Any]] = {}
+_SCALE_SESSION_MAX_FRAMES = 2000
+_SCALE_SESSION_MAX_LIVE = 32
+_SCALE_SESSION_TTL = timedelta(minutes=10)
+_SCALE_FRAMES_PER_REQUEST_MAX = 200
 
 
 @asynccontextmanager
@@ -146,6 +162,18 @@ class WeighInRequest(BaseModel):
     metabolic_age: float | None = None
     physique_rating: float | None = None
     bmi: float | None = None
+    # Id of a scale_readings row already saved by /api/scale/frames — set
+    # when this weigh-in originated from a Bluetooth scan, so we mark that
+    # row uploaded instead of creating a duplicate local reading.
+    reading_id: int | None = None
+
+
+class ScaleFramesRequest(BaseModel):
+    """One batch of raw BLE notification frames from the browser's scan."""
+    user: str = "default"
+    session_id: str
+    adapter: str
+    frames: list[str]
 
 
 # ------------------------------------------------------------------
@@ -260,6 +288,17 @@ def _extract_assistant_text(history: list[dict]) -> str:
             if text:
                 return text
     return ""
+
+
+def _evict_scale_sessions() -> None:
+    """Drop expired scale sessions, oldest-first, ahead of every request.
+
+    Called before touching ``_scale_sessions`` so a slow/abandoned browser
+    scan (closed tab, dead BLE connection) can never pin memory forever."""
+    now = datetime.utcnow()
+    expired = [k for k, v in _scale_sessions.items() if now - v["updated"] > _SCALE_SESSION_TTL]
+    for k in expired:
+        _scale_sessions.pop(k, None)
 
 
 # ------------------------------------------------------------------
@@ -1079,6 +1118,143 @@ async def save_note(req: NoteRequest):
     return {"saved": saved, "deleted": not saved, "date": req.date}
 
 
+@app.get("/api/scale/adapters")
+async def scale_adapters():
+    """Protocol descriptors for every known Bluetooth scale family.
+
+    No user context needed — this only tells the browser which GATT
+    UUIDs/handshake frames to use; it never touches a database.
+    """
+    return {"adapters": scale_descriptors()}
+
+
+@app.post("/api/scale/frames")
+async def scale_frames(req: ScaleFramesRequest):
+    """Fold one batch of raw BLE notification frames into a reading.
+
+    The browser is a dumb pipe: it relays every notify payload as hex and
+    this decodes/accumulates them server-side. Every input here is
+    untrusted (an unknown-firmware scale, a flaky connection), so nothing
+    below trusts frame content, and every buffer is bounded.
+    """
+    bundle = _require_user(req.user)
+    adapter = get_scale_adapter(req.adapter)
+    if adapter is None:
+        raise HTTPException(status_code=400, detail=f"Unknown scale adapter '{req.adapter}'")
+    if not isinstance(req.frames, list) or len(req.frames) > _SCALE_FRAMES_PER_REQUEST_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"frames must be a list of at most {_SCALE_FRAMES_PER_REQUEST_MAX} hex strings per request",
+        )
+
+    _evict_scale_sessions()
+    key = (req.user, req.session_id)
+    if key not in _scale_sessions and len(_scale_sessions) >= _SCALE_SESSION_MAX_LIVE:
+        # Cap the number of concurrent scan sessions, not just their size —
+        # evict the least-recently-touched one to make room for this one.
+        oldest_key = min(_scale_sessions, key=lambda k: _scale_sessions[k]["updated"])
+        _scale_sessions.pop(oldest_key, None)
+    session = _scale_sessions.setdefault(key, {"frames": [], "updated": datetime.utcnow()})
+
+    session["frames"].extend(parse_hex_frames(req.frames))
+    if len(session["frames"]) > _SCALE_SESSION_MAX_FRAMES:
+        # Keep the tail — the most recent frames are the ones that matter for
+        # a settled reading; the earliest live fluctuations are disposable.
+        session["frames"] = session["frames"][-_SCALE_SESSION_MAX_FRAMES:]
+    session["updated"] = datetime.utcnow()
+
+    frame_count = len(session["frames"])
+    reading = adapter.decode(session["frames"])
+    if reading is None:
+        return {"state": "waiting", "frame_count": frame_count}
+    if not reading.stable:
+        return {"state": "reading", "weight_kg": reading.weight_kg, "frame_count": frame_count}
+
+    # Stable: compute whatever body composition the user's profile supports,
+    # persist locally, and drop the session buffer — the scan is done.
+    identity = _resolve_user_identity(bundle.agent._settings)
+    height_raw = identity.get("height_cm")
+    try:
+        height_cm = float(height_raw) if height_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        height_cm = None
+    age = identity.get("age")
+    sex = identity.get("biological_sex") or ""
+
+    composition: dict[str, Any] = {}
+    if height_cm is not None:
+        composition = compute_body_composition(
+            reading.weight_kg, reading.impedance_ohm, height_cm, float(age or 0), sex
+        )
+    comp_extras = composition.pop("extras", {}) if composition else {}
+
+    _FULL_COMPOSITION_KEYS = {
+        "bmi", "body_fat_pct", "body_water_pct", "muscle_mass_kg",
+        "bone_mass_kg", "visceral_fat", "metabolic_age",
+    }
+    note: str | None = None
+    if not _FULL_COMPOSITION_KEYS.issubset(composition.keys()):
+        if reading.impedance_ohm is None:
+            note = "Impedance not reported by the scale — weight and BMI only."
+        elif height_cm is None or age is None or not sex:
+            note = "Set HEIGHT_CM / BIRTH_DATE to compute body composition."
+        else:
+            note = "Impedance or profile values are out of the plausible range — weight and BMI only."
+
+    extras = {**dict(reading.extras), **comp_extras, "variant": reading.variant}
+    raw_frames_hex = "\n".join(f.hex() for f in session["frames"])
+    taken_at = datetime.now().isoformat(timespec="seconds")
+
+    loop = asyncio.get_event_loop()
+    reading_id = await loop.run_in_executor(
+        None,
+        lambda: bundle.agent._memory.save_scale_reading(
+            taken_at=taken_at,
+            adapter=req.adapter,
+            weight_kg=reading.weight_kg,
+            impedance_ohm=reading.impedance_ohm,
+            bmi=composition.get("bmi"),
+            body_fat_pct=composition.get("body_fat_pct"),
+            body_water_pct=composition.get("body_water_pct"),
+            muscle_mass_kg=composition.get("muscle_mass_kg"),
+            bone_mass_kg=composition.get("bone_mass_kg"),
+            visceral_fat=composition.get("visceral_fat"),
+            metabolic_age=composition.get("metabolic_age"),
+            extras=extras,
+            raw_frames=raw_frames_hex,
+        ),
+    )
+    _scale_sessions.pop(key, None)
+
+    result: dict[str, Any] = {
+        "state": "final",
+        "reading_id": reading_id,
+        "weight_kg": reading.weight_kg,
+        "impedance_ohm": reading.impedance_ohm,
+        "metrics": composition,
+        "frame_count": frame_count,
+    }
+    if note:
+        result["note"] = note
+    return result
+
+
+@app.get("/api/scale-readings")
+async def scale_readings(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Locally-persisted scale readings for the window (never includes raw frames)."""
+    bundle = _require_user(user)
+    s, e = _resolve_range(start, end, default_days=90)
+    loop = asyncio.get_event_loop()
+    readings = await loop.run_in_executor(
+        None, bundle.agent._memory.get_scale_readings, s, e
+    )
+    return {"readings": readings, "date_range": {"start": s, "end": e}}
+
+
 @app.post("/api/weigh-in")
 async def upload_weigh_in(req: WeighInRequest):
     """Upload a manual body-composition weigh-in to Garmin Connect.
@@ -1089,7 +1265,7 @@ async def upload_weigh_in(req: WeighInRequest):
     """
     from garmin_insights.garmin_upload import GarminUploadError, upload_body_composition
 
-    _require_user(req.user)
+    bundle = _require_user(req.user)
     if not (20 <= req.weight_kg <= 400):
         raise HTTPException(status_code=400, detail="weight_kg must be between 20 and 400")
     # Bounds mirror the form's min/max. Beyond plausibility: out-of-range
@@ -1119,6 +1295,37 @@ async def upload_weigh_in(req: WeighInRequest):
 
     user_settings = get_settings().settings_for_user(req.user)
     loop = asyncio.get_event_loop()
+
+    # Every weigh-in must land in the local DB even if the Garmin upload
+    # below fails — so this happens first, and a save failure here is logged
+    # and swallowed rather than blocking the upload the user actually asked
+    # for. A reading_id from the request (a prior /api/scale/frames scan)
+    # means the row already exists; only a manual form submission creates
+    # a new one here.
+    reading_id = req.reading_id
+    if reading_id is None:
+        try:
+            taken_at = req.timestamp or datetime.now().isoformat(timespec="seconds")
+            reading_id = await loop.run_in_executor(
+                None,
+                lambda: bundle.agent._memory.save_scale_reading(
+                    taken_at=taken_at,
+                    adapter="manual",
+                    weight_kg=req.weight_kg,
+                    bmi=req.bmi,
+                    body_fat_pct=req.body_fat_pct,
+                    body_water_pct=req.body_water_pct,
+                    muscle_mass_kg=req.muscle_mass_kg,
+                    bone_mass_kg=req.bone_mass_kg,
+                    visceral_fat=req.visceral_fat,
+                    metabolic_age=req.metabolic_age,
+                    physique_rating=req.physique_rating,
+                ),
+            )
+        except Exception:
+            logger.exception("Failed to save manual weigh-in as a local scale reading")
+            reading_id = None
+
     try:
         await loop.run_in_executor(None, lambda: upload_body_composition(
             user_settings.token_dir,
@@ -1137,6 +1344,14 @@ async def upload_weigh_in(req: WeighInRequest):
     except GarminUploadError as err:
         raise HTTPException(status_code=502, detail=str(err))
 
+    if reading_id is not None:
+        try:
+            await loop.run_in_executor(
+                None, bundle.agent._memory.mark_scale_reading_uploaded, reading_id
+            )
+        except Exception:
+            logger.exception("Failed to mark scale reading %s as uploaded", reading_id)
+
     # Backdated readings upload fine, but the fetcher only re-scans the
     # trailing RESYNC_WINDOW_DAYS (default 7) — anything older lands in
     # Garmin Connect yet never flows back into the local DB, so the user
@@ -1152,7 +1367,7 @@ async def upload_weigh_in(req: WeighInRequest):
                 f"the local dashboard or AI data. To pull it in, run a one-off backfill: "
                 f"MANUAL_START_DATE={ts_date.isoformat()} python -m garmin_grafana.garmin_fetch"
             )
-    return {"uploaded": True, "weight_kg": req.weight_kg, "note": note}
+    return {"uploaded": True, "weight_kg": req.weight_kg, "note": note, "reading_id": reading_id}
 
 
 @app.post("/api/chat")
