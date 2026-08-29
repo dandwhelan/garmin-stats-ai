@@ -74,7 +74,9 @@ LEFU_DESCRIPTOR = AdapterDescriptor(
         "ac02fe060000ccd0",
     ],
     poll={"frame": "ac02fe060000ccd0", "interval_ms": 1000},
-    name_prefixes=["Health Scale", "Lefu", "CH", "Hutbit", "Scale"],
+    # "JEETI" covers the JEETIFxxxx-style random alphanumeric names some
+    # Fitdays-paired units advertise instead of a brand string.
+    name_prefixes=["Health Scale", "Lefu", "CH", "Hutbit", "Scale", "JEETI"],
 )
 
 
