@@ -169,3 +169,71 @@ def test_body_comp_local_day_keying(tmp_path):
         else:
             os.environ["TZ"] = old_tz
         _time.tzset()
+
+
+# ---------------------------------------------------------------------------
+# scale_readings fallback merge — closes the gap before Garmin resyncs
+# ---------------------------------------------------------------------------
+
+def test_scale_reading_fills_summary_when_no_body_composition(tmp_path):
+    db = str(tmp_path / "garmin.db")
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE body_composition ("
+        "time TEXT, device TEXT, weight REAL, bmi REAL, body_fat REAL, "
+        "body_water REAL, bone_mass REAL, muscle_mass REAL, "
+        "physique_rating REAL, visceral_fat REAL, metabolic_age REAL, "
+        "PRIMARY KEY (time, device))"
+    )
+    conn.commit()
+    conn.close()
+
+    settings = Settings(sqlite_db_path=db, anthropic_api_key="test")
+    repo = SqliteRepo(settings)
+    memory = MemoryStore(settings)
+    memory.initialise_schema()
+    memory.save_scale_reading(
+        taken_at="2026-07-10T08:00:00",
+        adapter="fitdays",
+        weight_kg=72.08,
+        bmi=21.1,
+        body_fat_pct=16.6,
+        body_water_pct=57.2,
+        muscle_mass_kg=57.07,
+        bone_mass_kg=3.06,
+        visceral_fat=9.0,
+        metabolic_age=23.0,
+    )
+    cache = CacheBuilder(repo, memory)
+
+    summary = cache.build_daily_summary("2026-07-10", is_complete=False)
+
+    assert summary["weight_kg"] == 72.08
+    assert summary["bmi"] == 21.1
+    assert summary["body_fat_pct"] == 16.6
+    assert summary["body_water_pct"] == 57.2
+    assert summary["muscle_mass_kg"] == 57.07
+    assert summary["bone_mass_kg"] == 3.06
+    assert summary["visceral_fat"] == 9.0
+    assert summary["metabolic_age"] == 23.0
+
+
+def test_garmin_body_composition_wins_over_scale_reading(db_with_weigh_in):
+    settings = Settings(sqlite_db_path=db_with_weigh_in, anthropic_api_key="test")
+    repo = SqliteRepo(settings)
+    memory = MemoryStore(settings)
+    memory.initialise_schema()
+    # A scale reading exists for the same day but with different numbers —
+    # Garmin's synced body_composition row must win.
+    memory.save_scale_reading(
+        taken_at="2026-07-10T05:00:00",
+        adapter="fitdays",
+        weight_kg=99.9,
+        body_fat_pct=99.9,
+    )
+    cache = CacheBuilder(repo, memory)
+
+    summary = cache.build_daily_summary("2026-07-10", is_complete=False)
+
+    assert summary["weight_kg"] == 72.08  # from body_composition, not the scale row
+    assert summary["body_fat_pct"] == 16.6
