@@ -245,10 +245,19 @@
 
     <section class="chart-section" id="body-comp-detail-section" style="display:none">
       <div class="chart-header">
-        <h2>Body Composition Detail <span class="info-icon" tabindex="0">i<span class="info-tooltip">Body water %, bone mass and visceral-fat rating from smart-scale weigh-ins (e.g. a Mi Scale syncing via Garmin Connect). All are <b>bio-impedance estimates</b> — hydration, recent meals and exercise shift them day to day, so track the trend against your own baseline rather than single readings. Only shown when your scale reports these fields.</span></span></h2>
+        <h2>Body Composition Detail <span class="info-icon" tabindex="0">i<span class="info-tooltip">Body water %, bone mass and visceral-fat rating from smart-scale weigh-ins synced via Garmin Connect. All are <b>bio-impedance estimates</b> — hydration, recent meals and exercise shift them day to day, so track the trend against your own baseline rather than single readings. Only shown when your scale reports these fields.</span></span></h2>
       </div>
       <div class="chart-container">
         <canvas id="body-comp-detail-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section" id="scale-detail-section" style="display:none">
+      <div class="chart-header">
+        <h2>Scale Detail <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> Fat mass, fat-free mass and estimated BMR from Bluetooth scans of your 8-electrode scale, decoded server-side from the raw impedance frames. These are <b>bio-impedance estimates</b>, not lab measurements — hydration, meals and exercise timing shift them day to day, so read the trend against your own baseline rather than any single reading. Only shown once a Bluetooth scan has produced a reading.</span></span></h2>
+      </div>
+      <div class="chart-container">
+        <canvas id="scale-detail-chart"></canvas>
       </div>
     </section>
 
@@ -802,16 +811,27 @@
 
         <div class="weighin-form" id="weighin-form">
           <h2>Log a Weigh-in <span class="info-icon" tabindex="0">i<span class="info-tooltip">Uploads straight to <b>your Garmin Connect account</b> using the same login the fetcher already holds — nothing goes through a third-party service. The reading syncs back onto the dashboard after your watch next syncs (often an hour or more). Only weight is required; fill in whatever your scale shows.</span></span></h2>
-          <p class="journal-hint">Scan your Xiaomi scale over Bluetooth to fill the form automatically, or type in what your smart scale shows. It's sent to Garmin Connect and appears here after the next sync.</p>
+          <p class="journal-hint">Scan your Fitdays/Lefu 8-electrode scale over Bluetooth to fill the form automatically, or type in what your smart scale shows. It's sent to Garmin Connect and appears here after the next sync.</p>
           <div class="weighin-scan">
             <div class="weighin-grid weighin-profile">
               <label>Height (cm) <input type="number" id="wi-height" step="0.5" min="80" max="230" placeholder="180"></label>
               <label>Age <input type="number" id="wi-age" step="1" min="10" max="110" placeholder="35"></label>
               <label>Sex <select id="wi-sex"><option value="male">Male</option><option value="female">Female</option></select></label>
             </div>
+            <p class="journal-hint">These describe what the server's math assumes — the scale itself only reports weight (and impedance, when stable); body composition is computed from height/age/sex against your <code>HEIGHT_CM</code>/<code>BIRTH_DATE</code>/<code>BIOLOGICAL_SEX</code> profile.</p>
             <div class="journal-actions">
-              <button id="weighin-scan-btn" class="secondary-btn" title="Reads weight + impedance from a Mi Body Composition Scale over Bluetooth and computes the rest from your height / age / sex">📶 Scan scale</button>
+              <button id="weighin-scan-btn" class="secondary-btn" title="Reads weight + impedance from a Fitdays/Lefu 8-electrode scale over Bluetooth; the server decodes the frames and computes body composition from your height / age / sex">📶 Scan scale</button>
+              <label class="weighin-debug-toggle" title="Logs every raw BLE frame so an unmatched firmware layout can be diagnosed">
+                <input type="checkbox" id="weighin-debug-capture"> Debug capture
+              </label>
               <span id="weighin-scan-status" class="journal-status"></span>
+            </div>
+            <div class="weighin-debug" id="weighin-debug" hidden>
+              <p class="journal-hint">At least three Lefu FFB0 firmware layouts are known and this unit isn't confirmed yet. If the decoded numbers look wrong, scan again with this on, then copy the log and paste it back so a new variant can be added.</p>
+              <pre id="weighin-debug-log" class="weighin-debug-log"></pre>
+              <div class="journal-actions">
+                <button id="weighin-debug-copy" class="secondary-btn">Copy raw log</button>
+              </div>
             </div>
           </div>
           <div class="weighin-grid">
@@ -885,6 +905,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260720a"></script>
+  <script src="/static/app.js?v=20260829a"></script>
 </body>
 </html>

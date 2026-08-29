@@ -647,6 +647,7 @@ async function loadDashboard() {
     );
     loadBehaviorRootCause('migraine', 'Migraines', 48, date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
+    loadScaleDetail(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1349,6 +1350,87 @@ function renderBodyCompositionDetail(records) {
         x: commonScales().x,
         y: { ...commonScales('%').y, position: 'left' },
         y1: { ...commonScales().y, position: 'right', grid: { drawOnChartArea: false } },
+      },
+      plugins: commonPlugins(),
+    },
+  });
+}
+
+// ---- Scale Detail (Bluetooth scale readings — fat mass / fat-free mass / BMR) ----
+// Sourced from GET /api/scale-readings, distinct from the body-composition
+// series above (which comes from daily_summaries / Garmin-synced weigh-ins).
+// Server-decoded bio-impedance extras only exist for readings taken through
+// the in-app Bluetooth scan, so the section stays hidden until one exists.
+async function loadScaleDetail(start, end) {
+  const epoch = loadEpoch;
+  const section = document.getElementById('scale-detail-section');
+  if (!section) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/scale-readings?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    renderScaleDetail(data.readings || []);
+  } catch (e) {
+    console.error('Scale-detail load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderScaleDetail(readings) {
+  const section = document.getElementById('scale-detail-section');
+  if (!section) return;
+  const data = (readings || []).filter(r =>
+    r.extras?.fat_mass_kg != null || r.extras?.fat_free_mass_kg != null || r.extras?.bmr_kcal != null);
+  destroyAux('scaleDetail');
+  if (data.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+
+  const ctx = document.getElementById('scale-detail-chart');
+  if (!ctx) return;
+  const labels = data.map(r => (r.date || r.taken_at || '').slice(5, 10));
+
+  auxCharts.scaleDetail = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Fat mass (kg)',
+          data: data.map(r => r.extras?.fat_mass_kg ?? null),
+          borderColor: '#fbbf24',
+          backgroundColor: 'rgba(251,191,36,0.12)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'Fat-free mass (kg)',
+          data: data.map(r => r.extras?.fat_free_mass_kg ?? null),
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,0.12)',
+          tension: 0.3, spanGaps: true, yAxisID: 'y',
+        },
+        {
+          label: 'BMR (kcal)',
+          data: data.map(r => r.extras?.bmr_kcal ?? null),
+          borderColor: '#a78bfa',
+          backgroundColor: 'transparent',
+          borderDash: [4, 4],
+          tension: 0.3, spanGaps: true, yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('kg').y, position: 'left' },
+        y1: { ...commonScales('kcal').y, position: 'right', grid: { drawOnChartArea: false } },
       },
       plugins: commonPlugins(),
     },
@@ -3771,7 +3853,7 @@ const CHART_CATEGORIES = [
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
-  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
   { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },
@@ -4918,6 +5000,7 @@ function ensureJournalTab() {
     document.getElementById('weighin-scan-btn')?.addEventListener('click', scanScale);
     initWeighInProfile();
     initWeighInTimestamp();
+    initScaleDebugCapture();
     initJournalCalendarNav();
     _journalInit = true;
   }
@@ -4999,12 +5082,12 @@ function _wiNum(id) {
 }
 
 // ---- BLE scale scan (Web Bluetooth) ----
-// Reads weight + impedance from a Xiaomi Mi Body Composition Scale via the
-// standard GATT Body Composition service (0x181B / 0x2A9C), then derives the
-// remaining metrics from height / age / sex. Protocol and formulas follow
-// lswiderski/WebBodyComposition (services/scanner.js, services/metrics.js),
-// which credits wiecosystem/Bluetooth for the impedance equations — the same
-// math the Mi Fit app uses, so results match the scale's own app.
+// The browser is a dumb BLE pipe: it fetches the adapter descriptor from
+// GET /api/scale/adapters, connects, runs the handshake the descriptor
+// asks for, and relays every notification frame to POST /api/scale/frames
+// as hex. All protocol knowledge (GATT UUIDs, handshake bytes, frame
+// layout) and all body-composition maths live server-side in
+// garmin_insights/scales/ — nothing here decodes a byte.
 
 function _profileKey() { return `weighin-profile:${activeUser || 'default'}`; }
 
@@ -5055,105 +5138,93 @@ function scanSetStatus(msg, isError) {
   el.style.color = isError ? 'var(--red, #c0392b)' : 'var(--muted, #888)';
 }
 
-// Impedance-based body-composition estimates (see block comment above).
-function computeBodyComposition(weight, impedance, height, age, sex) {
-  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-
-  // Lean body mass coefficient — every other metric hangs off this.
-  let lbm = (height * 9.058 / 100) * (height / 100);
-  lbm += weight * 0.32 + 12.226;
-  lbm -= impedance * 0.0068;
-  lbm -= age * 0.0542;
-
-  let fatBase = 0.8;
-  if (sex === 'female') fatBase = age <= 49 ? 9.25 : 7.25;
-  let coefficient = 1.0;
-  if (sex === 'male' && weight < 61) coefficient = 0.98;
-  else if (sex === 'female' && weight > 60) coefficient = height > 160 ? 1.03 : 0.96;
-  else if (sex === 'female' && weight < 50) coefficient = height > 160 ? 1.03 : 1.02;
-  let fat = (1.0 - (((lbm - fatBase) * coefficient) / weight)) * 100;
-  if (fat > 63) fat = 75;
-  fat = clamp(fat, 5, 75);
-
-  let water = (100 - fat) * 0.7;
-  const waterCoef = water <= 50 ? 1.02 : 0.98;
-  if (water * waterCoef >= 65) water = 75;
-  water = clamp(water * waterCoef, 35, 75);
-
-  let bone = (((sex === 'female' ? 0.245691014 : 0.18016894) - (lbm * 0.05158)) * -1);
-  bone += bone > 2.2 ? 0.1 : -0.1;
-  if (sex === 'female' && bone > 5.1) bone = 8;
-  else if (sex === 'male' && bone > 5.2) bone = 8;
-  bone = clamp(bone, 0.5, 8);
-
-  let muscle = weight - (fat * 0.01 * weight) - bone;
-  if (sex === 'female' && muscle >= 84) muscle = 120;
-  else if (sex === 'male' && muscle >= 93.5) muscle = 120;
-  muscle = clamp(muscle, 10, 120);
-
-  let visceral;
-  if (sex === 'female') {
-    if (weight > (13 - (height * 0.5)) * -1) {
-      const sub = ((height * 1.45) + (height * 0.1158) * height) - 120;
-      visceral = ((weight * 500 / sub) - 6) + (age * 0.07);
-    } else {
-      const sub = 0.691 + (height * -0.0024) + (height * -0.0024);
-      visceral = (((height * 0.027) - (sub * weight)) * -1) + (age * 0.07) - age;
-    }
-  } else if (height < weight * 1.6) {
-    const sub = ((height * 0.4) - (height * (height * 0.0826))) * -1;
-    visceral = ((weight * 305) / (sub + 48)) - 2.9 + (age * 0.15);
-  } else {
-    const sub = 0.765 + height * -0.0015;
-    visceral = (((height * 0.143) - (weight * sub)) * -1) + (age * 0.15) - 5.0;
-  }
-  visceral = clamp(visceral, 1, 50);
-
-  let metabolicAge = sex === 'female'
-    ? (height * -1.1165) + (weight * 1.5784) + (age * 0.4615) + (impedance * 0.0415) + 83.2548
-    : (height * -0.7471) + (weight * 0.9161) + (age * 0.4184) + (impedance * 0.0517) + 54.2267;
-  metabolicAge = clamp(metabolicAge, 15, 80);
-
-  const bmi = clamp(weight / ((height / 100) * (height / 100)), 10, 90);
-
-  return { bmi, fat, water, muscle, bone, visceral, metabolicAge };
-}
-
-// One 13-byte 0x2A9C frame from the Mi scale. The raw 16-bit weight is in
-// whatever unit the scale is SET to (unit flags: byte0 bit0 = lbs, byte1
-// bit6 = catty) — raw*0.01 gives lbs/catty, kg mode is raw*0.005. The
-// original web port assumed kg mode, which halved lb readings instead of
-// converting them (131.5 lb came out as 65.75 "kg").
-function parseScaleFrame(buf) {
-  const isLbs = buf[0] & 0x01;
-  const isCatty = buf[1] & (1 << 6);
-  const stabilized = buf[1] & (1 << 5);
-  const impedance = (buf[10] << 8) + buf[9];
-  const rawWord = (buf[12] << 8) + buf[11];
-  let unit, raw, weightKg;
-  if (isLbs) {
-    unit = 'lb';
-    raw = rawWord * 0.01;
-    weightKg = raw * 0.45359237;
-  } else if (isCatty) {
-    unit = 'catty';
-    raw = rawWord * 0.01;
-    weightKg = raw * 0.5;
-  } else {
-    unit = 'kg';
-    raw = rawWord * 0.005;
-    weightKg = raw;
-  }
-  return { unit, raw, weightKg, impedance, stabilized };
-}
-
 let _scaleDevice = null;
-let _scaleChar = null;
+let _scaleNotifyChar = null;
+let _scaleWriteChar = null;
+let _scalePollTimer = null;
+let _scaleFlushTimer = null;
+let _scaleTimeoutTimer = null;
+let _scaleSessionId = null;
+let _scaleAdapterId = null;
+let _scalePendingFrames = [];   // hex frames not yet POSTed
+let _scaleReadingId = null;     // stashed for submitWeighIn once a final reading lands
+const _SCALE_FLUSH_MS = 500;
+const _SCALE_TIMEOUT_MS = 90000;
+
+// ---- Debug capture ----
+// At least three Lefu FFB0 firmware layouts are known and this unit's is not
+// confirmed — when the decode looks wrong, the user ticks this box, scans
+// again, and pastes the log back so a new variant can be added server-side.
+let _scaleDebugLog = [];
+const _SCALE_DEBUG_MAX = 500;
+
+function _scaleDebugEnabled() {
+  return !!document.getElementById('weighin-debug-capture')?.checked;
+}
+
+function _scaleDebugLine(direction, hex) {
+  if (!_scaleDebugEnabled()) return;
+  const t = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
+  _scaleDebugLog.push(`[${t}] ${direction} ${hex}`);
+  if (_scaleDebugLog.length > _SCALE_DEBUG_MAX) {
+    _scaleDebugLog = _scaleDebugLog.slice(-_SCALE_DEBUG_MAX);
+  }
+  const el = document.getElementById('weighin-debug-log');
+  if (el) {
+    el.textContent = _scaleDebugLog.join('\n');
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function initScaleDebugCapture() {
+  const checkbox = document.getElementById('weighin-debug-capture');
+  const panel = document.getElementById('weighin-debug');
+  checkbox?.addEventListener('change', () => {
+    if (panel) panel.hidden = !checkbox.checked;
+    if (checkbox.checked) {
+      _scaleDebugLog = [];
+      const el = document.getElementById('weighin-debug-log');
+      if (el) el.textContent = '';
+    }
+  });
+  document.getElementById('weighin-debug-copy')?.addEventListener('click', async () => {
+    const ok = await copyToClipboard(_scaleDebugLog.join('\n'));
+    showCopyToast(ok ? 'Debug log copied.' : 'Copy failed.', !ok);
+  });
+}
+
+function _hexToBytes(hex) {
+  const clean = hex.replace(/[^0-9a-f]/gi, '');
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return out;
+}
+
+function _bytesToHex(buf) {
+  return Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function _scaleWriteHex(hex) {
+  const bytes = _hexToBytes(hex);
+  _scaleDebugLine('↑', hex);
+  try {
+    await _scaleWriteChar.writeValueWithoutResponse(bytes);
+  } catch {
+    await _scaleWriteChar.writeValue(bytes);
+  }
+}
 
 async function stopScaleScan() {
-  try { await _scaleChar?.stopNotifications(); } catch { /* already gone */ }
+  clearInterval(_scalePollTimer);
+  clearInterval(_scaleFlushTimer);
+  clearTimeout(_scaleTimeoutTimer);
+  _scalePollTimer = null;
+  _scaleFlushTimer = null;
+  _scaleTimeoutTimer = null;
+  try { await _scaleNotifyChar?.stopNotifications(); } catch { /* already gone */ }
   try { _scaleDevice?.gatt?.disconnect(); } catch { /* already gone */ }
-  _scaleChar = null;
+  _scaleNotifyChar = null;
+  _scaleWriteChar = null;
   _scaleDevice = null;
   const btn = document.getElementById('weighin-scan-btn');
   if (btn) btn.disabled = false;
@@ -5161,7 +5232,26 @@ async function stopScaleScan() {
 
 function _setWi(id, value, decimals = 2) {
   const el = document.getElementById(id);
-  if (el) el.value = Number(value).toFixed(decimals);
+  if (el != null && value != null) el.value = Number(value).toFixed(decimals);
+}
+
+async function _scaleFlushFrames() {
+  if (!_scalePendingFrames.length) return null;
+  const frames = _scalePendingFrames;
+  _scalePendingFrames = [];
+  try {
+    const res = await fetch('/api/scale/frames', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: activeUser, session_id: _scaleSessionId, adapter: _scaleAdapterId, frames,
+      }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null; // a dropped batch just gets picked up decoding the next one
+  }
 }
 
 async function scanScale() {
@@ -5171,52 +5261,85 @@ async function scanScale() {
       'chrome://flags/#unsafely-treat-insecure-origin-as-secure.', true);
     return;
   }
-  const height = _wiNum('wi-height');
-  const age = _wiNum('wi-age');
-  const sex = document.getElementById('wi-sex')?.value || 'male';
-  if (height == null || age == null) {
-    scanSetStatus('Fill in height and age first — the scale only sends weight + impedance; the rest is computed.', true);
-    return;
-  }
 
   const btn = document.getElementById('weighin-scan-btn');
   if (btn) btn.disabled = true;
+  _scalePendingFrames = [];
+  _scaleReadingId = null;
+
   try {
+    scanSetStatus('Looking up scale protocol…', false);
+    const adaptersRes = await fetch('/api/scale/adapters');
+    if (!adaptersRes.ok) throw new Error(`HTTP ${adaptersRes.status}`);
+    const { adapters } = await adaptersRes.json();
+    const d = adapters?.[0];
+    if (!d) throw new Error('No scale adapter configured on the server.');
+    _scaleAdapterId = d.id;
+    _scaleSessionId = crypto.randomUUID();
+
     scanSetStatus('Requesting Bluetooth device… pick your scale in the browser prompt.', false);
-    _scaleDevice = await navigator.bluetooth.requestDevice({
-      filters: [{ services: ['body_composition'] }],
-    });
+    const requestOpts = _scaleDebugEnabled()
+      ? { acceptAllDevices: true, optionalServices: [d.service_uuid] }
+      : {
+          filters: [{ services: [d.service_uuid] }, ...d.name_prefixes.map(p => ({ namePrefix: p }))],
+          optionalServices: [d.service_uuid],
+        };
+    _scaleDevice = await navigator.bluetooth.requestDevice(requestOpts);
+
     scanSetStatus('Connecting…', false);
     const server = await _scaleDevice.gatt.connect();
-    const service = await server.getPrimaryService('body_composition');
-    _scaleChar = await service.getCharacteristic('body_composition_measurement');
-    await _scaleChar.startNotifications();
-    scanSetStatus('Connected — step on the scale (barefoot for impedance).', false);
+    const service = await server.getPrimaryService(d.service_uuid);
+    _scaleNotifyChar = await service.getCharacteristic(d.notify_uuid);
+    _scaleWriteChar = await service.getCharacteristic(d.write_uuid);
 
-    _scaleChar.addEventListener('characteristicvaluechanged', async (event) => {
-      const frame = parseScaleFrame(new Uint8Array(event.target.value.buffer));
-      if (!frame.weightKg) return;
-      _setWi('wi-weight', frame.weightKg, 2);
-      const display = frame.unit === 'kg'
-        ? `${frame.weightKg.toFixed(1)} kg`
-        : `${frame.raw.toFixed(1)} ${frame.unit} → ${frame.weightKg.toFixed(2)} kg`;
-
-      if (!(frame.stabilized && frame.impedance > 0 && frame.impedance < 3000)) {
-        scanSetStatus(`Reading… ${display} — hold still for the impedance measurement.`, false);
-        return;
-      }
-      const m = computeBodyComposition(frame.weightKg, frame.impedance, height, age, sex);
-      _setWi('wi-bmi', m.bmi);
-      _setWi('wi-fat', m.fat);
-      _setWi('wi-water', m.water);
-      _setWi('wi-muscle', m.muscle);
-      _setWi('wi-bone', m.bone);
-      _setWi('wi-visceral', m.visceral);
-      _setWi('wi-metabolic', m.metabolicAge, 1);
-      initWeighInTimestamp(); // stamp the reading with "now"
-      await stopScaleScan();
-      scanSetStatus(`Done — ${display}, impedance ${frame.impedance} Ω. Check the numbers, then Upload to Garmin.`, false);
+    _scaleNotifyChar.addEventListener('characteristicvaluechanged', (event) => {
+      const hex = _bytesToHex(new Uint8Array(event.target.value.buffer));
+      _scaleDebugLine('↓', hex);
+      _scalePendingFrames.push(hex);
     });
+    await _scaleNotifyChar.startNotifications();
+
+    scanSetStatus('Connected — step on the scale (barefoot for impedance).', false);
+    for (const frame of d.handshake || []) {
+      await _scaleWriteHex(frame);
+      await new Promise(r => setTimeout(r, 60));
+    }
+    if (d.poll) {
+      _scalePollTimer = setInterval(() => { _scaleWriteHex(d.poll.frame); }, d.poll.interval_ms);
+    }
+
+    _scaleTimeoutTimer = setTimeout(async () => {
+      await stopScaleScan();
+      scanSetStatus('Scan timed out after 90s with no stable reading — try again.', true);
+    }, _SCALE_TIMEOUT_MS);
+
+    _scaleFlushTimer = setInterval(async () => {
+      const result = await _scaleFlushFrames();
+      if (!result) return;
+      if (result.state === 'waiting') {
+        scanSetStatus('Waiting for the scale…', false);
+      } else if (result.state === 'reading') {
+        _setWi('wi-weight', result.weight_kg, 2);
+        scanSetStatus(`Reading… ${result.weight_kg.toFixed(1)} kg — hold still for the impedance measurement.`, false);
+      } else if (result.state === 'final') {
+        const m = result.metrics || {};
+        _setWi('wi-weight', result.weight_kg, 2);
+        _setWi('wi-bmi', m.bmi);
+        _setWi('wi-fat', m.body_fat_pct);
+        _setWi('wi-water', m.body_water_pct);
+        _setWi('wi-muscle', m.muscle_mass_kg);
+        _setWi('wi-bone', m.bone_mass_kg);
+        _setWi('wi-visceral', m.visceral_fat);
+        _setWi('wi-metabolic', m.metabolic_age, 1);
+        _scaleReadingId = result.reading_id ?? null;
+        initWeighInTimestamp(); // stamp the reading with "now"
+        const done = `Done — ${result.weight_kg.toFixed(2)} kg` +
+          (result.impedance_ohm ? `, impedance ${Math.round(result.impedance_ohm)} Ω` : '') +
+          '. Check the numbers, then Upload to Garmin.';
+        scanSetStatus(result.note ? `${done} ⚠ ${result.note}` : done, false);
+        await stopScaleScan();
+      }
+    }, _SCALE_FLUSH_MS);
   } catch (err) {
     await stopScaleScan();
     // The user closing the device chooser is a normal path, not a failure.
@@ -5240,6 +5363,9 @@ async function submitWeighIn() {
     visceral_fat: _wiNum('wi-visceral'),
     metabolic_age: _wiNum('wi-metabolic'),
     physique_rating: _wiNum('wi-physique'),
+    // Links this upload to a prior Bluetooth scan's local reading row instead
+    // of creating a duplicate one; null for a purely manual entry.
+    reading_id: _scaleReadingId,
   };
   const btn = document.getElementById('weighin-submit');
   if (btn) btn.disabled = true;
@@ -5255,6 +5381,8 @@ async function submitWeighIn() {
       weighInSetStatus(data.detail || `Upload failed (HTTP ${res.status})`, true);
       return;
     }
+    // Submitted — a later manual entry must not re-link to this stale reading.
+    _scaleReadingId = null;
     // The fetch loop only advances when the watch pushes new data, so a
     // manual weigh-in can take an hour or more to flow back — don't promise ~5 min.
     // The server sends a note when the reading is backdated beyond the
