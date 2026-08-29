@@ -166,6 +166,25 @@ class CacheBuilder:
                     val = metabolic_age_years(val)
                 summary[key] = val
 
+        # -- Scale readings fallback (local-first Fitdays/scale storage) --
+        # Garmin's own synced body_composition value wins once it lands; this
+        # only closes the gap between stepping off the scale and the next
+        # fetch cycle, and preserves the reading if the Garmin upload fails
+        # outright. scale_readings already stores kg/years, so — unlike the
+        # body_composition branch above — no to_kg / metabolic_age_years
+        # conversion is applied here.
+        if not any(k in summary for k in _BODY_COMP_MAP.values()):
+            try:
+                scale_reading = self._memory.get_latest_scale_reading(date)
+            except Exception as e:
+                logger.debug("Scale reading fallback fetch failed for %s: %s", date, e)
+                scale_reading = None
+            if scale_reading:
+                for key in _BODY_COMP_MAP.values():
+                    val = scale_reading.get(key)
+                    if val is not None:
+                        summary[key] = val
+
         # -- LifestyleJournal --
         df_lj = self._repo.query_lifestyle_journal(date, date)
         lifestyle: dict[str, Any] = {}

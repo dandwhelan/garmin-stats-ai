@@ -102,6 +102,23 @@ CREATE TABLE IF NOT EXISTS experiments (
     ended_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments (status);
+
+CREATE TABLE IF NOT EXISTS scale_readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    taken_at TEXT NOT NULL UNIQUE,
+    date TEXT NOT NULL,
+    adapter TEXT NOT NULL,
+    weight_kg REAL NOT NULL,
+    impedance_ohm REAL,
+    bmi REAL, body_fat_pct REAL, body_water_pct REAL,
+    muscle_mass_kg REAL, bone_mass_kg REAL, visceral_fat REAL,
+    metabolic_age REAL, physique_rating REAL,
+    extras_json TEXT,
+    raw_frames TEXT,
+    uploaded_to_garmin INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_scale_readings_date ON scale_readings (date);
 """
 
 class MemoryStore:
@@ -700,6 +717,158 @@ class MemoryStore:
                 "UPDATE experiments SET status = 'abandoned', "
                 "ended_at = datetime('now') WHERE name = ? COLLATE NOCASE",
                 (name,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Scale readings (local-first — every reading lands immediately, incl.
+    # metrics Garmin has no field for; Garmin's own synced value wins later
+    # once it lands, see cache.py's fallback merge)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_scale_taken_at(taken_at: str) -> str:
+        """Derive the local YYYY-MM-DD calendar day from ``taken_at``.
+
+        Tolerates a bare ``YYYY-MM-DD`` or a full ISO datetime (both parse via
+        ``datetime.fromisoformat``). Raises ValueError on anything else so the
+        API layer can turn it into a 400.
+        """
+        raw = str(taken_at).strip()
+        try:
+            dt = datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Unparseable taken_at: {taken_at!r}") from None
+        return dt.strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _scale_reading_row_to_dict(row: sqlite3.Row, include_raw: bool = False) -> dict[str, Any]:
+        d = {k: row[k] for k in row.keys()}
+        if not include_raw:
+            d.pop("raw_frames", None)
+        raw_extras = d.pop("extras_json", None)
+        extras: dict[str, Any] = {}
+        if raw_extras:
+            try:
+                extras = json.loads(raw_extras)
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "Corrupt extras_json for scale_readings id=%s: %s", d.get("id"), e
+                )
+                extras = {}
+        d["extras"] = extras
+        d["uploaded_to_garmin"] = bool(d.get("uploaded_to_garmin"))
+        return d
+
+    def save_scale_reading(
+        self,
+        *,
+        taken_at: str,
+        adapter: str,
+        weight_kg: float,
+        impedance_ohm: float | None = None,
+        bmi: float | None = None,
+        body_fat_pct: float | None = None,
+        body_water_pct: float | None = None,
+        muscle_mass_kg: float | None = None,
+        bone_mass_kg: float | None = None,
+        visceral_fat: float | None = None,
+        metabolic_age: float | None = None,
+        physique_rating: float | None = None,
+        extras: dict[str, Any] | None = None,
+        raw_frames: str | None = None,
+    ) -> int:
+        """Store one scale reading immediately (local-first).
+
+        Upserts on ``taken_at`` so a retried save replaces rather than
+        duplicates; ``uploaded_to_garmin`` is deliberately left out of the
+        conflict SET clause so a retry can never clear a flag already set to 1.
+        Raises ValueError when ``taken_at`` can't be parsed into a date.
+        """
+        taken_at = str(taken_at).strip()
+        date = self._normalize_scale_taken_at(taken_at)
+        extras_json = json.dumps(extras) if extras else None
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO scale_readings (
+                    taken_at, date, adapter, weight_kg, impedance_ohm, bmi,
+                    body_fat_pct, body_water_pct, muscle_mass_kg, bone_mass_kg,
+                    visceral_fat, metabolic_age, physique_rating, extras_json,
+                    raw_frames, uploaded_to_garmin
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(taken_at) DO UPDATE SET
+                    date = excluded.date,
+                    adapter = excluded.adapter,
+                    weight_kg = excluded.weight_kg,
+                    impedance_ohm = excluded.impedance_ohm,
+                    bmi = excluded.bmi,
+                    body_fat_pct = excluded.body_fat_pct,
+                    body_water_pct = excluded.body_water_pct,
+                    muscle_mass_kg = excluded.muscle_mass_kg,
+                    bone_mass_kg = excluded.bone_mass_kg,
+                    visceral_fat = excluded.visceral_fat,
+                    metabolic_age = excluded.metabolic_age,
+                    physique_rating = excluded.physique_rating,
+                    extras_json = excluded.extras_json,
+                    raw_frames = excluded.raw_frames
+                """,
+                (
+                    taken_at, date, adapter, float(weight_kg), impedance_ohm, bmi,
+                    body_fat_pct, body_water_pct, muscle_mass_kg, bone_mass_kg,
+                    visceral_fat, metabolic_age, physique_rating, extras_json,
+                    raw_frames,
+                ),
+            )
+            conn.commit()
+            # lastrowid is unreliable on the ON CONFLICT..DO UPDATE branch, so
+            # look the row up explicitly rather than trust it.
+            cursor.execute("SELECT id FROM scale_readings WHERE taken_at = ?", (taken_at,))
+            row = cursor.fetchone()
+            return row["id"]
+        finally:
+            conn.close()
+
+    def get_scale_readings(
+        self, start: str, end: str, include_raw: bool = False
+    ) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM scale_readings WHERE date >= ? AND date <= ? "
+                "ORDER BY taken_at",
+                (start, end),
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+        return [self._scale_reading_row_to_dict(r, include_raw=include_raw) for r in rows]
+
+    def get_latest_scale_reading(self, date: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM scale_readings WHERE date = ? ORDER BY taken_at DESC LIMIT 1",
+                (date,),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        return self._scale_reading_row_to_dict(row) if row else None
+
+    def mark_scale_reading_uploaded(self, reading_id: int) -> None:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE scale_readings SET uploaded_to_garmin = 1 WHERE id = ?",
+                (reading_id,),
             )
             conn.commit()
         finally:

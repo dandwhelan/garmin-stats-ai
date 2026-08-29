@@ -502,6 +502,24 @@ class QueryToolHandler:
                                 "metabolic_age": "metabolic_age_years"})
         return _df_to_clean_json(df)
 
+    def get_scale_readings(self, start_date: str | None = None, end_date: str | None = None) -> str:
+        """Locally-recorded Bluetooth-scale readings (weight + bio-impedance estimates).
+
+        Defaults to the last 90 days when no dates are given. Composition
+        fields (body_fat_pct, body_water_pct, muscle_mass_kg, bone_mass_kg,
+        visceral_fat, metabolic_age) are single-reading bio-impedance
+        estimates, not lab measurements — prefer multi-week trends over any
+        one reading. adapter="manual" rows were hand-entered, not scanned.
+        """
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        readings = self._memory.get_scale_readings(start_date, end_date)
+        if not readings:
+            return json.dumps({"message": "No scale readings found in this range"})
+        return json.dumps(_clean_records(readings))
+
     def get_training_readiness(self, start_date: str, end_date: str) -> str:
         df = self._repo.query_training_readiness(start_date, end_date)
         if df.empty:
@@ -1225,6 +1243,30 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                     "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format."},
                 },
                 "required": ["start_date", "end_date"],
+            },
+        },
+        {
+            "name": "get_scale_readings",
+            "description": (
+                "Query locally-recorded Bluetooth-scale readings for a date range: "
+                "weight_kg, and (when the scale reported impedance and the user's "
+                "profile has height/age/sex) bmi, body_fat_pct, body_water_pct, "
+                "muscle_mass_kg, bone_mass_kg, visceral_fat, metabolic_age. These "
+                "composition figures are a bio-impedance ESTIMATE computed locally "
+                "from a single whole-body impedance reading, not a lab measurement — "
+                "the extras (fat_mass_kg, fat_free_mass_kg, bmr_kcal) are derived "
+                "from that same estimate, not measured independently. Prefer "
+                "multi-week trends over any single reading. Rows with "
+                "adapter='manual' were hand-entered by the user rather than scanned "
+                "from the scale. Defaults to the last 90 days if dates are omitted."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date in YYYY-MM-DD format. Defaults to 90 days before end_date."},
+                    "end_date": {**_DATE_PROP, "description": "End date in YYYY-MM-DD format. Defaults to today."},
+                },
+                "required": [],
             },
         },
         {

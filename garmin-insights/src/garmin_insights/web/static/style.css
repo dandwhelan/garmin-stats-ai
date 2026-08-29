@@ -1765,6 +1765,31 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   color: var(--text, var(--fg, #eee));
   font: inherit;
 }
+.weighin-debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted, var(--text-dim, #999));
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+.weighin-debug {
+  margin-top: 0.75rem;
+}
+.weighin-debug-log {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0.5rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 8px);
+  background: var(--bg, #111);
+  color: var(--text, var(--fg, #eee));
+  font: 0.78rem/1.4 "SF Mono", "Fira Code", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 .secondary-btn {
   background: transparent;
   color: var(--text, var(--fg, #eee));
