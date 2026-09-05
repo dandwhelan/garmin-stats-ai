@@ -75,9 +75,23 @@ _HR_DIP_BLUNTED_PCT = 8.0
 _DESAT_INDEX_SCREEN = 5.0
 
 
-def _local_tz():
-    """System local timezone, resolved per call so DST is applied correctly."""
-    return datetime.now().astimezone().tzinfo
+def _to_local_naive(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """UTC timestamps as local wall-clock times, tz-naive.
+
+    ``datetime.now().astimezone().tzinfo`` looks like the local zone but is a
+    FIXED offset captured today, so converting a whole window through it stamps
+    summer's offset onto winter's nights. ``datetime.astimezone()`` with no
+    argument applies the system zone's rule for each timestamp's OWN date —
+    the same reasoning as ``sqlite_repo.utc_to_local_day``, which is why this
+    converts per timestamp rather than once for the index.
+
+    The result is naive on purpose: a window spanning a DST change holds two
+    offsets, which a tz-aware DatetimeIndex cannot represent, and only the
+    local wall-clock hour and date are needed here.
+    """
+    return pd.DatetimeIndex(
+        [ts.astimezone().replace(tzinfo=None) for ts in index.to_pydatetime()]
+    )
 
 
 def _f(value) -> float | None:
@@ -154,7 +168,7 @@ class OvernightService:
             return df
         df["time"] = pd.to_datetime(df["time"], format="ISO8601", utc=True)
         df = df.dropna(subset=["time"]).set_index("time").sort_index()
-        local = df.index.tz_convert(_local_tz())
+        local = _to_local_naive(df.index)
         # Samples from local noon onward belong to the next morning's night.
         shift = pd.to_timedelta((local.hour >= _NIGHT_SPLIT_HOUR).astype(int), unit="D")
         df["night_of"] = (local + shift).strftime("%Y-%m-%d")
@@ -320,8 +334,7 @@ class OvernightService:
         span_start, span_end = df.index[0], df.index[-1]
         night_minutes = (span_end - span_start).total_seconds() / 60.0
         night_hours = night_minutes / 60.0 if night_minutes > 0 else None
-        local_start = span_start.tz_convert(_local_tz())
-        local_end = span_end.tz_convert(_local_tz())
+        local_start, local_end = _to_local_naive(pd.DatetimeIndex([span_start, span_end]))
         entry: dict = {
             "night_of": night,
             "span_start": local_start.strftime("%Y-%m-%dT%H:%M"),

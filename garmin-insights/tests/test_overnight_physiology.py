@@ -16,6 +16,7 @@ import sqlite3
 import types
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import pytest
 
 from garmin_insights.db.sqlite_repo import SqliteRepo
@@ -95,6 +96,35 @@ def test_evening_samples_belong_to_the_next_mornings_night(tmp_path):
     # already past noon, so the night is filed under the following morning.
     assert nights[0]["night_of"] in {"2026-06-04", "2026-06-05"}
     assert nights[0]["hr_samples"] == 8 * 60
+
+
+@pytest.mark.skipif(not hasattr(__import__("time"), "tzset"),
+                    reason="TZ switching needs tzset (POSIX only)")
+def test_one_offset_is_not_stamped_across_a_dst_boundary(monkeypatch):
+    """A window spanning a clock change holds two offsets, not one.
+
+    `datetime.now().astimezone().tzinfo` looks like the local zone but is a
+    fixed offset captured today — converting a whole window through it puts
+    summer's offset on winter's nights, shifting the local hour that decides
+    which night a sample belongs to.
+    """
+    import time as _time
+
+    from garmin_insights.insights.overnight import _to_local_naive
+
+    monkeypatch.setenv("TZ", "Europe/London")
+    _time.tzset()
+    try:
+        local = _to_local_naive(
+            pd.DatetimeIndex(["2026-01-15T23:30:00Z", "2026-07-15T23:30:00Z"])
+        )
+        # GMT in January: same wall-clock hour, same date.
+        assert local[0].hour == 23 and local[0].day == 15
+        # BST in July: the same UTC instant is half past midnight, next day.
+        assert local[1].hour == 0 and local[1].day == 16
+    finally:
+        monkeypatch.undo()
+        _time.tzset()
 
 
 def test_missing_table_is_reported_not_raised(tmp_path):
