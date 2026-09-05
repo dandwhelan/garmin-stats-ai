@@ -418,6 +418,27 @@
       <div id="bedroom-sleep-correlations" class="env-correlations"></div>
     </section>
 
+    <section class="chart-section" id="overnight-hr-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Overnight Heart-Rate Fall <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> How far heart rate fell from sleep onset to its overnight low (bars), and how far through the night that low arrived (line). A smaller fall with a later trough is the classic signature of alcohol, a late meal, late training or a hot room — Pietil&auml; 2018 (JMIR Ment Health, ~4,000 adults) showed alcohol's autonomic effect is strongest in the first hours of sleep and scales with dose; Ben-Dov 2007 (Arch Intern Med) established the reduced nocturnal fall as an autonomic-load marker. Read this against <b>your own</b> nights, not a population cut-off, and check your log before naming a cause.</span></span></h2>
+        <span class="chart-sub">Fall from sleep-onset HR to the overnight low, and when the low arrived</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="overnight-hr-chart"></canvas>
+      </div>
+      <div id="overnight-screening" class="alert-list"></div>
+    </section>
+
+    <section class="chart-section" id="overnight-quality-section" style="display:none;">
+      <div class="chart-header">
+        <h2>Overnight Desaturation &amp; Fragmentation <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier C, low-confidence measurement]</b> Bars: SpO2 drops of 3+ points below the local overnight baseline, per hour. This is a <b>device-estimated burden index from sparse wrist pulse-ox — not a clinical ODI and not a sleep-apnoea finding</b>; the AASM position statement (Khosla 2018) is explicit that consumer sleep technology cannot substitute for a medical evaluation. Line: minutes awake between falling asleep and final waking (WASO) — a sleep-continuity measure independent of duration, which the NSF consensus (Ohayon 2017) puts under ~20 min for adults 18&ndash;64. Stages are device-estimated, so compare against your own nights.</span></span></h2>
+        <span class="chart-sub">Desaturation burden per hour and wake-after-sleep-onset per night</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="overnight-quality-chart"></canvas>
+      </div>
+    </section>
+
     <section class="chart-section" id="migraine-root-cause-section" style="display:none;">
       <div class="chart-header">
         <h2>Migraine Root-Cause Scan <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier C]</b> For each day you logged "Migraines", lists the prior 48h lifestyle behaviors (alcohol, late caffeine, poor sleep, heavy meals, etc.) and same-day environmental extremes (apparent T, AQI, PM2.5, humidity, precipitation). Confounder ranking only — common migraine triggers from Pellegrino 2018 (Headache); use to spot patterns, not as a diagnostic.</span></span></h2>
