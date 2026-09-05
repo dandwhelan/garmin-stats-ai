@@ -13,8 +13,14 @@ if (typeof marked !== 'undefined' && typeof marked.use === 'function') {
 // data it reads (journal notes, activity names), so always sanitize the
 // generated HTML before it reaches innerHTML.
 function renderMarkdown(md) {
-  const html = marked.parse(md);
-  return (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(html) : html;
+  // Fail closed. If the sanitizer did not load (blocked or cached-out CDN)
+  // the old fallback handed raw generated HTML straight to innerHTML —
+  // exactly what the comment above says must never happen. Escape instead:
+  // the text stays readable, it just loses its formatting.
+  if (typeof DOMPurify === 'undefined' || typeof marked === 'undefined') {
+    return `<pre class="md-fallback">${escapeHtml(String(md ?? ''))}</pre>`;
+  }
+  return DOMPurify.sanitize(marked.parse(md));
 }
 
 // ---- Active user ----

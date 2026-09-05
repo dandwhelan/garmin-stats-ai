@@ -1953,3 +1953,13 @@ canvas { max-width: 100%; }
   .trigger-row { grid-template-columns: 76px 1fr 48px; gap: 8px; font-size: 0.8rem; }
   .trigger-name { overflow-wrap: anywhere; }
 }
+
+/* Shown only when the markdown sanitizer failed to load and renderMarkdown
+   falls back to escaped plain text — keep the long lines wrapped rather than
+   forcing the page to scroll sideways. */
+.md-fallback {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  margin: 0;
+}
