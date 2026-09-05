@@ -367,6 +367,7 @@ class QueryToolHandler:
         # agent start-up to the web package.
         self._lifestyle_service = None
         self._viz_service = None
+        self._overnight_service = None
 
     def _get_lifestyle_service(self):
         if self._lifestyle_service is None:
@@ -379,6 +380,12 @@ class QueryToolHandler:
             from garmin_insights.web.visualizations import VisualizationService
             self._viz_service = VisualizationService(self._repo.db_path)
         return self._viz_service
+
+    def _get_overnight_service(self):
+        if self._overnight_service is None:
+            from garmin_insights.insights.overnight import OvernightService
+            self._overnight_service = OvernightService(self._repo.db_path)
+        return self._overnight_service
 
     # ------------------------------------------------------------------
     # Data query tools
@@ -765,6 +772,33 @@ class QueryToolHandler:
         payload = _round_floats(_truncate_long_lists(result))
         return json.dumps({"analytic": analytic, "window_days": days,
                            "result": payload}, default=str)
+
+    def get_overnight_physiology(self, days: int = 30, nights: int = 7) -> str:
+        """Shape of the last N nights, not just their summary averages.
+
+        `sleep_summary` gives means and extremes; this gives the trajectory —
+        how far heart rate fell and when it bottomed out, which way HRV
+        travelled across the night, the desaturation burden behind a single
+        low SpO2 reading, and stage fragmentation / WASO. Baselines are the
+        user's own nights over the whole window; only the most recent
+        `nights` are returned in full to keep the payload small.
+        """
+        days = max(14, min(int(days), 180))
+        nights = max(1, min(int(nights), 30))
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        try:
+            result = self._get_overnight_service().summary(start, today)
+        except Exception as e:
+            logger.error("overnight physiology failed: %s", e)
+            return json.dumps({"error": f"overnight physiology failed: {e}"})
+        if not result.get("available"):
+            return json.dumps(result, default=str)
+        all_nights = result.get("nights") or []
+        result["nights_analysed"] = len(all_nights)
+        result["nights"] = _clean_records(all_nights[-nights:])
+        result["window_days"] = days
+        return json.dumps(_round_floats(result), default=str)
 
     def get_behavior_root_cause(self, behavior: str, days: int = 180,
                                 lookback_hours: int = 48) -> str:
@@ -1871,6 +1905,41 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                     },
                 },
                 "required": ["name"],
+            },
+        },
+        {
+            "name": "get_overnight_physiology",
+            "description": (
+                "Per-night SHAPE of the overnight series, which the sleep "
+                "summary cannot show: how far heart rate fell from sleep "
+                "onset to its nadir and how late that nadir arrived "
+                "(hr_dip_pct, hr_nadir_pct_of_night — a blunted fall and a "
+                "late nadir are the classic alcohol / late-meal / late-"
+                "training signature); whether HRV rose or decayed across the "
+                "night (hrv_first_third vs hrv_last_third); the SpO2 "
+                "DESATURATION BURDEN behind a single low reading "
+                "(desat_index_per_hour — device-estimated from sparse wrist "
+                "pulse-ox, NOT a clinical ODI and never a sleep-apnoea "
+                "diagnosis); respiration variability; body-battery recharge "
+                "rate; and stage fragmentation / WASO. Use this when asked "
+                "WHY a night scored badly, or when recovery markers deviate "
+                "and the daily summary offers no explanation. Deviations are "
+                "against the user's own nights, not population norms. "
+                "Returns available:false for nights recorded before the "
+                "fetcher began storing the overnight series."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Baseline window in days (14-180). Default 30.",
+                    },
+                    "nights": {
+                        "type": "integer",
+                        "description": "How many recent nights to return in full (1-30). Default 7.",
+                    },
+                },
             },
         },
     ]

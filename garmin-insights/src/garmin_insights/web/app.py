@@ -950,6 +950,33 @@ async def ha_sensors(
         raise HTTPException(status_code=500, detail=str(ex))
 
 
+@app.get("/api/overnight")
+async def overnight(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Per-night overnight physiology derived from the sleep_intraday series.
+
+    Returns one entry per night ending in the window (HR fall + nadir timing,
+    HRV trajectory, SpO2 desaturation burden, respiration variability, body-
+    battery recharge rate, stage fragmentation / WASO), the user's own robust
+    baselines, deviations on the latest night, and any screening labels.
+    `available: false` for databases written before the fetcher started
+    recording the overnight series, so the frontend can hide the section.
+    """
+    bundle = _require_user(user)
+    s_, e_ = _resolve_range(start, end, default_days=30)
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, bundle.overnight.summary, s_, e_)
+        result.update({"start": s_, "end": e_, "user": user})
+        return result
+    except Exception as ex:
+        logger.exception("Overnight physiology query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
 @app.get("/api/environment/recovery")
 async def environment_recovery(
     user: str = Query(default="default"),

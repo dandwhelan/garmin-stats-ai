@@ -908,20 +908,38 @@ class GarminDB:
                     }, ['date'])
 
                 elif measurement == 'LactateThreshold':
-                    self._upsert(cursor, 'lactate_threshold', {
-                        'time': timestamp,
-                        'device': device,
-                        'speed_threshold': fields.get(f"SpeedThreshold_{point['fields'].keys().__iter__().__next__().split('_')[-1]}") if any(k.startswith('SpeedThreshold') for k in fields) else None, # Tricky dynamic field access, let's simplify
-                        # The fetcher produces: fields: {"SpeedThreshold_RUNNING": value}
-                        # We need to extract this.
-                        # Actually the fetcher produces distinct points for Speed and HeartRate.
-                        # Wait, get_lactate_threshold does: fields: {f"{label}": value} where label is "SpeedThreshold_RUNNING"
-                        # My current inserts might struggle with dynamic field keys.
-                        # Let's handle it by checking keys.
-                        'sport': fields.keys().__iter__().__next__().split('_')[-1], # e.g. RUNNING from SpeedThreshold_RUNNING
-                        'speed_threshold': next((v for k,v in fields.items() if k.startswith('SpeedThreshold')), None),
-                        'heart_rate_threshold': next((v for k,v in fields.items() if k.startswith('HeartRateThreshold')), None),
-                    }, ['time', 'sport', 'device'])
+                    # get_lactate_threshold emits ONE point per label — a speed
+                    # point and a heart-rate point that share (time, sport,
+                    # device) and each carry a single field named for its sport
+                    # (e.g. {"SpeedThreshold_RUNNING": 4.25}). A plain _upsert
+                    # therefore let whichever landed last null out the other's
+                    # column, so every stored speed_threshold was NULL. Same
+                    # shape as sleep_intraday: merge instead of replace.
+                    sport = next(
+                        (k.rsplit('_', 1)[-1] for k in fields
+                         if k.startswith(('SpeedThreshold', 'HeartRateThreshold'))),
+                        None,
+                    )
+                    if sport:
+                        self._merge_upsert(cursor, 'lactate_threshold', {
+                            'time': timestamp,
+                            'device': device,
+                            'sport': sport,
+                            'speed_threshold': next(
+                                (v for k, v in fields.items()
+                                 if k.startswith('SpeedThreshold')), None),
+                            'heart_rate_threshold': next(
+                                (v for k, v in fields.items()
+                                 if k.startswith('HeartRateThreshold')), None),
+                        }, ['time', 'sport', 'device'])
+                    else:
+                        # No recognisable threshold field: skip this point
+                        # rather than raise, which would roll back the whole
+                        # batch over one malformed record.
+                        logger.warning(
+                            "Skipping LactateThreshold point with unexpected fields: %s",
+                            list(fields),
+                        )
 
             conn.commit()
 

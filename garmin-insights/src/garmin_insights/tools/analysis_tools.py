@@ -231,8 +231,13 @@ class AnalysisEngine:
         
         canonical_behavior = self.find_matching_behavior(behavior, list(all_behaviors))
         if not canonical_behavior:
-            logger.warning("Behavior '%s' not found in recent data (checked %d behaviors).",
-                           behavior, len(all_behaviors))
+            # Debug, not warning: the proactive scanner runs every behaviour
+            # rule in the KB against every user, so a rule whose behaviour this
+            # user simply doesn't log takes this path ~20 times per scan. At
+            # warning level that buried the real warnings in the Pi's log. The
+            # direct tool path surfaces the miss to the caller via None.
+            logger.debug("Behavior '%s' not found in recent data (checked %d behaviors).",
+                         behavior, len(all_behaviors))
             return None
 
         # Map each calendar day to its summary so the behavior→metric lag is

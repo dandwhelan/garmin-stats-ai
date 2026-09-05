@@ -13,8 +13,14 @@ if (typeof marked !== 'undefined' && typeof marked.use === 'function') {
 // data it reads (journal notes, activity names), so always sanitize the
 // generated HTML before it reaches innerHTML.
 function renderMarkdown(md) {
-  const html = marked.parse(md);
-  return (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(html) : html;
+  // Fail closed. If the sanitizer did not load (blocked or cached-out CDN)
+  // the old fallback handed raw generated HTML straight to innerHTML —
+  // exactly what the comment above says must never happen. Escape instead:
+  // the text stays readable, it just loses its formatting.
+  if (typeof DOMPurify === 'undefined' || typeof marked === 'undefined') {
+    return `<pre class="md-fallback">${escapeHtml(String(md ?? ''))}</pre>`;
+  }
+  return DOMPurify.sanitize(marked.parse(md));
 }
 
 // ---- Active user ----
@@ -648,6 +654,7 @@ async function loadDashboard() {
     loadBehaviorRootCause('migraine', 'Migraines', 48, date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
     loadScaleDetail(date_range.start, date_range.end);
+    loadOvernight(date_range.start, date_range.end);
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1361,6 +1368,167 @@ function renderBodyCompositionDetail(records) {
 // series above (which comes from daily_summaries / Garmin-synced weigh-ins).
 // Server-decoded bio-impedance extras only exist for readings taken through
 // the in-app Bluetooth scan, so the section stays hidden until one exists.
+// ---------------------------------------------------------------------------
+// Overnight physiology (GET /api/overnight)
+//
+// Derived from the per-sample sleep_intraday series, which the fetcher only
+// began recording at a point in time — so a window can legitimately be partly
+// or wholly empty, and both sections stay hidden rather than rendering blanks.
+// ---------------------------------------------------------------------------
+async function loadOvernight(start, end) {
+  const epoch = loadEpoch;
+  const sections = ['overnight-hr-section', 'overnight-quality-section']
+    .map(id => document.getElementById(id));
+  if (!sections[0]) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/overnight?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    renderOvernight(data);
+  } catch (e) {
+    console.error('Overnight load failed:', e);
+    sections.forEach(sec => { if (sec) sec.style.display = 'none'; });
+  }
+}
+
+function renderOvernight(data) {
+  const hrSection = document.getElementById('overnight-hr-section');
+  const qualitySection = document.getElementById('overnight-quality-section');
+  destroyAux('overnightHr');
+  destroyAux('overnightQuality');
+  const nights = (data && data.available && data.nights) || [];
+  const labels = nights.map(n => (n.night_of || '').slice(5, 10));
+
+  // Each section is gated on its OWN metrics: a watch that reports sleep HR
+  // but no pulse-ox should still get the heart-rate chart.
+  const hasHr = nights.some(n => n.hr_dip_pct != null);
+  const hasQuality = nights.some(n => n.desat_index_per_hour != null || n.waso_minutes != null);
+
+  if (hrSection) {
+    hrSection.style.display = hasHr ? '' : 'none';
+    if (hasHr) {
+      const ctx = document.getElementById('overnight-hr-chart');
+      if (ctx) {
+        auxCharts.overnightHr = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'HR fall to overnight low (%)',
+                data: nights.map(n => n.hr_dip_pct ?? null),
+                backgroundColor: 'rgba(96,165,250,0.55)',
+                borderColor: '#60a5fa',
+                borderWidth: 1,
+                yAxisID: 'y',
+              },
+              {
+                label: 'Low arrived at (% of night)',
+                type: 'line',
+                data: nights.map(n => n.hr_nadir_pct_of_night ?? null),
+                borderColor: '#f59e0b',
+                backgroundColor: 'transparent',
+                tension: 0.3, spanGaps: true, pointRadius: 2,
+                yAxisID: 'y1',
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              x: commonScales().x,
+              y: { ...commonScales('% fall').y, position: 'left', beginAtZero: true },
+              y1: {
+                ...commonScales('% of night').y, position: 'right',
+                min: 0, max: 100, grid: { drawOnChartArea: false },
+              },
+            },
+            plugins: commonPlugins(),
+          },
+        });
+      }
+    }
+    renderOvernightScreening((data && data.screening) || []);
+  }
+
+  if (qualitySection) {
+    qualitySection.style.display = hasQuality ? '' : 'none';
+    if (hasQuality) {
+      const ctx = document.getElementById('overnight-quality-chart');
+      if (ctx) {
+        auxCharts.overnightQuality = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'SpO2 drops / hour (device-estimated)',
+                data: nights.map(n => n.desat_index_per_hour ?? null),
+                backgroundColor: 'rgba(248,113,113,0.5)',
+                borderColor: '#f87171',
+                borderWidth: 1,
+                yAxisID: 'y',
+              },
+              {
+                label: 'Awake after sleep onset (min)',
+                type: 'line',
+                data: nights.map(n => n.waso_minutes ?? null),
+                borderColor: '#a78bfa',
+                backgroundColor: 'transparent',
+                tension: 0.3, spanGaps: true, pointRadius: 2,
+                yAxisID: 'y1',
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              x: commonScales().x,
+              y: { ...commonScales('drops / h').y, position: 'left', beginAtZero: true },
+              y1: {
+                ...commonScales('minutes').y, position: 'right',
+                beginAtZero: true, grid: { drawOnChartArea: false },
+              },
+            },
+            plugins: commonPlugins(),
+          },
+        });
+      }
+    }
+  }
+
+}
+
+// The screening notes are the only place this section states a threshold
+// rather than a personal comparison, so each one carries its own wording
+// about what it is not. Rendered as text, never as HTML.
+function renderOvernightScreening(signals) {
+  const host = document.getElementById('overnight-screening');
+  if (!host) return;
+  host.innerHTML = '';
+  (signals || []).forEach(sig => {
+    const div = document.createElement('div');
+    div.className = 'alert';
+    const title = document.createElement('b');
+    title.textContent = (sig.signal || '').replace(/_/g, ' ');
+    div.appendChild(title);
+    const body = document.createElement('div');
+    body.className = 'small';
+    body.textContent = sig.interpretation || '';
+    div.appendChild(body);
+    host.appendChild(div);
+  });
+}
+
 async function loadScaleDetail(start, end) {
   const epoch = loadEpoch;
   const section = document.getElementById('scale-detail-section');
@@ -3850,8 +4018,8 @@ function savePrefs(prefs) {
 // final 'more' category is a catch-all so a newly-added chart is never lost.
 const CHART_CATEGORIES = [
   { id: 'overview',    name: 'Overview',              match: ['trend-chart', 'research-scorecard'] },
-  { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag'] },
-  { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart'] },
+  { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag', 'overnight-quality-section'] },
+  { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart', 'overnight-hr-section'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
   { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },

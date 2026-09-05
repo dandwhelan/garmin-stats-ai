@@ -442,6 +442,40 @@ def test_prewarm_populates_all_three_windows(svc, sample_dates):
     assert ("journal", start, end) in svc._load_cache
 
 
+def test_load_cache_is_bounded_by_distinct_ranges(svc, sample_dates):
+    """The date toolbar can mint unlimited ranges; the server runs for weeks.
+
+    Each entry holds a DataFrame, so an unbounded cache is a slow memory leak
+    on a box that never restarts.
+    """
+    from garmin_insights.web.lifestyle_viz import _LOAD_CACHE_MAX_ENTRIES
+
+    svc._load_cache.clear()
+    _, end = sample_dates
+    for day in range(1, _LOAD_CACHE_MAX_ENTRIES * 2):
+        svc._load_summaries(f"2020-01-{day:02d}", end)
+    assert len(svc._load_cache) <= _LOAD_CACHE_MAX_ENTRIES
+
+
+def test_expired_entries_are_swept_even_when_never_requested_again(svc, sample_dates,
+                                                                   monkeypatch):
+    """A TTL checked only on lookup frees nothing a user never revisits."""
+    import garmin_insights.web.lifestyle_viz as mod
+
+    svc._load_cache.clear()
+    start, end = sample_dates
+    svc._load_summaries(start, end)
+    assert ("summaries", start, end) in svc._load_cache
+
+    # Jump past the TTL, then touch a DIFFERENT key.
+    real = mod.time.monotonic
+    monkeypatch.setattr(
+        mod.time, "monotonic", lambda: real() + mod._LOAD_CACHE_TTL_SECONDS + 1
+    )
+    svc._load_summaries("2021-03-01", "2021-03-10")
+    assert ("summaries", start, end) not in svc._load_cache
+
+
 def test_empty_window_returns_empty_not_an_error(svc):
     """A range with no data must degrade cleanly — the dashboard renders these
     directly."""

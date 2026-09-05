@@ -15,7 +15,7 @@ import json
 import logging
 import sqlite3
 import time
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -87,13 +87,22 @@ def _prime_start(start: str, days: int = _BASELINE_PRIME_DAYS) -> str:
 # cache. TTL bounds staleness to match the dashboard's 60s cache-rebuild
 # throttle, so fresh fetcher data still appears promptly.
 _LOAD_CACHE_TTL_SECONDS = 60
+# Entries are keyed by (kind, start, end), and the date-range toolbar and
+# Entities tab let a user mint an unbounded number of distinct ranges. The
+# server runs for weeks at a time, so the cache needs both a sweep and a
+# ceiling — a TTL checked only on lookup never frees a range nobody asks for
+# again. Sized to comfortably hold the presets (7/14/30/90 day) across the
+# three ranges each analytics pass uses.
+_LOAD_CACHE_MAX_ENTRIES = 24
 
 
 class LifestyleService:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
-        # {(kind, start, end): (monotonic_ts, DataFrame)}
-        self._load_cache: dict[tuple[str, str, str], tuple[float, pd.DataFrame]] = {}
+        # {(kind, start, end): (monotonic_ts, DataFrame)} — insertion-ordered,
+        # so the least recently used entry is the one evicted at the ceiling.
+        self._load_cache: OrderedDict[tuple[str, str, str], tuple[float, pd.DataFrame]] = \
+            OrderedDict()
 
     def _conn(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path, timeout=10)
@@ -103,13 +112,22 @@ class LifestyleService:
         otherwise load it fresh. Callers get a copy so in-place mutations
         (set_index, column assignment) never corrupt the shared cache entry."""
         key = (kind, start, end)
-        hit = self._load_cache.get(key)
         now = time.monotonic()
-        if hit is not None and (now - hit[0]) < _LOAD_CACHE_TTL_SECONDS:
+        # Sweep every expired entry, not just this key's: a range the user
+        # visited once and never returned to would otherwise hold its frame
+        # for the life of the process.
+        for stale in [k for k, (ts, _) in self._load_cache.items()
+                      if now - ts >= _LOAD_CACHE_TTL_SECONDS]:
+            self._load_cache.pop(stale, None)
+        hit = self._load_cache.get(key)
+        if hit is not None:
+            self._load_cache.move_to_end(key)
             return hit[1].copy()
         df = self._read_summaries(start, end) if kind == "summaries" \
             else self._read_journal(start, end)
         self._load_cache[key] = (now, df)
+        while len(self._load_cache) > _LOAD_CACHE_MAX_ENTRIES:
+            self._load_cache.popitem(last=False)
         return df.copy()
 
     # ------------------------------------------------------------------

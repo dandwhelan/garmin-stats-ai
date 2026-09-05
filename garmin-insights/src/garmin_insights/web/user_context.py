@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from garmin_insights.agent import HealthAgent
 from garmin_insights.config import Settings
+from garmin_insights.insights.overnight import OvernightService
 from garmin_insights.web.lifestyle_viz import LifestyleService
 from garmin_insights.web.visualizations import VisualizationService
 
@@ -25,6 +26,7 @@ class UserBundle:
     agent: HealthAgent
     viz: VisualizationService
     lifestyle: LifestyleService
+    overnight: OvernightService
 
 
 class UserContext:
@@ -80,7 +82,9 @@ class UserContext:
                 logger.warning("Cache refresh for user '%s' failed: %s", user_id, e)
             viz = VisualizationService(user_settings.sqlite_db_path)
             lifestyle = LifestyleService(user_settings.sqlite_db_path)
-            bundle = UserBundle(user_id=user_id, agent=agent, viz=viz, lifestyle=lifestyle)
+            overnight = OvernightService(user_settings.sqlite_db_path)
+            bundle = UserBundle(user_id=user_id, agent=agent, viz=viz,
+                                lifestyle=lifestyle, overnight=overnight)
             with self._lock:
                 self._bundles[user_id] = bundle
             return bundle
