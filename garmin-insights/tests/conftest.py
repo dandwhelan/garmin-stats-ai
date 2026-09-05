@@ -22,7 +22,7 @@ import random
 import sqlite3
 import types
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -236,10 +236,15 @@ CREATE TABLE IF NOT EXISTS activity_gps (
     speed REAL, grade_adjusted_speed REAL, running_efficiency REAL,
     cadence INTEGER, fractional_cadence REAL, temperature REAL
 );
+-- Column names here must track sqlite_manager.py's CREATE TABLE exactly:
+-- the overnight analytics read this table by name, so a fixture that invents
+-- its own column names would pass tests the real database fails.
 CREATE TABLE IF NOT EXISTS sleep_intraday (
-    time TEXT, device TEXT, spo2 REAL, respiration REAL, sleep_hr REAL,
-    sleep_stress REAL, body_battery REAL, hrv REAL, sleep_stage TEXT,
-    movement REAL, restlessness REAL, PRIMARY KEY (time, device)
+    time TEXT, device TEXT, activity_level INTEGER, activity_seconds INTEGER,
+    stage_level INTEGER, stage_seconds INTEGER, restless_value INTEGER,
+    spo2_reading INTEGER, respiration_value INTEGER, heart_rate INTEGER,
+    stress_value INTEGER, body_battery INTEGER, hrv_value INTEGER,
+    PRIMARY KEY (time, device)
 );
 CREATE TABLE IF NOT EXISTS ha_sensor_daily (
     date TEXT NOT NULL, entity_id TEXT NOT NULL, mean_value REAL,
@@ -501,12 +506,95 @@ def _write_sample_db(path: str, rows) -> None:
     _write_slow_markers(cur, rows)
     _write_activities(cur, rows)
     _write_cycle(cur, rows)
+    _write_sleep_intraday(cur, rows)
 
     conn.commit()
     conn.close()
 
     # Baselines over the completed days, matching what update_baselines writes.
     _write_baselines(path, rows)
+
+
+def _write_sleep_intraday(cur, rows, nights: int = 45) -> None:
+    """Per-sample overnight series for the most recent `nights` nights.
+
+    Garmin only records this going forward from the day the fetcher gained the
+    SleepIntraday handler, so older nights are deliberately left absent — the
+    overnight analytics have to cope with a window that is partly empty.
+
+    Signals planted here, on top of the per-day values the row already carries:
+      * alcohol blunts the overnight HR fall and pushes the nadir later
+      * alcohol suppresses the first half of the night's HRV, so the
+        first-third/last-third trajectory steepens
+      * the strain window gets repeated SpO2 dips and extra stage transitions
+    """
+    rng = random.Random(20260805)
+    sample_rows = []
+    for r in rows[-nights:]:
+        start = r["sleep_start"].replace(tzinfo=timezone.utc)
+        minutes = max(180, int(r["sleep_secs"] / 60))
+        drinks = r["drinks"]
+        strain = r["strain"]
+
+        # Alcohol raises the HR floor and delays the trough: the nadir sits at
+        # ~45% of the night when sober, drifting toward ~70% with 4 drinks.
+        nadir_at = 0.45 + 0.06 * drinks
+        amplitude = max(2.0, 11.0 - 1.8 * drinks)
+
+        for i in range(minutes):
+            t = (start + timedelta(minutes=i)).isoformat()
+            frac = i / minutes
+            # A single trough centred on nadir_at rather than a symmetric arch.
+            shape = math.exp(-((frac - nadir_at) ** 2) / 0.08)
+            hr = r["rhr"] + 4 - amplitude * shape
+            hrv = r["hrv"] * (0.82 + 0.30 * frac) - 4.0 * drinks * (1 - frac)
+            # Per-sample jitter matters: without it SpO2 and respiration are
+            # constant within a night, every variability metric collapses to
+            # zero, and the analytics get tested against a signal shape no real
+            # night has.
+            spo2 = r["spo2"] + 0.5 + rng.gauss(0, 0.7)
+            if strain and i % 17 == 0:
+                spo2 -= 5.5
+            elif i % 53 == 0:
+                spo2 -= 2.0
+            resp = r["resp"] + rng.gauss(0, 0.9) + (0.6 if drinks else 0)
+            sample_rows.append((
+                t, "testdev", None, None, None, None, None,
+                int(round(spo2)), round(resp, 1), int(round(hr)),
+                int(round(r["stress"] / 2)),
+                int(r["bb_low"] + (r["bb_high"] - r["bb_low"]) * frac),
+                int(round(max(1, hrv))),
+            ))
+
+        # Stage segments every 30 minutes: awake at each end, and a couple of
+        # mid-night awakenings scaled by drinks / strain so WASO and the
+        # fragmentation index have something to separate.
+        segments = max(6, minutes // 30)
+        wake_at = {0, segments - 1}
+        for k in range(1, 1 + drinks + (2 if strain else 0)):
+            wake_at.add(min(segments - 2, 2 + k * 3))
+        for j in range(segments):
+            t = (start + timedelta(minutes=30 * j)).isoformat()
+            if j in wake_at:
+                level = 3
+            elif j % 4 == 1:
+                level = 0
+            elif j % 4 == 3:
+                level = 2
+            else:
+                level = 1
+            sample_rows.append((
+                t, "stages", None, None, level, 1800, None,
+                None, None, None, None, None, None,
+            ))
+
+    cur.executemany(
+        "INSERT OR REPLACE INTO sleep_intraday (time, device, activity_level,"
+        " activity_seconds, stage_level, stage_seconds, restless_value,"
+        " spo2_reading, respiration_value, heart_rate, stress_value,"
+        " body_battery, hrv_value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        sample_rows,
+    )
 
 
 def _write_slow_markers(cur, rows) -> None:
