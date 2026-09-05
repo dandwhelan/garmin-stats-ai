@@ -1149,6 +1149,151 @@ INSIGHT_RULES: list[InsightRule] = [
         confounders=["altitude", "cold_room", "sensor_drift", "side_sleeping"],
     ),
 
+    # ===== OVERNIGHT PHYSIOLOGY (per-sample sleep_intraday series) =====
+    # These key on the SHAPE of the night rather than its summary averages,
+    # so their trigger metrics come from insights/overnight.py, not the cache.
+    InsightRule(
+        name="blunted_nocturnal_hr_fall",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="hr_dip_pct",
+        comparison_metric="avgOvernightHrv",
+        direction="lower_is_worse",
+        description_template=(
+            "Heart rate fell only {value:.1f}% from sleep onset to its overnight "
+            "low (your usual is {baseline_mean:.1f}%) — a smaller-than-normal "
+            "nocturnal fall."
+        ),
+        research_citation="Ben-Dov et al., 2007, Arch Intern Med",
+        research_summary=(
+            "A reduced overnight fall in heart rate reflects lower parasympathetic "
+            "activity during sleep and is a recognised marker of autonomic load. "
+            "In this app it is a CONTEXT signal about one night's recovery, not a "
+            "cardiovascular risk assessment: alcohol, late training, a late meal, "
+            "a hot room, and illness all blunt the fall, and any of those should "
+            "be ranked ahead of anything else. Compare against the user's own "
+            "nights, never a population cut-off."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["alcohol", "late_training", "late_meal", "hot_bedroom",
+                     "illness", "stress"],
+    ),
+    InsightRule(
+        name="delayed_overnight_hr_nadir",
+        category="recovery",
+        trigger_behavior="Alcohol",
+        trigger_metric="hr_nadir_pct_of_night",
+        comparison_metric="hr_dip_pct",
+        direction="higher_is_worse",
+        description_template=(
+            "Heart rate bottomed out {value:.0f}% of the way through the night "
+            "(usually {baseline_mean:.0f}%) — the recovery trough arrived late."
+        ),
+        research_citation="Pietilä et al., 2018, JMIR Ment Health; Ebrahim et al., 2013, Alcohol Clin Exp Res",
+        research_summary=(
+            "Alcohol raises heart rate and suppresses heart-rate variability most "
+            "strongly in the FIRST hours of sleep, pushing the overnight trough "
+            "later into the night. Pietilä's real-world sample (~4,000 adults) "
+            "showed the autonomic effect scales with dose and persists after the "
+            "blood alcohol has cleared. A late trough on its own is not proof of "
+            "drinking — a late meal, late training and a hot room do the same "
+            "thing — so check the user's own log before naming a cause."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["late_meal", "late_training", "hot_bedroom", "late_caffeine"],
+        requires_user_context=True,
+    ),
+    InsightRule(
+        name="overnight_desaturation_burden",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="desat_index_per_hour",
+        comparison_metric="awakeCount",
+        direction="higher_is_worse",
+        description_template=(
+            "About {value:.1f} SpO2 drops per hour below the local overnight "
+            "baseline — a repeated pattern rather than one low reading."
+        ),
+        research_citation=(
+            "Kapur et al., 2017, J Clin Sleep Med (AASM guideline); "
+            "Khosla et al., 2018, J Clin Sleep Med (AASM position statement)"
+        ),
+        research_summary=(
+            "Repeated overnight oxygen desaturations are the pattern sleep "
+            "medicine screens for, and a burden index separates one artefactual "
+            "dip from a night of many. This index is NOT a clinical ODI: it is "
+            "estimated from sparse wrist pulse-oximetry that the AASM position "
+            "statement explicitly says cannot substitute for a medical "
+            "evaluation. Report it as a screening signal worth discussing with a "
+            "clinician if it persists alongside snoring, daytime sleepiness or "
+            "morning headaches — never as sleep apnoea, and never as a diagnosis."
+        ),
+        evidence_tier="C",
+        claim_strength="weak_association",
+        measurement_confidence="low",
+        confounders=["sensor_drift", "side_sleeping", "cold_room", "altitude",
+                     "loose_watch_fit"],
+    ),
+    InsightRule(
+        name="overnight_hrv_trajectory",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="hrv_trend_pct",
+        comparison_metric="sleepScore",
+        direction="lower_is_worse",
+        description_template=(
+            "HRV moved {value:+.0f}% from the first third of the night to the "
+            "last — recovery ran the wrong way across the night."
+        ),
+        research_citation="Boudreau et al., 2013, Sleep; Pietilä et al., 2018, JMIR Ment Health",
+        research_summary=(
+            "Heart-rate variability normally varies across the night with sleep "
+            "stage and circadian phase, so the direction of travel carries "
+            "information the night's average hides. A night that starts "
+            "suppressed and recovers reads differently from one that decays "
+            "throughout. The stage and circadian contributions are hard to "
+            "separate on a wrist device, so treat this as a personal tracking "
+            "signal to corroborate against the user's own logs, not evidence "
+            "on its own."
+        ),
+        evidence_tier="C",
+        claim_strength="hypothesis",
+        measurement_confidence="low",
+        confounders=["sleep_stage_distribution", "wake_time_shift", "alcohol",
+                     "late_training"],
+    ),
+    InsightRule(
+        name="sleep_fragmentation_waso",
+        category="sleep",
+        trigger_behavior=None,
+        trigger_metric="waso_minutes",
+        comparison_metric="sleepScore",
+        direction="higher_is_worse",
+        description_template=(
+            "{value:.0f} minutes awake between falling asleep and waking, across "
+            "{waso_episodes:.0f} episodes — sleep continuity, not sleep duration."
+        ),
+        research_citation="Ohayon et al., 2017, Sleep Health (National Sleep Foundation)",
+        research_summary=(
+            "Wake after sleep onset is a sleep-continuity measure independent of "
+            "total sleep time: the NSF consensus panel put appropriate WASO at "
+            "under ~20 minutes for adults aged 18-64. A long night can still be a "
+            "fragmented one, which is why this is worth reporting separately from "
+            "duration or sleep score. These are DEVICE-ESTIMATED stages, not "
+            "polysomnography, so compare against the user's own nights rather "
+            "than the published cut-off."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["alcohol", "late_caffeine", "hot_bedroom", "noise",
+                     "bathroom_wakings", "stress"],
+    ),
+
     # ===== BASELINE RELIABILITY GUARD =====
     InsightRule(
         name="baseline_reliability_guard",

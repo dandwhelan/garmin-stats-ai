@@ -822,6 +822,7 @@ def api_client(sample_settings, monkeypatch):
     """
     from fastapi.testclient import TestClient
 
+    from garmin_insights.insights.overnight import OvernightService
     from garmin_insights.web import app as app_module
     from garmin_insights.web.lifestyle_viz import LifestyleService
     from garmin_insights.web.sessions import SessionManager
@@ -834,6 +835,7 @@ def api_client(sample_settings, monkeypatch):
         agent=_StubAgent(sample_settings),
         viz=VisualizationService(db),
         lifestyle=LifestyleService(db),
+        overnight=OvernightService(db),
     )
 
     class _Pool:
@@ -886,6 +888,7 @@ def two_user_client(sample_db, tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
+    from garmin_insights.insights.overnight import OvernightService
     from garmin_insights.web import app as app_module
     from garmin_insights.web.lifestyle_viz import LifestyleService
     from garmin_insights.web.sessions import SessionManager
@@ -929,6 +932,7 @@ def two_user_client(sample_db, tmp_path, monkeypatch):
             agent=_StubAgent(settings),
             viz=VisualizationService(str(path)),
             lifestyle=LifestyleService(str(path)),
+            overnight=OvernightService(str(path)),
         )
 
     class _Pool:
