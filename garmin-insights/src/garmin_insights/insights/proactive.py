@@ -69,6 +69,32 @@ _CONCERN_DIRECTIONS = {
     "totalSteps": -1,
 }
 
+# Overnight-physiology deviations map onto their own KB rules. The metrics
+# come from insights/overnight.py (the per-sample sleep_intraday series), not
+# from the daily cache, so they can't go through the trigger_metric lookup the
+# other passes use.
+_OVERNIGHT_RULES = {
+    "hr_dip_pct":             "blunted_nocturnal_hr_fall",
+    "hr_nadir_pct_of_night":  "delayed_overnight_hr_nadir",
+    "desat_index_per_hour":   "overnight_desaturation_burden",
+    "spo2_pct_below_90":      "overnight_desaturation_burden",
+    "hrv_trend_pct":          "overnight_hrv_trajectory",
+    "waso_minutes":           "sleep_fragmentation_waso",
+    "fragmentation_index":    "sleep_fragmentation_waso",
+}
+
+# The screening labels the overnight summary can raise, and the rule whose
+# tier and confounders should govern how the agent phrases each one.
+_OVERNIGHT_SCREENING_RULES = {
+    "blunted_overnight_hr_fall":        "blunted_nocturnal_hr_fall",
+    "recurrent_overnight_desaturation": "overnight_desaturation_burden",
+}
+
+# Baseline window for the overnight pass. Long enough for a robust per-metric
+# median, short enough that a seasonal shift doesn't become the baseline.
+OVERNIGHT_WINDOW_DAYS = 30
+
+
 # Window (days) over which scan_behavior_impacts compares on- vs off-days.
 # Exposed as a constant so the portable prompt can state the true window when
 # it embeds these findings alongside a shorter data snapshot.
@@ -375,6 +401,66 @@ class InsightScanner:
 
         return findings
 
+    def scan_overnight(self, days: int = OVERNIGHT_WINDOW_DAYS) -> list[dict[str, Any]]:
+        """Deviations in the SHAPE of the most recent night, plus any screening
+        labels over the recent run of nights.
+
+        The other passes read the daily cache, which carries a night's averages
+        and extremes. This one reads the per-sample overnight series, so it can
+        surface what those hide: a heart-rate fall that was unusually small or
+        arrived unusually late, an HRV trajectory running the wrong way, a
+        night of repeated SpO2 dips behind one unremarkable minimum, or wake
+        time that duration alone doesn't show.
+
+        Returns [] silently for a database with no overnight series — which is
+        every night before the fetcher gained its SleepIntraday handler.
+        """
+        try:
+            db_path = self._memory.db_path
+        except AttributeError:
+            return []
+        try:
+            from garmin_insights.insights.overnight import OvernightService
+
+            end = datetime.now().strftime("%Y-%m-%d")
+            start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            summary = OvernightService(db_path).summary(start, end)
+        except Exception as exc:
+            logger.debug("overnight scan unavailable: %s", exc)
+            return []
+        if not summary.get("available"):
+            return []
+
+        rules_by_name = {r.name: r for r in INSIGHT_RULES}
+        findings: list[dict[str, Any]] = []
+
+        for dev in summary.get("deviations") or []:
+            finding: dict[str, Any] = {"source": "overnight_physiology", **dev}
+            rule = rules_by_name.get(_OVERNIGHT_RULES.get(dev.get("metric", ""), ""))
+            if rule is not None:
+                finding["rule_name"] = rule.name
+                _attach_rule_metadata(finding, rule, self._biological_sex)
+            findings.append(finding)
+
+        for sig in summary.get("screening") or []:
+            finding = {"source": "overnight_screening", **sig}
+            rule = rules_by_name.get(
+                _OVERNIGHT_SCREENING_RULES.get(sig.get("signal", ""), "")
+            )
+            if rule is not None:
+                finding["rule_name"] = rule.name
+                _attach_rule_metadata(finding, rule, self._biological_sex)
+            findings.append(finding)
+
+        # The baseline guard the other passes get for free: too few nights and
+        # a "deviation" is mostly the sparse baseline talking.
+        nights_available = len(summary.get("nights") or [])
+        if findings and nights_available < 21:
+            for f in findings:
+                f["nights_available"] = nights_available
+                f["baseline_low_confidence"] = True
+        return findings
+
     def scan_trends(self) -> list[dict[str, Any]]:
         """Detect notable trends in key metrics."""
         trend_metrics = [
@@ -406,6 +492,7 @@ class InsightScanner:
         return {
             "anomalies": self.scan_anomalies(),
             "composite_strain": self.scan_composite_strain(),
+            "overnight": self.scan_overnight(),
             "behavior_impacts": self.scan_behavior_impacts(),
             "trends": self.scan_trends(),
         }

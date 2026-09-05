@@ -19,7 +19,10 @@ from garmin_insights.knowledge.medical import (
     select_relevant_rule_names,
     count_visible_rules,
 )
-from garmin_insights.insights.proactive import BEHAVIOR_IMPACT_WINDOW_DAYS
+from garmin_insights.insights.proactive import (
+    BEHAVIOR_IMPACT_WINDOW_DAYS,
+    OVERNIGHT_WINDOW_DAYS,
+)
 from garmin_insights.stats_utils import metabolic_age_years, to_kg
 from garmin_insights.tools.analysis_tools import AnalysisEngine
 from garmin_insights.tools.query_tools import (
@@ -152,7 +155,11 @@ _SCAN_PROMPTS = {
         "battery at wake, and training readiness (if your watch reports it — many models "
         "don't, so skip it silently when no readiness data is present). Compare to "
         "baselines and flag anything "
-        "noteworthy. If any lifestyle behaviors were logged yesterday, analyze their "
+        "noteworthy. If the night looks off, call get_overnight_physiology before "
+        "concluding why: the sleep summary averages the night away, while that shows "
+        "its shape — how far heart rate fell and how late it bottomed out, which way "
+        "HRV travelled, the desaturation burden behind a single low SpO2, and wake "
+        "time after sleep onset. If any lifestyle behaviors were logged yesterday, analyze their "
         "impact. Fetch at most 3 days of raw data — use get_my_baselines for context."
     ),
     "midday": (
@@ -173,7 +180,9 @@ _SCAN_PROMPTS = {
         "training load > environment & lifestyle confounders > long-term fitness markers. "
         "Lead with the precomputed anomaly/trend findings if they are provided, rather than "
         "re-deriving them from the raw daily rows; check all baselines for anything they miss, "
-        "and analyze recent trends (7-day) for the key metrics. Prioritize actionable insights. "
+        "and analyze recent trends (7-day) for the key metrics. When a sleep or recovery "
+        "finding needs explaining, get_overnight_physiology carries the per-night detail "
+        "the daily summaries do not. Prioritize actionable insights. "
         "Fetch at most 14 days of raw data — use get_my_baselines for 30-day context."
     ),
     "night": (
@@ -182,26 +191,34 @@ _SCAN_PROMPTS = {
         "logged today that research links to worse sleep (late caffeine, "
         "alcohol, late/heavy meals, late exercise, screens) and say how "
         "tonight's sleep and overnight recovery may be affected — remember "
-        "those effects will appear on TOMORROW's record. Close with at most "
+        "those effects will appear on TOMORROW's record. When such a behavior was "
+        "logged, ground the projection in this user's own history: "
+        "get_overnight_physiology shows how far their overnight heart-rate fall was "
+        "blunted and how late its trough arrived on comparable past nights. Cite "
+        "their nights, not a generic effect size. Close with at most "
         "2 concrete wind-down suggestions. "
         "Fetch at most 3 days of raw data — use get_my_baselines for context."
     ),
     "weekly": (
         "Generate a weekly health summary. Analyze the last 7 days: "
         "1) Overall trends in sleep, stress, HRV, and body battery. "
-        "2) Impact of lifestyle behaviors that have BOTH present and absent days in the window "
+        "2) If sleep or recovery moved, check get_overnight_physiology for what changed in "
+        "the shape of the nights (HR fall and trough timing, HRV direction, desaturation "
+        "burden, wake time) — it often separates 'slept less' from 'slept worse'. Skip "
+        "when the overnight series is unavailable. "
+        "3) Impact of lifestyle behaviors that have BOTH present and absent days in the window "
         "— note the on/off day counts and skip behaviors logged every day (no comparator) or "
         "on only 1-2 days (too sparse). Treat symptoms/states (illness, injury, allergy/asthma, "
         "low energy) as outcomes/confounders to explain, not causes. "
-        "3) Training load and recovery balance (frame as approximate if detailed Garmin load / "
+        "4) Training load and recovery balance (frame as approximate if detailed Garmin load / "
         "ACWR / HR-zone data isn't available). "
-        "4) If any body-composition readings landed this week (get_body_composition), note the "
+        "5) If any body-composition readings landed this week (get_body_composition), note the "
         "weight / body fat / muscle trend vs earlier readings — impedance estimates, so frame "
         "as personal trend, and skip this section entirely when there are no new readings. "
-        "5) Top 3 actionable recommendations for next week. "
         "6) Check get_experiments for active experiments — for each, report compliance "
         "(on/off day counts) and the interim effect from evaluate_experiment, flagging "
         "experiments ready to conclude. Skip this section silently when there are none. "
+        "7) Top 3 actionable recommendations for next week. "
         "Compare this week to the 30-day baseline. "
         "Fetch at most 30 days of raw data — use get_my_baselines for the baseline reference."
     ),
@@ -805,6 +822,15 @@ class HealthAgent:
             "(get_body_composition)",
             "(see the Fitness markers section — its reading dates show whether any landed this week)",
         )
+        # Same for the overnight tool: the shape of each night is embedded below
+        # as a section, so point the reader there rather than at a dead call.
+        user_text = user_text.replace(
+            "call get_overnight_physiology", "read the Overnight physiology section"
+        ).replace(
+            "check get_overnight_physiology", "read the Overnight physiology section"
+        ).replace(
+            "get_overnight_physiology", "the Overnight physiology section"
+        )
 
         # Resolve snapshot window (default last 30 days; respect explicit bounds).
         # Use the LOCAL calendar day (like _today_block) — daily_stats rows are
@@ -1074,6 +1100,29 @@ class HealthAgent:
                 training["status"] = status
         except Exception as e:
             logger.debug("Portable prompt: training status fetch failed: %s", e)
+
+        # Overnight physiology for the nights in the window. The live agent
+        # reaches this through get_overnight_physiology; a pasted prompt has no
+        # tools, so without it the receiving model sees the night's averages and
+        # none of its shape. Sample counts and span timestamps are dropped —
+        # they're diagnostics, not analysis input.
+        overnight_nights: list[dict] = []
+        try:
+            from garmin_insights.insights.overnight import OvernightService
+
+            _overnight = OvernightService(self._repo.db_path).summary(start, end)
+            if _overnight.get("available"):
+                _drop_overnight = {
+                    "samples", "hr_samples", "hrv_samples", "spo2_samples",
+                    "respiration_samples", "body_battery_samples", "stage_rows",
+                    "span_start", "span_end",
+                }
+                overnight_nights = [
+                    {k: v for k, v in night.items() if k not in _drop_overnight}
+                    for night in _overnight.get("nights") or []
+                ]
+        except Exception as e:
+            logger.debug("Portable prompt: overnight fetch failed: %s", e)
 
         # Precomputed anomaly / trend / behaviour-impact findings — the same
         # deterministic local detection the CLI `scan` command runs before the
@@ -1395,13 +1444,15 @@ class HealthAgent:
             )
             + (
                 f"## Precomputed findings (code-computed local detection — "
-                f"anomalies vs baseline, composite recovery strain, behaviour "
-                f"impacts, and trends; lead with these rather than re-deriving "
+                f"anomalies vs baseline, composite recovery strain, overnight "
+                f"deviations, behaviour impacts, and trends; lead with these "
+                f"rather than re-deriving "
                 f"from the raw rows. Each category runs over its OWN history "
                 f"window anchored to today — behaviour impacts over the last "
                 f"{BEHAVIOR_IMPACT_WINDOW_DAYS} days, trends over 14, anomalies "
                 f"over the last 4 calendar days incl. today (a 3-day lookback) "
-                f"vs a 30-day baseline — so n counts can "
+                f"vs a 30-day baseline, overnight deviations on the most recent "
+                f"night vs the last {OVERNIGHT_WINDOW_DAYS} nights — so n counts can "
                 f"legitimately exceed the snapshot window; cite each finding "
                 f"with its own window, not the snapshot's or the question's)\n"
                 "```json\n"
@@ -1417,6 +1468,27 @@ class HealthAgent:
             "```json\n"
             f"{json.dumps(clean_summaries, default=str)}\n"
             "```\n\n"
+            + (
+                f"## Overnight physiology ({len(overnight_nights)} nights with a "
+                f"per-sample series, keyed by the morning each night ENDED — the "
+                f"shape the daily summaries average away. `hr_dip_pct` is the fall "
+                f"from sleep-onset HR to the overnight low and "
+                f"`hr_nadir_pct_of_night` how far through the night that low "
+                f"arrived (a small fall with a late trough is the alcohol / late "
+                f"meal / late training / hot room pattern); `hrv_first_third` vs "
+                f"`hrv_last_third` is HRV's direction across the night; "
+                f"`desat_index_per_hour` counts SpO2 drops of 3+ points below the "
+                f"local overnight baseline — DEVICE-ESTIMATED from sparse wrist "
+                f"pulse-ox, NOT a clinical ODI and never a sleep-apnoea finding; "
+                f"`waso_minutes` is wake time between falling asleep and final "
+                f"waking. Compare against these same nights, not population norms. "
+                f"Nights before the watch began recording the series are absent "
+                f"rather than zero)\n"
+                "```json\n"
+                f"{json.dumps(_round_floats(overnight_nights), default=str)}\n"
+                "```\n\n"
+                if overnight_nights else ""
+            )
             + (
                 f"## Workout summary (per-type totals across {len(activities)} "
                 f"sessions in window)\n"
@@ -1546,8 +1618,10 @@ class HealthAgent:
             prompt = (
                 "Here are precomputed findings from the local deterministic "
                 "analysis (anomalies vs 30-day baseline, composite recovery "
-                "strain, behavior impacts with p-values, 14-day trends — each "
-                "computed over its own window anchored to today):\n\n"
+                "strain, overnight-physiology deviations and screening labels "
+                "from the per-sample sleep series, behavior impacts with "
+                "p-values, 14-day trends — each computed over its own window "
+                "anchored to today):\n\n"
                 f"{context}\n\n"
                 "Lead with these findings rather than re-deriving them from raw "
                 "rows; verify with tools only where genuinely needed, then "

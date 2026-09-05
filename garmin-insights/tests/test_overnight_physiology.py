@@ -315,3 +315,87 @@ def test_overnight_endpoint_returns_nights_and_baselines(api_client):
 
 def test_overnight_endpoint_rejects_an_unknown_user(api_client):
     assert api_client.get("/api/overnight?user=nobody").status_code == 404
+
+
+# ----------------------------------------------------------------------
+# What actually reaches the model
+# ----------------------------------------------------------------------
+def _scanner(db):
+    from garmin_insights.db.memory import MemoryStore
+    from garmin_insights.insights.proactive import InsightScanner
+    from garmin_insights.tools.analysis_tools import AnalysisEngine
+
+    memory = MemoryStore(types.SimpleNamespace(sqlite_db_path=db))
+    return InsightScanner(memory, AnalysisEngine(memory), "Male")
+
+
+def test_scanner_overnight_findings_carry_their_evidence_tier(sample_db):
+    """A finding without tier metadata leaves the agent free to overclaim."""
+    findings = _scanner(sample_db).scan_overnight()
+    for f in findings:
+        assert f["source"] in {"overnight_physiology", "overnight_screening"}
+        if "rule_name" in f:
+            assert f["evidence_tier"] in {"A", "B", "C", "D"}
+            assert f["medical_context"]
+
+
+def test_overnight_pass_is_part_of_the_full_scan(sample_db):
+    """run_full_scan is what the scan report and the portable prompt inject.
+
+    An overnight pass that exists but isn't in this dict reaches nothing.
+    """
+    assert "overnight" in _scanner(sample_db).run_full_scan()
+
+
+def test_scanner_survives_a_database_with_no_overnight_series(tmp_path, sample_db):
+    """Databases predating the SleepIntraday handler must scan, not crash."""
+    import shutil
+
+    db = str(tmp_path / "no_series.db")
+    shutil.copy(sample_db, db)
+    conn = sqlite3.connect(db)
+    conn.execute("DROP TABLE sleep_intraday")
+    conn.commit()
+    conn.close()
+    assert _scanner(db).scan_overnight() == []
+    assert "overnight" in _scanner(db).run_full_scan()
+
+
+@pytest.fixture
+def portable_agent(sample_db, monkeypatch):
+    """A real HealthAgent over the sample DB — no API key is needed to build
+    a prompt, only to send one."""
+    from garmin_insights.agent import HealthAgent
+    from garmin_insights.config import Settings
+
+    settings = Settings(
+        sqlite_db_path=sample_db,
+        anthropic_api_key="sk-test-not-used",
+        biological_sex="Male",
+        display_name="Test",
+    )
+    return HealthAgent(settings)
+
+
+def test_portable_prompt_embeds_the_nights_themselves(portable_agent):
+    """The receiving model has no tools, so an un-embedded section is invisible."""
+    prompt = portable_agent.build_portable_prompt(focus="morning")
+    assert "## Overnight physiology" in prompt
+    assert "hr_dip_pct" in prompt
+    # The caveat has to travel with the number, not sit only in the KB.
+    assert "not a clinical ODI" in prompt.lower() or "NOT a clinical ODI" in prompt
+
+
+def test_portable_prompt_never_names_a_tool_the_reader_cannot_call(portable_agent):
+    for focus in ("morning", "night", "general", "weekly"):
+        prompt = portable_agent.build_portable_prompt(focus=focus)
+        assert "get_overnight_physiology" not in prompt, focus
+
+
+def test_live_scan_prompts_point_at_the_tool(portable_agent):
+    """The live agent HAS tools — the mention must survive there."""
+    from garmin_insights.agent import _SCAN_PROMPTS
+
+    pointed = [f for f, p in _SCAN_PROMPTS.items() if "get_overnight_physiology" in p]
+    assert "morning" in pointed, "the morning brief is where night shape matters most"
+    assert len(pointed) >= 3
