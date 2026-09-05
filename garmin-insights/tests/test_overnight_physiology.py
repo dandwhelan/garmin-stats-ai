@@ -12,6 +12,7 @@ detecting them fails here.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import types
 from datetime import datetime, timedelta, timezone
@@ -110,10 +111,11 @@ def test_one_offset_is_not_stamped_across_a_dst_boundary(monkeypatch):
     """
     import time as _time
 
-    from garmin_insights.insights.overnight import _to_local_naive
+    from garmin_insights.insights.overnight import _system_zone, _to_local_naive
 
     monkeypatch.setenv("TZ", "Europe/London")
     _time.tzset()
+    _system_zone.cache_clear()  # resolved once per process; this test moves it
     try:
         local = _to_local_naive(
             pd.DatetimeIndex(["2026-01-15T23:30:00Z", "2026-07-15T23:30:00Z"])
@@ -125,6 +127,7 @@ def test_one_offset_is_not_stamped_across_a_dst_boundary(monkeypatch):
     finally:
         monkeypatch.undo()
         _time.tzset()
+        _system_zone.cache_clear()
 
 
 def test_missing_table_is_reported_not_raised(tmp_path):
@@ -303,6 +306,78 @@ def test_nights_before_the_series_existed_are_simply_absent(sample_db, sample_ro
     nights = OvernightService(sample_db).nights(start, end)
     assert 0 < len(nights) < len(sample_rows)
     assert all(start <= n["night_of"] <= end for n in nights)
+
+
+# ----------------------------------------------------------------------
+# Per-night cache
+# ----------------------------------------------------------------------
+def _cache_rows(db) -> dict:
+    conn = sqlite3.connect(db)
+    try:
+        return dict(conn.execute(
+            "SELECT night_of, samples FROM overnight_cache").fetchall())
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+
+
+def test_cached_nights_are_identical_to_freshly_computed_ones(sample_db, sample_rows):
+    """A cache that returns different numbers is worse than no cache."""
+    start, end = _window(sample_rows)
+    svc = OvernightService(sample_db)
+    cold = svc.nights(start, end)
+    warm = svc.nights(start, end)
+    # The newest nights are recomputed by design (still accruing samples), so
+    # compare the settled ones.
+    assert cold[:-2] == warm[:-2]
+    assert [n["night_of"] for n in cold] == [n["night_of"] for n in warm]
+    assert _cache_rows(sample_db), "nothing was cached"
+
+
+def test_a_backfilled_night_is_recomputed_not_served_stale(sample_db, sample_rows):
+    """A late sync adds samples to a night already cached.
+
+    The cache is keyed on the night's sample count precisely so this case
+    invalidates itself rather than pinning a half-night's numbers forever.
+    """
+    start, end = _window(sample_rows)
+    svc = OvernightService(sample_db)
+    nights = svc.nights(start, end)
+    # Pick a settled night — not one of the always-recomputed newest.
+    target = nights[0]["night_of"]
+    before = _cache_rows(sample_db)[target]
+
+    # Take a timestamp the service itself attributes to that night, so the
+    # insert is guaranteed to land in the bucket under test; half a minute
+    # later so it cannot collide with an existing row.
+    existing = svc._load(target, target).index[0].to_pydatetime()
+    late = (existing + timedelta(seconds=30)).isoformat()
+    conn = sqlite3.connect(sample_db)
+    conn.execute(
+        "INSERT INTO sleep_intraday (time, device, heart_rate) VALUES (?, ?, ?)",
+        (late, "late", 60),
+    )
+    conn.commit()
+    conn.close()
+
+    svc.nights(start, end)
+    assert _cache_rows(sample_db)[target] != before
+
+
+def test_a_read_only_database_still_returns_nights(sample_db, sample_rows, tmp_path):
+    """Caching is an optimisation; failing to write one must not fail the read."""
+    import shutil
+    import stat
+
+    db = str(tmp_path / "ro.db")
+    shutil.copy(sample_db, db)
+    os.chmod(db, stat.S_IRUSR)
+    try:
+        nights = OvernightService(db).nights(*_window(sample_rows))
+    finally:
+        os.chmod(db, stat.S_IRUSR | stat.S_IWUSR)
+    assert nights, "a read-only database returned nothing"
 
 
 # ----------------------------------------------------------------------

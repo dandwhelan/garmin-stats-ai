@@ -26,9 +26,13 @@ overnight sampling is sparse and unvalidated against polysomnography.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timedelta
+from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -48,6 +52,14 @@ _STAGE_NAMES = {_STAGE_DEEP: "deep", _STAGE_LIGHT: "light",
 # "last night's sleep" lives on today's date.
 _NIGHT_SPLIT_HOUR = 12
 
+# Every non-timestamp column read from sleep_intraday. Listed once so the
+# coercion in _load and the SELECT that feeds it cannot drift apart.
+_VALUE_COLUMNS = (
+    "spo2_reading", "respiration_value", "heart_rate", "stress_value",
+    "body_battery", "hrv_value", "stage_level", "stage_seconds",
+    "activity_level", "restless_value",
+)
+
 # Minimum samples of a given series before its derived statistics are trusted.
 # Below this a single artefact dominates, so the metric is reported as None
 # rather than as a confident-looking number.
@@ -64,6 +76,26 @@ _SPO2_DESAT_DROP = 3.0
 # conventional cut-off for "significant" desaturation in sleep medicine.
 _SPO2_LOW_THRESHOLD = 90.0
 
+# Derived per-night metrics are cached, because recomputing them means reading
+# every sample again — ~500 a night, so a 90-day window is ~60k rows, an order
+# of magnitude more than any other dashboard call touches. A completed night's
+# numbers never change, so the cache is keyed on the night and invalidated by
+# its sample count: a backfill or a late sync changes the count and forces a
+# recompute, while a steady state recomputes only the nights still accruing.
+_CACHE_TABLE = "overnight_cache"
+_CACHE_DDL = f"""
+CREATE TABLE IF NOT EXISTS {_CACHE_TABLE} (
+    night_of TEXT PRIMARY KEY,
+    samples INTEGER NOT NULL,
+    metrics_json TEXT NOT NULL,
+    computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+# The most recent nights are always recomputed regardless of the count check.
+# Tonight is still being written to, and yesterday can still gain samples from
+# a delayed watch sync that happens to land on the same total.
+_ALWAYS_RECOMPUTE_NIGHTS = 2
+
 # Reference points used only to LABEL a night, never to diagnose one.
 # A nocturnal HR fall under ~10% is the "non-dipping" pattern; we use a
 # deliberately conservative 8% so ordinary variation doesn't trip it.
@@ -75,20 +107,51 @@ _HR_DIP_BLUNTED_PCT = 8.0
 _DESAT_INDEX_SCREEN = 5.0
 
 
+@lru_cache(maxsize=1)
+def _system_zone() -> ZoneInfo | None:
+    """The machine's IANA zone, or None if it can't be identified.
+
+    Needed because ``datetime.now().astimezone().tzinfo`` is a FIXED offset
+    captured today, not the zone: converting a whole window through it stamps
+    summer's offset onto winter's nights. A real zone knows each timestamp's
+    own DST state, and lets pandas convert the index in one vectorised step
+    instead of per timestamp.
+
+    Cached because it is resolved from the environment, which does not change
+    under a running process (the tests that switch TZ clear this).
+    """
+    name = os.environ.get("TZ")
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    # /etc/localtime is a symlink into the zoneinfo database on every distro
+    # that ships one, so the tail of its target is the zone name.
+    try:
+        target = os.path.realpath("/etc/localtime")
+        marker = "/zoneinfo/"
+        if marker in target:
+            return ZoneInfo(target.split(marker, 1)[1])
+    except Exception:
+        pass
+    return None
+
+
 def _to_local_naive(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """UTC timestamps as local wall-clock times, tz-naive.
-
-    ``datetime.now().astimezone().tzinfo`` looks like the local zone but is a
-    FIXED offset captured today, so converting a whole window through it stamps
-    summer's offset onto winter's nights. ``datetime.astimezone()`` with no
-    argument applies the system zone's rule for each timestamp's OWN date —
-    the same reasoning as ``sqlite_repo.utc_to_local_day``, which is why this
-    converts per timestamp rather than once for the index.
 
     The result is naive on purpose: a window spanning a DST change holds two
     offsets, which a tz-aware DatetimeIndex cannot represent, and only the
     local wall-clock hour and date are needed here.
+
+    Falls back to per-timestamp ``datetime.astimezone()`` — correct but ~50x
+    slower over a season of samples — when the zone can't be identified. That
+    is the same mechanism ``sqlite_repo.utc_to_local_day`` uses.
     """
+    zone = _system_zone()
+    if zone is not None:
+        return index.tz_convert(zone).tz_localize(None)
     return pd.DatetimeIndex(
         [ts.astimezone().replace(tzinfo=None) for ts in index.to_pydatetime()]
     )
@@ -108,15 +171,15 @@ def _f(value) -> float | None:
 
 
 def _series(df: pd.DataFrame, column: str) -> pd.Series:
-    """Numeric, NaN-dropped, time-ordered view of one column.
+    """NaN-dropped, time-ordered view of one column.
 
-    Garmin uses -1 as a sentinel for "no reading" on the movement/stage
-    columns; treating it as a real value would drag every mean downward.
+    Cheap by design: `_load` has already coerced every value column to numeric,
+    dropped Garmin's -1 "no reading" sentinels and sorted by time, so this runs
+    once per series per night over a frame that needs no further conversion.
     """
     if column not in df.columns:
         return pd.Series(dtype="float64")
-    s = pd.to_numeric(df[column], errors="coerce").dropna()
-    return s[s >= 0].sort_index()
+    return df[column].dropna()
 
 
 class OvernightService:
@@ -166,8 +229,23 @@ class OvernightService:
             conn.close()
         if df.empty:
             return df
-        df["time"] = pd.to_datetime(df["time"], format="ISO8601", utc=True)
+        # coerce, not raise: one malformed timestamp in the table would
+        # otherwise take down the whole window, and the dropna below is already
+        # written to expect unparseable rows.
+        df["time"] = pd.to_datetime(
+            df["time"], format="ISO8601", utc=True, errors="coerce"
+        )
         df = df.dropna(subset=["time"]).set_index("time").sort_index()
+        # Coerce every value column ONCE over the whole window rather than per
+        # night per column: at ~500 samples a night this is the same work done
+        # a few hundred times over, and it dominated the request. Garmin writes
+        # -1 for "no reading" on the movement and stage columns, so negatives
+        # become NaN here and are dropped by _series — treating them as real
+        # values would drag every mean downward.
+        for col in _VALUE_COLUMNS:
+            if col in df.columns:
+                numeric = pd.to_numeric(df[col], errors="coerce")
+                df[col] = numeric.where(numeric >= 0)
         local = _to_local_naive(df.index)
         # Samples from local noon onward belong to the next morning's night.
         shift = pd.to_timedelta((local.hour >= _NIGHT_SPLIT_HOUR).astype(int), unit="D")
@@ -283,14 +361,12 @@ class OvernightService:
         # together rather than aligned by timestamp — several sample types (and
         # several devices) can legitimately share a timestamp, and reindexing
         # against a duplicated index raises.
-        levels = pd.to_numeric(df.get("stage_level"), errors="coerce")
-        if levels is None:
+        if "stage_level" not in df.columns:
             return {"stage_rows": 0}
         stages = pd.DataFrame({
-            "level": levels,
-            "seconds": pd.to_numeric(df.get("stage_seconds"), errors="coerce"),
-        }).dropna(subset=["level"]).sort_index()
-        stages = stages[stages["level"] >= 0]
+            "level": df["stage_level"],
+            "seconds": df.get("stage_seconds"),
+        }).dropna(subset=["level"])
         out: dict = {"stage_rows": int(len(stages))}
         if len(stages) < _MIN_STAGE_ROWS:
             return out
@@ -351,20 +427,142 @@ class OvernightService:
         entry.update(self._movement(df))
         return entry
 
+    @staticmethod
+    def _widened(start: str) -> str:
+        """A night ending on `start` begins the previous evening."""
+        try:
+            return (datetime.strptime(start, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            return start
+
+    def _census(self, start: str, end: str) -> dict[str, int]:
+        """Sample count per night, without reading a single sample.
+
+        `time` leads the primary key, so grouping hour buckets over a range is
+        answered from the covering index — ~20 ms for a 90-day window against
+        ~500 ms to read and process the samples themselves. That is what makes
+        the cache worth having: this decides what actually needs recomputing.
+        """
+        sql = (
+            "SELECT substr(time, 1, 13) AS hour_bucket, COUNT(*) "
+            f"FROM sleep_intraday WHERE time >= ? AND time <= ? GROUP BY hour_bucket"
+        )
+        try:
+            conn = self._conn()
+        except sqlite3.Error:
+            return {}
+        try:
+            rows = conn.execute(
+                sql, (f"{self._widened(start)}T00:00:00", f"{end}T23:59:59")
+            ).fetchall()
+        except Exception as exc:
+            logger.info("overnight: census unavailable: %s", exc)
+            return {}
+        finally:
+            conn.close()
+        if not rows:
+            return {}
+        buckets = pd.to_datetime([f"{r[0]}:00:00" for r in rows], format="ISO8601", utc=True)
+        local = _to_local_naive(pd.DatetimeIndex(buckets))
+        shift = pd.to_timedelta((local.hour >= _NIGHT_SPLIT_HOUR).astype(int), unit="D")
+        counts: dict[str, int] = {}
+        for night, (_, count) in zip((local + shift).strftime("%Y-%m-%d"), rows):
+            counts[night] = counts.get(night, 0) + int(count)
+        return counts
+
+    def _read_cache(self, nights: list[str]) -> dict[str, tuple[int, dict]]:
+        if not nights:
+            return {}
+        placeholders = ",".join("?" * len(nights))
+        try:
+            conn = self._conn()
+        except sqlite3.Error:
+            return {}
+        try:
+            rows = conn.execute(
+                f"SELECT night_of, samples, metrics_json FROM {_CACHE_TABLE} "
+                f"WHERE night_of IN ({placeholders})",
+                nights,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}  # table not created yet — every night is a miss
+        except Exception as exc:
+            logger.debug("overnight: cache read failed: %s", exc)
+            return {}
+        finally:
+            conn.close()
+        out: dict[str, tuple[int, dict]] = {}
+        for night_of, samples, metrics_json in rows:
+            try:
+                out[str(night_of)] = (int(samples), json.loads(metrics_json))
+            except (TypeError, ValueError):
+                continue  # corrupt row — treat as a miss and recompute
+        return out
+
+    def _write_cache(self, entries: list[tuple[str, int, dict]]) -> None:
+        """Best effort: a read-only or locked database must not fail a request
+        whose numbers have already been computed."""
+        if not entries:
+            return
+        try:
+            conn = self._conn()
+        except sqlite3.Error:
+            return
+        try:
+            conn.execute(_CACHE_DDL)
+            conn.executemany(
+                f"INSERT INTO {_CACHE_TABLE} (night_of, samples, metrics_json, computed_at) "
+                "VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(night_of) DO UPDATE SET samples=excluded.samples, "
+                "metrics_json=excluded.metrics_json, computed_at=CURRENT_TIMESTAMP",
+                [(n, c, json.dumps(m, default=str)) for n, c, m in entries],
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.debug("overnight: cache write skipped: %s", exc)
+        finally:
+            conn.close()
+
     def nights(self, start: str, end: str) -> list[dict]:
         """One metrics dict per night ending in [start, end], oldest first."""
-        df = self._load(start, end)
-        if df.empty:
+        census = {n: c for n, c in self._census(start, end).items()
+                  if start <= n <= end}
+        if not census:
             return []
+        ordered = sorted(census)
+        cached = self._read_cache(ordered)
+        # The newest nights are recomputed unconditionally; the rest only when
+        # their sample count no longer matches what was cached.
+        volatile = set(ordered[-_ALWAYS_RECOMPUTE_NIGHTS:])
+        stale = [
+            n for n in ordered
+            if n in volatile or n not in cached or cached[n][0] != census[n]
+        ]
+
+        computed: dict[str, dict] = {}
+        if stale:
+            df = self._load(min(stale), max(stale))
+            if not df.empty:
+                wanted = set(stale)
+                for night, group in df.groupby("night_of", sort=True):
+                    night = str(night)
+                    if night not in wanted:
+                        continue
+                    try:
+                        computed[night] = self._one_night(
+                            night, group.drop(columns=["night_of"])
+                        )
+                    except Exception as exc:  # one bad night must not sink the rest
+                        logger.warning("overnight: night %s failed: %s", night, exc)
+            self._write_cache(
+                [(n, census[n], m) for n, m in computed.items()]
+            )
+
         out: list[dict] = []
-        for night, group in df.groupby("night_of", sort=True):
-            if night < start or night > end:
-                continue
-            group = group.drop(columns=["night_of"])
-            try:
-                out.append(self._one_night(str(night), group))
-            except Exception as exc:  # one malformed night must not sink the rest
-                logger.warning("overnight: night %s failed: %s", night, exc)
+        for night in ordered:
+            entry = computed.get(night) or (cached[night][1] if night in cached else None)
+            if entry is not None:
+                out.append(entry)
         return out
 
     # ------------------------------------------------------------------
