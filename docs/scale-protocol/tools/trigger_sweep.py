@@ -76,8 +76,16 @@ class ScaleSession:
                 ts = parsed['timestamp']
                 w = parsed['weight_kg']
                 ohms = parsed['impedance_ohms']
-                label = STALE_BLOCKS.get(blk, "*** GENUINE NEW SWEEP! ***")
-                is_fresh = blk not in STALE_BLOCKS
+                # An all-zero block means the scale captured NO impedance this
+                # measurement (poor contact, or the sweep did not complete). It
+                # is not a fresh reading - the Robi S9 adapter in ble-scale-sync
+                # hit exactly this and mistook it for data.
+                all_zero = (set(blk) == {"0"})
+                if all_zero:
+                    label = "NO IMPEDANCE (all-zero: bad contact / sweep incomplete)"
+                else:
+                    label = STALE_BLOCKS.get(blk, "*** GENUINE NEW SWEEP! ***")
+                is_fresh = (not all_zero) and (blk not in STALE_BLOCKS)
                 print("=" * 70)
                 print(f"[{time.strftime('%H:%M:%S')}] COMPOSITION FRAME (Type 0x{ftype:02X}):")
                 print(f"   Timestamp: {ts} ({time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(ts))} UTC)")
@@ -91,7 +99,8 @@ class ScaleSession:
                 seg = ["Trunk", "Arm", "Arm", "Leg", "Leg"]
                 print("   Segmental Ohms (freq1 / freq2):")
                 for i, nm in enumerate(seg):
-                    print(f"      {nm:<5} {ohms[i]:6.1f} / {ohms[i+5]:6.1f}   ratio {ohms[i]/ohms[i+5]:.2f}")
+                    r = f"{ohms[i]/ohms[i+5]:.2f}" if ohms[i+5] else "n/a"
+                    print(f"      {nm:<5} {ohms[i]:6.1f} / {ohms[i+5]:6.1f}   ratio {r}")
                 print("=" * 70)
                 if is_fresh and ftype == 0xA7:
                     self.fresh_a7_received.set()

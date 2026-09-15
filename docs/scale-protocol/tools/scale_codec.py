@@ -75,6 +75,16 @@ def parse_frame(frame: bytes):
         weight_raw = struct.unpack('>I', b'\x00' + payload[5:8])[0]
         imp_words = struct.unpack('>10H', payload[10:30])
         imp_ohms = [w / 10.0 for w in imp_words]
+        # Layout: slots 0-4 are frequency 1, slots 5-9 the SAME segments at
+        # frequency 2 (NOT interleaved - see README section 10).
+        # Order: [trunk, L arm, R arm, L leg, R leg]. Arms confirmed against the
+        # app's own segmental figures; leg left/right is inferred from the
+        # arms' ordering and is NOT independently verified.
+        res['segments'] = {
+            name: (imp_ohms[i], imp_ohms[i + 5])
+            for i, name in enumerate(["trunk", "arm_left", "arm_right",
+                                      "leg_left", "leg_right"])
+        }
         dev_id = payload[30:34]
         res['timestamp'] = ts
         res['weight_kg'] = weight_raw / 1000.0

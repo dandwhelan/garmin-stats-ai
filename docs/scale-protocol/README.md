@@ -281,3 +281,75 @@ every captured `C0`/`C1`/`B6`/`B0` frame **byte-exactly**.
   Now easy to settle: trigger a sweep, then read the app's per-limb figures.
 * Validating `[15:35]` against `scales/composition.py` to reproduce the app's
   body-fat / water / muscle figures.
+
+
+---
+
+## 10. Segment mapping — left/right resolved (2026-09-15)
+
+Final layout of the ten u16 values at `[15:35]`, `/10` = ohms:
+
+| Slot | Segment | Confidence |
+|------|---------|------------|
+| 0 / 5 | Trunk | **confirmed** (20-29 Ω vs 240-320 Ω for limbs) |
+| 1 / 6 | **LEFT arm** | **confirmed** (see below) |
+| 2 / 7 | **RIGHT arm** | **confirmed** |
+| 3 / 8 | LEFT leg | *inferred from L-before-R convention, NOT measured* |
+| 4 / 9 | RIGHT leg | *inferred* |
+
+Slots `0-4` are frequency 1, slots `5-9` the same segments at frequency 2.
+
+### How the arms were resolved
+
+Lower impedance means more muscle and less fat. Slot 1 is lower than slot 2 in
+**all four** blocks ever captured (17:29, 19:16, 21:43, 21:52), and the Fitdays
+app reports the left arm as more muscular and leaner in **both** independent
+sessions:
+
+| | L arm | R arm |
+|---|---|---|
+| muscle 20:20 | 108.6 % | 107.4 % |
+| muscle 21:55 | 109.3 % | 108.0 % |
+| fat 20:20 | 17.8 % | 22.5 % |
+| fat 21:55 | 15.9 % | 19.4 % |
+
+Both metrics, both sessions, agree. The ~3.5 pp fat gap is far outside noise.
+
+### Why the legs are NOT resolved
+
+Slot 3 < slot 4 consistently, so the ordering is stable — but there is no
+asymmetry to correlate it against. App leg muscle is identical (114.4 % /
+114.4 %) and leg fat *flips direction* between sessions (69.1/68.9, then
+67.2/67.3). The left/right leg labels are therefore an assumption carried over
+from the arms' L-before-R ordering.
+
+**To settle it properly:** take a measurement with a deliberate unilateral
+asymmetry (e.g. a thick sock on one foot to raise that leg's contact
+impedance), and check which slot moves.
+
+### Reference pairing used
+
+Pi-triggered sweep 21:52:45, 72.000 kg, block
+`00de0bc80c5b0ada0b2a00c30a4a0ade097b09c8`:
+
+```
+Trunk      22.2 /  19.5 Ω
+L arm     301.6 / 263.4 Ω
+R arm     316.3 / 278.2 Ω
+L leg     277.8 / 242.7 Ω   (left/right inferred)
+R leg     285.8 / 250.4 Ω
+```
+
+App for the corresponding reading (158.7 lb = 71.99 kg): body fat 9.4 %,
+water 66.5 %, muscle mass 134.3 lb, bone 9.7 lb, visceral 1.0, BMR 1780 kcal,
+body age 35.
+
+> Caveat: the app timestamped that reading 21:51 against the sweep's 21:52:45.
+> The weights match to 0.01 kg and the arm asymmetry is a stable anatomical
+> fact rather than a per-measurement artefact, so the mapping conclusion holds
+> either way — but this specific row may not be the exact same weigh-in.
+
+### Remaining
+
+Validate `[15:35]` against `scales/composition.py` — the app figures above give
+a full reference row to check the formulas against.
