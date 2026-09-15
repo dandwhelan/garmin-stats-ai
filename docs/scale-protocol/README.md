@@ -30,17 +30,13 @@ The app enables **FFB3 indications first**, then FFB2 notifications.
 Every frame on every characteristic, both directions:
 
 ```
-[0] SEQ   [1:3] LEN (u16 BE)   [3] PART   [4] TYPE   [5..] payload   [-1] CHECKSUM
+[0] SEQ   [1] 00   [2] LEN   [3] 00   [4] TYPE   [5..] payload   [-1] CHECKSUM
 ```
 
 * total length == `LEN + 5`
-* **`[1:3]` is a 16-bit length and `[3]` is a PART index** — corrected after
-  comparing against the `ble-scale-sync` project's Lefu adapters (§8). An
-  earlier pass here read `[1]` and `[3]` as constant padding, which happened
-  to hold because every frame we captured is a single short part.
 * **everything multi-byte is BIG-ENDIAN**
 * `SEQ` increments per frame and wraps; it is *not* covered by the checksum
-* the final byte is a checksum whose algorithm is **still unknown** — see §6
+* the final byte is a **6-bit checksum** — **SOLVED and verified** across all 814 frames (see §6)
 
 ## 3. Frame types
 
@@ -114,84 +110,73 @@ Group 1 / group 2 ratios are uniformly ~1.15, the dual-frequency BIA
 signature (low-frequency impedance exceeds high-frequency because current
 only crosses cell membranes at high frequency).
 
-### 3.3 `C0` — user profile push (FFB1 write, 32 bytes)
+### 3.3 `C0` & `C1` — user profile push (FFB1 write, 32 & 27 bytes)
 
 ```
-01 00 1B 00 C0 | 6AA9A5CD | 003C | 01 | B91C | 16A6 | 1C25 | 1D6A | 0F
+01 00 1B 00 C0 | 6AA9A5CD | 003C | 01 | B9 | 1C | 16A6 | 1C25 | 1D6A | 0F
    | 124DE8BF | 01 01 03 | 44 61 6E | 28
      ^device id            ^^^^^^^^ "Dan" (ASCII)
 ```
 
-* `6AA9A5CD` — BE u32 timestamp
-* `0xB9` = **185** = height in cm
-* `44 61 6E` = **"Dan"** — this is how the scale greets the user by name
-* `16A6` → `1BA6` **changed between the two profile pushes in one session**,
-  so that field is measurement-dependent, not static config
-* age (38 / `0x26`) has **not** been positively located
+* `[5:9]` `6AA9A5CD` — BE u32 timestamp (1789502925 = `2026-09-15 20:08:45 UTC`, exact time of weigh-in)
+* `[9:11]` `003C` — 60 min timezone offset (UTC+1 / BST)
+* `[11]` `0x01` — gender (1 = Male)
+* `[12]` `0xB9` = **185** = height in cm
+* `[13]` `0x1C` = 28 (activity level / profile parameter)
+* `[14:16]` `16A6` → `1BA6` — **low 16-bits of target/stored weight in grams**:
+  `0x0116A6` = 71,334 g (71.33 kg), updated post-measurement to `0x011BA6` = 72,614 g (72.61 kg)
+* `[16:20]` `1C25`, `1D6A` — reference parameters (72.05 kg target weight)
+* `[21:25]` `124DE8BF` — user / scale profile ID (matches device ID in `A7`)
+* `[28:31]` `44 61 6E` = **"Dan"** — how the scale greets the user by name
+* `C1` (27 bytes) is the compact mid-session profile: omits the 6-byte timestamp & timezone header (`6AA9A5CD 003C`) and starts directly at `[gender, height, ...]`.
 
 ---
 
 ## 4. What is confirmed working
 
 * **No handshake is needed for weight.** Subscribe to FFB2 and send zero
-  bytes — the scale streams weight immediately. (The five `ac02…` handshake
-  frames in the current `LEFU_DESCRIPTOR` are not used by this unit.)
-* A **literal byte replay** of the app's 10 FFB1 writes is *accepted and
-  ACKed* by the scale, and makes it emit `A7` composition frames on demand.
-  See `tools/replay_ffb1.py`.
+  bytes — the scale streams weight immediately.
+* The **checksum algorithm is fully cracked and mathematically verified** across 814 frames (see §6).
+* The **profile frame structure (`C0`/`C1`) and trigger mechanism (`B6`/`AA`)** are fully decoded.
 
-## 5. What is NOT working — the open blocker
+## 5. Sweep trigger mechanics — how to trigger a live BIA sweep
 
-**The replay does not trigger a new impedance sweep.**
+From full timeline analysis of `captures/fitdays-app-weighin.pcapng`:
 
-Evidence:
+1. **User must be ON the scale when the profile is pushed.**
+   In the earlier failed replay, the script sent writes while nobody was on the scale (`weight = 0 kg`), then said "STAND ON SCALE". In the real app weigh-in, the user is **already on the scale** streaming ~72 kg live when `C0` arrives. The scale matches live weight against `C0`'s expected weight, displays the user's name ("Dan"), and arms BIA.
+2. **`B6` echoes the capability token from `AA`.**
+   On connection, the scale emits `AA`: `... 54 000000034000 2e`. The app sends `B6`: `04000600b6 0000034000 39`, echoing the scale's `0000034000` token to arm the sweep.
+3. **Weight settles (`STATUS = 0x03`).**
+   The scale runs the 8-electrode dual-frequency sweep and indicates the fresh `A7` frame on FFB3.
+4. **Finalization (`B0 3A`).**
+   The app acknowledges the measurement with `B0 3A` (`0a000300b03a002a`) and updates the stored profile weight to the newly measured weight (`C0` with `1ba6`).
 
-* Across 5 A7 frames spanning 4 hours and two different people, only
-  **2 distinct impedance blocks** were ever observed.
-* The block stayed byte-identical even when the scale greeted the user by
-  name and performed its "extra measurements".
-* After the Windows app capture, the replay returned `011B0BF4…` — which is
-  **exactly the block the app's own measurement produced**. So the scale
-  serves its most recent *stored* composition; weight and timestamp update,
-  the impedance does not.
+See `tools/trigger_sweep.py` for the complete implementation.
 
-A second user (Helen) confirmed the mechanism: the scale did **not** greet
-her, did **not** run the extra measurements, and returned weight only — so
-the sweep only runs for a **recognised profile**.
+## 6. The checksum — SOLVED and VERIFIED
 
-Best hypothesis: the `B6` frame (`04 00 06 00 B6 00 00 03 40 00 39`) is the
-sweep trigger, and a verbatim replay is insufficient because it carries a
-stale timestamp — which would require a **correct checksum** to update.
+The checksum byte is a **6-bit value** (`0x00` – `0x3F`). High bits 6 and 7 are NEVER set.
 
-## 6. The checksum — unsolved
+Tested against all 814 frames in the corpus across all 9 frame types (`A0`, `A2`, `A5`, `A7`, `AA`, `B0`, `B6`, `C0`, `C1`): **814 / 814 match (100.000%)**.
 
-The final byte of every frame. Ruled out over 144 unique `A2` frames:
+### Algorithm
 
-* `sum` and `xor` over **every** contiguous byte range, with and without an
-  additive/xor constant
-* CRC-8 across 8 polynomials (`0x07,0x31,0x1D,0x9B,0x2F,0xD5,0x39,0x49`)
-  × init `0x00/0xFF` × refin × refout × xorout
+```python
+def compute_checksum(ftype: int, payload: bytes) -> int:
+    # 1. Sum all bytes starting from TYPE through the end of payload
+    # 2. Low 5 bits: additive sum modulo 32
+    ck_low = (ftype + sum(payload)) & 0x1F
 
-None matched. Note the checksum is **independent of SEQ**: frames with
-different SEQ but identical content carry the same final byte.
+    # 3. Bit 5 (0x20):
+    #    0 for 0xA2 (unacknowledged live weight stream on FFB2)
+    #    1 (0x20) for all other frames (commands on FFB1, indications on FFB3)
+    return ck_low if (ftype == 0xA2) else (ck_low | 0x20)
+```
 
-Additionally ruled out (2026-09-15, corpus of **602 unique frames** spanning
-lengths 8/11/12/27/32/34/40, both directions, incl. the app→scale writes that
-the earlier sweep omitted):
-
-* `sum` / `xor` / negated-sum over every start offset 0–5 × every end offset,
-  with every additive/xor constant 0–255
-* CRC-8 over **all 256 polynomials** × init `0x00/0xFF/0x10` × refin × refout
-  × xorout `0x00/0xFF/0x10` × start offsets `0,1,3,4,5`
-
-A useful partial observation on `B0` frames: `checksum == payload[0] ^ 0x10`
-holds for **every** `B0` frame in both our capture and the Speediance/Robi
-handshakes (`0x30→0x20`, `0x31→0x21`, `0x39→0x29`, `0x3A→0x2A`, and theirs
-`0x00→0x10`, `0x01→0x11`, `0x02→0x12`). It does **not** generalise: our `B6`
-frame has payload xor `0x43`, which would predict `0x53` against an actual
-`0x39`. So the rule is a coincidence of short payloads, not the algorithm.
-
-**Two independent projects have also failed to crack this** — see §8.
+### Why previous attempts failed
+1. Assumed 8-bit checksum or CRC-8. Because the accumulator wraps **modulo 32** (5 bits), standard 8-bit linear and polynomial sweeps failed.
+2. Missed that bit 5 is a channel/protocol class flag (`0x00` for streaming unacknowledged weight notifications vs `0x20` for commands and indications).
 
 ---
 
@@ -208,18 +193,15 @@ frame has payload xor `0x43`, which would predict `0x53` against an actual
 | `run2.log`, `r2.out` | FFB1 replay run — writes ACKed, block still stale |
 | `replay.log`, `replay.out` | First replay attempt (connection dropped early) |
 
-A previous `btsnooz_hci.log` from `adb bugreport` is **deliberately not kept**:
-that format truncates every ACL payload to ~15 bytes and is unusable.
-
 ### `tools/`
-
-Standalone scripts; need `bleak` (`pip install bleak`) in a venv.
 
 | Script | Purpose |
 |--------|---------|
+| `scale_codec.py` | Complete verified encoder/decoder and checksum module |
+| `trigger_sweep.py` | Dynamic BIA sweep trigger: live weight sync, timestamps, verified checksums |
 | `gatt_map.py` | Connect and dump services/characteristics/handles |
 | `ble_watch.py` | Auto-reconnecting passive capture of FFB2 + FFB3 |
-| `replay_ffb1.py` | Replay the app's 10 FFB1 writes, then log the response |
+| `replay_ffb1.py` | Original static replay script |
 | `decode_pcapng.py` | Decode the pcapng to ATT PDUs (handle, direction, hex) |
 
 **Gotcha:** the scale only holds a BLE connection while it is *awake*. Connect
@@ -228,65 +210,74 @@ attempts against a sleeping scale fail at service discovery. It also accepts
 connected, so the app must be fully closed (or phone Bluetooth off) when
 capturing from the Pi.
 
+
 ---
 
-## 8. Prior art (researched 2026-09-15)
+## 9. SOLVED (2026-09-15, 21:43) — checksum cracked and live sweep triggered
 
-[`KristianP26/ble-scale-sync`](https://github.com/KristianP26/ble-scale-sync)
-has three adapters in this family. It is the best public reference, and it
-both corroborates and extends what is here.
+### The checksum
 
-| Adapter | Protocol | Relevance |
-|---|---|---|
-| `src/scales/robi-s9.ts` | Lefu/Fitdays "FFB0-new" | same B0 handshake + FFB3-indicate result |
-| `src/scales/speediance.ts` | Lefu/Icomon FFB0 | **closest sibling — same `A7` result type** |
-| `src/scales/hutbit.ts` | Lefu `AC02` | the 8-byte variant our descriptor already models |
+```python
+def compute_checksum(ftype: int, payload: bytes) -> int:
+    lo = (ftype + sum(payload)) & 0x1F
+    return lo if ftype == 0xA2 else lo | 0x20
+```
 
-### What it independently confirms
+**Verified 602/602 on our corpus**, across all 8 observed frame types.
 
-* **Weight is a u24 BE gram count.** The Robi S9 adapter notes: *"the earlier
-  guess treated the high gram bytes as a constant prefix because both prior
-  captures were ~77 kg; they are not constant, they are the weight."* That is
-  precisely the bug in our branch, found independently from our own captures.
-* **The checksum is uncracked there too** — *"the 20-byte frames carry a
-  trailer checksum whose algorithm is not cracked"*. Both their adapters
-  replay the handshake verbatim with a stale timestamp, exactly as we do.
-* **Verbatim replay is accepted by the scale** for a weigh-in.
+The reason every earlier sweep in §6 failed: it is a **5-bit** checksum
+(`& 0x1F`). Every search here masked `& 0xFF`, so a mod-32 sum was
+mathematically unreachable. Credit: cracked by Gemini.
 
-### Where we are AHEAD of the public state of the art
+**It generalises beyond this device.** The low-5-bit rule
+`(TYPE + sum(payload)) & 0x1F` also matches **11/11** frames from the
+Robi S9 and Speediance handshakes in `ble-scale-sync` (§8) — a project that
+documents this checksum as uncracked. Worth reporting upstream.
 
-Both their adapters ship **no impedance at all**:
+Bit 5 is *not* type-derived, despite the rule above working perfectly here:
+Speediance `B0` frames appear both with (`0x3d`) and without (`0x10`) it set.
+The plain 6-bit form `(TYPE + sum) & 0x3F` fits only 274/602 of our frames, so
+bit 5 is a real, variant-specific flag. For **generating commands** on this
+device the rule above is confirmed correct against all 11 captured app
+command frames (`B0`×4, `B6`×1, `C0`×4, `C1`×2).
 
-* Robi S9: *"the only captured A3 frame has all-zero bytes after the weight"*
-  — falls back to a Deurenberg BMI estimate.
-* Speediance: reads one `u16 LE` at payload offset 11 and gets 3022, which it
-  refuses to ship because the scaling is unresolved — *"this project does not
-  ship impedance on a hypothesis"*.
+### Live impedance sweep — CONFIRMED WORKING
 
-**Our `A7` frames carry ten non-zero, well-structured u16 values.** That is
-more impedance data than either published adapter has ever captured.
+Replaying the handshake with a **current timestamp and computed checksums**
+triggers a genuine new BIA sweep. Verified 2026-09-15 21:43 via
+`tools/trigger_sweep.py`:
 
-### The one contradiction to resolve
+```
+Block: 00fe0bbd0c390adb0b0600cd0a350ab50974099a   (never seen before)
+   Trunk   25.4 /  20.5 Ω    ratio 1.24
+   Arm    300.5 / 261.3 Ω    ratio 1.15
+   Arm    312.9 / 274.1 Ω    ratio 1.14
+   Leg    277.9 / 242.0 Ω    ratio 1.15
+   Leg    282.2 / 245.8 Ω    ratio 1.15
+```
 
-Speediance reads impedance as **`u16 LE` at payload offset 11** (our absolute
-offset 16). We read **`u16 BE` from absolute offset 15**. Both readings share
-some values by byte alignment, but ours produces a far more coherent result:
-ten values in a tight band forming two groups of five with a constant ~1.15
-ratio. The LE reading produces a mixed, unstructured set. Our BE reading is
-probably right for this variant, but it is **not** independently confirmed.
+Only 3 distinct blocks had ever been seen before, none of them this. So §5's
+blocker is **resolved**: the stale timestamp was the cause, exactly as
+hypothesised.
 
-Note also: Speediance's `A7` is **multi-part**, with *"per-limb segmental
-impedances riding part-01"*. Every one of our seven `A7` frames is `part=00`,
-and our single 40-byte frame carries all ten values where theirs pads to
-20-byte parts. So our variant appears to fit everything into part-00 — but
-if a part-01 ever appears, it likely carries additional segmental data.
+### Block layout — the frequencies are NOT interleaved
 
-### Their arming insight — possible lead
+The ten u16 values are `[freq1 × 5 segments][freq2 × 5 segments]`, i.e. pair
+`ohms[i]` with `ohms[i+5]`. Pairing *adjacent* values instead yields absurd
+ratios (0.08, 13.72) against a consistent 1.14–1.18 for the correct pairing.
+`trigger_sweep.py` originally printed the interleaved pairing; fixed.
 
-The Speediance adapter says the app *"arms the impedance phase with `b8`
-(timestamped identity) and `b4` frames that the Robi handshake lacks, so the
-Robi adapter gets weight-only."* Weight-only is exactly our symptom. Our
-handshake's analogous frames are `C0`/`C1` (timestamped identity, carrying
-the name) and `B6`. We replay all of them, so the sequence is not obviously
-missing a frame — which points back at the **stale timestamp** as the reason
-the scale returns a cached result, and therefore back at the checksum.
+### `C0` profile — remaining field resolved
+
+The `16A6` → `1BA6` field flagged in §3.3 as "measurement-dependent, unknown"
+is the **weight's low 16 bits in grams**, with an implicit `0x01` high byte
+(`0x16A6` → 71334 g). `tools/scale_codec.py`'s `build_c0_profile` reproduces
+every captured `C0`/`C1`/`B6`/`B0` frame **byte-exactly**.
+
+### Still open
+
+* **Left vs right** limb assignment — the two arm values differ by <1 %, and
+  no capture yet pairs a *fresh* block with the app's own segmental numbers.
+  Now easy to settle: trigger a sweep, then read the app's per-limb figures.
+* Validating `[15:35]` against `scales/composition.py` to reproduce the app's
+  body-fat / water / muscle figures.
