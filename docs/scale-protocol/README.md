@@ -30,10 +30,14 @@ The app enables **FFB3 indications first**, then FFB2 notifications.
 Every frame on every characteristic, both directions:
 
 ```
-[0] SEQ   [1] 00   [2] LEN   [3] 00   [4] TYPE   [5..] payload   [-1] CHECKSUM
+[0] SEQ   [1:3] LEN (u16 BE)   [3] PART   [4] TYPE   [5..] payload   [-1] CHECKSUM
 ```
 
 * total length == `LEN + 5`
+* **`[1:3]` is a 16-bit length and `[3]` is a PART index** — corrected after
+  comparing against the `ble-scale-sync` project's Lefu adapters (§8). An
+  earlier pass here read `[1]` and `[3]` as constant padding, which happened
+  to hold because every frame we captured is a single short part.
 * **everything multi-byte is BIG-ENDIAN**
 * `SEQ` increments per frame and wraps; it is *not* covered by the checksum
 * the final byte is a checksum whose algorithm is **still unknown** — see §6
@@ -171,9 +175,23 @@ The final byte of every frame. Ruled out over 144 unique `A2` frames:
 None matched. Note the checksum is **independent of SEQ**: frames with
 different SEQ but identical content carry the same final byte.
 
-A useful partial observation on `B0` frames: payload `0x30,0x31,0x39,0x3A`
-map to checksums `0x20,0x21,0x29,0x2A` — exactly `payload − 0x10`. That does
-not generalise to the longer frames.
+Additionally ruled out (2026-09-15, corpus of **602 unique frames** spanning
+lengths 8/11/12/27/32/34/40, both directions, incl. the app→scale writes that
+the earlier sweep omitted):
+
+* `sum` / `xor` / negated-sum over every start offset 0–5 × every end offset,
+  with every additive/xor constant 0–255
+* CRC-8 over **all 256 polynomials** × init `0x00/0xFF/0x10` × refin × refout
+  × xorout `0x00/0xFF/0x10` × start offsets `0,1,3,4,5`
+
+A useful partial observation on `B0` frames: `checksum == payload[0] ^ 0x10`
+holds for **every** `B0` frame in both our capture and the Speediance/Robi
+handshakes (`0x30→0x20`, `0x31→0x21`, `0x39→0x29`, `0x3A→0x2A`, and theirs
+`0x00→0x10`, `0x01→0x11`, `0x02→0x12`). It does **not** generalise: our `B6`
+frame has payload xor `0x43`, which would predict `0x53` against an actual
+`0x39`. So the rule is a coincidence of short payloads, not the algorithm.
+
+**Two independent projects have also failed to crack this** — see §8.
 
 ---
 
@@ -209,3 +227,66 @@ attempts against a sleeping scale fail at service discovery. It also accepts
 **one connection at a time** — the phone app and the Pi cannot both be
 connected, so the app must be fully closed (or phone Bluetooth off) when
 capturing from the Pi.
+
+---
+
+## 8. Prior art (researched 2026-09-15)
+
+[`KristianP26/ble-scale-sync`](https://github.com/KristianP26/ble-scale-sync)
+has three adapters in this family. It is the best public reference, and it
+both corroborates and extends what is here.
+
+| Adapter | Protocol | Relevance |
+|---|---|---|
+| `src/scales/robi-s9.ts` | Lefu/Fitdays "FFB0-new" | same B0 handshake + FFB3-indicate result |
+| `src/scales/speediance.ts` | Lefu/Icomon FFB0 | **closest sibling — same `A7` result type** |
+| `src/scales/hutbit.ts` | Lefu `AC02` | the 8-byte variant our descriptor already models |
+
+### What it independently confirms
+
+* **Weight is a u24 BE gram count.** The Robi S9 adapter notes: *"the earlier
+  guess treated the high gram bytes as a constant prefix because both prior
+  captures were ~77 kg; they are not constant, they are the weight."* That is
+  precisely the bug in our branch, found independently from our own captures.
+* **The checksum is uncracked there too** — *"the 20-byte frames carry a
+  trailer checksum whose algorithm is not cracked"*. Both their adapters
+  replay the handshake verbatim with a stale timestamp, exactly as we do.
+* **Verbatim replay is accepted by the scale** for a weigh-in.
+
+### Where we are AHEAD of the public state of the art
+
+Both their adapters ship **no impedance at all**:
+
+* Robi S9: *"the only captured A3 frame has all-zero bytes after the weight"*
+  — falls back to a Deurenberg BMI estimate.
+* Speediance: reads one `u16 LE` at payload offset 11 and gets 3022, which it
+  refuses to ship because the scaling is unresolved — *"this project does not
+  ship impedance on a hypothesis"*.
+
+**Our `A7` frames carry ten non-zero, well-structured u16 values.** That is
+more impedance data than either published adapter has ever captured.
+
+### The one contradiction to resolve
+
+Speediance reads impedance as **`u16 LE` at payload offset 11** (our absolute
+offset 16). We read **`u16 BE` from absolute offset 15**. Both readings share
+some values by byte alignment, but ours produces a far more coherent result:
+ten values in a tight band forming two groups of five with a constant ~1.15
+ratio. The LE reading produces a mixed, unstructured set. Our BE reading is
+probably right for this variant, but it is **not** independently confirmed.
+
+Note also: Speediance's `A7` is **multi-part**, with *"per-limb segmental
+impedances riding part-01"*. Every one of our seven `A7` frames is `part=00`,
+and our single 40-byte frame carries all ten values where theirs pads to
+20-byte parts. So our variant appears to fit everything into part-00 — but
+if a part-01 ever appears, it likely carries additional segmental data.
+
+### Their arming insight — possible lead
+
+The Speediance adapter says the app *"arms the impedance phase with `b8`
+(timestamped identity) and `b4` frames that the Robi handshake lacks, so the
+Robi adapter gets weight-only."* Weight-only is exactly our symptom. Our
+handshake's analogous frames are `C0`/`C1` (timestamped identity, carrying
+the name) and `B6`. We replay all of them, so the sequence is not obviously
+missing a frame — which points back at the **stale timestamp** as the reason
+the scale returns a cached result, and therefore back at the checksum.

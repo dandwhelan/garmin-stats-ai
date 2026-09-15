@@ -35,25 +35,35 @@ likely why nothing fit.
 
 ## Step B2 — search space
 
-Already ruled out over 144 `A2` frames (do not repeat):
+Already ruled out over a **602-frame** corpus (lengths 8/11/12/27/32/34/40,
+both directions, incl. app→scale writes). **Do not repeat any of this:**
 
-* `sum` / `xor` over every contiguous range, ± additive or xor constant
-* CRC-8 over polys `0x07,0x31,0x1D,0x9B,0x2F,0xD5,0x39,0x49`
-  × init `0x00/0xFF` × refin × refout × xorout
+* `sum` / `xor` / negated-sum over every start offset 0–5 × every end offset,
+  with every additive/xor constant 0–255
+* CRC-8 over **all 256 polynomials** × init `0x00/0xFF/0x10` × refin × refout
+  × xorout `0x00/0xFF/0x10` × start offsets `0,1,3,4,5`
+
+Two other projects have also failed on this checksum (README §8), so treat it
+as genuinely hard rather than something a quick sweep will catch.
 
 Try next, in rough order of likelihood:
 
-1. **Two's complement / negated sum**: `(0x100 - sum(range)) & 0xFF`, and
-   `(sum + LEN) & 0xFF`, `(sum + TYPE) & 0xFF`
-2. **Sum with the SEQ byte explicitly excluded** — the checksum is known to be
-   SEQ-independent, so any range including `[0]` is wrong by construction.
-   Constrain the search to ranges starting at index ≥ 1.
-3. **Nibble-wise / BCD** schemes — `B0` frames show `payload − 0x10`
-   (`0x30→0x20`, `0x39→0x29`), which smells like a nibble operation
-4. **CRC-8 with a non-standard poly** — brute force all 256 polys × init ×
-   refin/refout/xorout. 256×256×2×2×2 = 512k combos, seconds in C, fine in
-   Python over ~20 frames
-5. **Sum of a *subset*** — e.g. payload only (`[5:-1]`), or `[4:-1]`
+1. **Non-contiguous / subset sums** — the contiguous space is exhausted. Try
+   e.g. payload-only excluding the timestamp, or every-other-byte.
+2. **CRC-16 truncated to 8 bits** (take the low or high byte). Not yet tried.
+3. **A table-driven vendor checksum** — Lefu firmware is nRF-based; a lookup
+   table rather than a polynomial would defeat every sweep run so far.
+4. **Decompile the Fitdays APK.** Given two projects and an exhaustive
+   numerical search have all failed, static analysis of the app is now the
+   *most likely* route to succeed. Pull the APK, decompile (jadx), and search
+   for the FFB1 write path and its checksum helper. This is the recommended
+   next move, not another brute-force sweep.
+
+Note the one partial rule found: `checksum == payload[0] ^ 0x10` holds for
+**every** `B0` frame across both our capture and two other projects' Lefu
+handshakes. It fails on `B6` (predicts `0x53`, actual `0x39`), so it is a
+short-payload coincidence — but it may hint the real algorithm is
+xor-with-a-derived-key rather than a polynomial.
 
 Validate any candidate against **all** frame types and both directions, not
 just one type. A rule that fits only `A2` is almost certainly a coincidence.
