@@ -261,6 +261,24 @@
       </div>
     </section>
 
+    <section class="chart-section" id="scale-seg-muscle-section" style="display:none">
+      <div class="chart-header">
+        <h2>Segmental Muscle <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> Muscle in each arm, leg and the trunk as a percentage of the standard for your height and weight, from Fitdays&rsquo; own body-composition model applied to the scale&rsquo;s 10 segmental impedance readings (two frequencies across five body segments). Above 100% means more muscle than standard. Garmin Connect cannot store per-limb data, so this history lives only here. Bio-impedance estimates — compare against your own trend, and note hydration and recent exercise shift them.</span></span></h2>
+      </div>
+      <div class="chart-container">
+        <canvas id="scale-seg-muscle-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section" id="scale-seg-fat-section" style="display:none">
+      <div class="chart-header">
+        <h2>Segmental Fat <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> Fat in each arm, leg and the trunk as a percentage of the standard for your height and weight, from Fitdays&rsquo; body-composition model. The vendor app labels segmental fat an <b>inferred</b> value — it is derived from the impedance readings, not measured per limb — so treat left/right differences of a few points as noise. Kept locally; Garmin Connect has no field for it.</span></span></h2>
+      </div>
+      <div class="chart-container">
+        <canvas id="scale-seg-fat-chart"></canvas>
+      </div>
+    </section>
+
     <section class="chart-section">
       <div class="chart-header">
         <h2>Behavior Impact (last 90 days)</h2>
@@ -832,7 +850,7 @@
 
         <div class="weighin-form" id="weighin-form">
           <h2>Log a Weigh-in <span class="info-icon" tabindex="0">i<span class="info-tooltip">Uploads straight to <b>your Garmin Connect account</b> using the same login the fetcher already holds — nothing goes through a third-party service. The reading syncs back onto the dashboard after your watch next syncs (often an hour or more). Only weight is required; fill in whatever your scale shows.</span></span></h2>
-          <p class="journal-hint">Scan your Fitdays/Lefu 8-electrode scale over Bluetooth to fill the form automatically, or type in what your smart scale shows. It's sent to Garmin Connect and appears here after the next sync.</p>
+          <p class="journal-hint">Press <b>Scan scale</b>, pick your scale, then stand on it barefoot and keep still until it finishes — it fills the form with Fitdays&rsquo; full body-composition figures and saves the per-limb breakdown locally. Or type in what your smart scale shows. It's sent to Garmin Connect and appears here after the next sync.</p>
           <div class="weighin-scan">
             <div class="weighin-grid weighin-profile">
               <label>Height (cm) <input type="number" id="wi-height" step="0.5" min="80" max="230" placeholder="180"></label>
@@ -926,6 +944,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260829a"></script>
+  <script src="/static/app.js?v=20260915a"></script>
 </body>
 </html>

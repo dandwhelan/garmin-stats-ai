@@ -25,6 +25,14 @@ dev = [
     "httpx>=0.27",
 ]
 
+# Runs Fitdays' own body-composition model (scales/wla37.py) under emulation.
+# Also needs the proprietary libICBodyFatAlgorithms.so in <repo>/vendor/ or at
+# WLA37_SO_PATH — it is never committed.
+scale-engine = [
+    "unicorn>=2.1",
+    "pyelftools>=0.31",
+]
+
 [project.scripts]
 garmin-insights = "garmin_insights.cli:main"
 garmin-web = "garmin_insights.web.app:run_server"
