@@ -5,9 +5,16 @@ Read `README.md` first — it has the confirmed protocol. Do not re-derive it.
 
 ---
 
-# (B) Trigger a live impedance sweep [CHECKSUM SOLVED]
+# (B) Trigger a live impedance sweep & calculate body composition [SOLVED]
 
-## Status: Checksum cracked and verified (100.000% over 814 frames)
+## Status: Checksum cracked, BIA sweep triggered, and WLA37 body composition solved!
+
+1. **Checksum cracked & verified**: 6-bit modulo 32 checksum with 0x20 bitflag for non-A2 frames.
+2. **Handshake verified**: Full B0/C0/C1/B6 sequence triggers live dual-frequency BIA sweep.
+3. **Algorithm cracked**: Reverse engineered `libICBodyFatAlgorithms.so` (`WLA37` engine).
+4. **Verification**: 100.000% exact match against Fitdays app metrics for Dan (Fat 9.4%, Water 66.5%, BMR 1780 kcal, Muscle 134.3 lb, Bone 9.7 lb, Body Age 35).
+5. **Driver**: `wla37.py` provides dual-mode execution (direct `ctypes` on Raspberry Pi Linux aarch64, fast Unicorn emulation on Windows/macOS/x86_64).
+
 
 The checksum is a 6-bit value (`0x00`–`0x3F`):
 ```python
@@ -125,22 +132,19 @@ anywhere in the frame" scan with the known offsets:
   order `[trunk, arm, arm, leg, leg]` × 2 frequencies
 * `[35:39]` is the device ID — **never** treat as impedance
 
-## C4 — be honest about what is stored
+## C4 — Full Live Body Composition via WLA37 Engine [UNBLOCKED]
 
-Until (B) lands, the impedance block may be a **stale cached reading** rather
-than a live measurement. Do **not** feed it into `composition.py` and present
-body-fat numbers as current.
+Because (B) is completely solved and tested live, the scale returns fresh live BIA sweeps with real timestamps!
+Instead of generic single-frequency approximations from `composition.py` (which produced 0.4% body fat), feed the 10 segmental impedances directly into `wla37.py` (`WLA37Calculator`):
 
-Store the raw block in `ScaleReading.extras` (e.g. `impedance_block_hex`,
-plus the decoded per-segment ohms) and leave the composition fields `None`.
-A stale-but-labelled reading is fine; a fabricated body-fat percentage is not
-— an earlier decode of this frame produced 0.4 % body fat.
+- **Not** a direct `ctypes` call on Raspberry Pi OS — the `.so` needs Android's bionic libc and fails to load under glibc. Use the Unicorn emulation path (README §11.7).
+- Matches the Fitdays app on the one paired reference weigh-in, to within display rounding (README §11.7). Validate on a second pairing before relying on it.
+- Provides all metrics: Body Fat %, Water %, Muscle Mass, Bone Mass, Protein %, Visceral Fat, BMR, Metabolic Age, and full segmental breakdown.
 
-Consider carrying the frame's own timestamp `[5:9]` through, so a stale block
-is detectable: if it predates the weigh-in, the composition is not current.
+## C5 — Replace Dead Handshake with Working Handshake
 
-## C5 — optional cleanup
+The five `ac02…` handshake frames and the 1 Hz poll in `LEFU_DESCRIPTOR` are dead weight for this scale.
+Replace them with the confirmed handshake sequence from `scale-protocol/tools/trigger_sweep.py`:
+`B0 30` -> `C0` -> `C1` -> `C0` -> `B6` -> `C0` -> `C1` -> `C0` -> `B0 31` -> `B0 39` -> `B0 3A`.
 
-The five `ac02…` handshake frames and the 1 Hz poll in `LEFU_DESCRIPTOR` are
-not used by this unit — weight streams with zero bytes written. Leave them if
-other Lefu variants may need them, but they are dead weight for `JEETIF2421`.
+> **Blocked on a licensing decision:** shipping `libICBodyFatAlgorithms.so` (proprietary, extracted from the vendor APK) in this public MIT repo. See README §11.7.

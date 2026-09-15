@@ -160,3 +160,26 @@ def build_b0_cmd(seq: int, cmd: int) -> bytes:
     Builds B0 control requests (0x30, 0x31, 0x39, 0x3A).
     """
     return make_frame(seq, 0xB0, bytes([cmd & 0xFF, 0x00]))
+
+
+def compute_body_composition(
+    weight_kg: float,
+    impedances: list,
+    height_cm: float = 185,
+    age: int = 38,
+    sex: int = 1,
+    athlete: bool = True
+) -> dict:
+    """
+    Computes body composition from impedance ohms using WLA37 algorithm.
+    """
+    from wla37 import WLA37Calculator
+    calc = WLA37Calculator()
+    return calc.calculate(
+        weight_kg=weight_kg,
+        height_cm=height_cm,
+        sex=sex,
+        age=age,
+        impedances=impedances,
+        athlete=athlete
+    )

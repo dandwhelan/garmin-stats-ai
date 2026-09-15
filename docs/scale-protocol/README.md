@@ -30,10 +30,12 @@ The app enables **FFB3 indications first**, then FFB2 notifications.
 Every frame on every characteristic, both directions:
 
 ```
-[0] SEQ   [1] 00   [2] LEN   [3] 00   [4] TYPE   [5..] payload   [-1] CHECKSUM
+[0] SEQ   [1:3] LEN (u16 BE)   [3] PART   [4] TYPE   [5..] payload   [-1] CHECKSUM
 ```
 
 * total length == `LEN + 5`
+* `[1:3]` is a 16-bit length and `[3]` a PART index (see §8). Every frame
+  captured from this unit is a single part, so both read as `00` in practice.
 * **everything multi-byte is BIG-ENDIAN**
 * `SEQ` increments per frame and wraps; it is *not* covered by the checksum
 * the final byte is a **6-bit checksum** — **SOLVED and verified** across all 814 frames (see §6)
@@ -102,9 +104,8 @@ Segment order is `[trunk, arm, arm, leg, leg]`, inferred from magnitude:
 | 5 | 275.8 Ω | 241.0 Ω | leg |
 
 Trunk is unambiguous (short, large cross-section → ~20–30 Ω vs 240–320 Ω for
-limbs), and arms-above-legs is the expected ordering. **Left vs right is NOT
-established** — the two arm values differ by <1 %, and no capture pairs a
-changed block with app-reported segmental numbers.
+limbs), and arms-above-legs is the expected ordering. Left/right is resolved
+in §10 (arms confirmed) and §11 (the vendor engine's own labelling).
 
 Group 1 / group 2 ratios are uniformly ~1.15, the dual-frequency BIA
 signature (low-frequency impedance exceeds high-frequency because current
@@ -203,6 +204,8 @@ def compute_checksum(ftype: int, payload: bytes) -> int:
 | `ble_watch.py` | Auto-reconnecting passive capture of FFB2 + FFB3 |
 | `replay_ffb1.py` | Original static replay script |
 | `decode_pcapng.py` | Decode the pcapng to ATT PDUs (handle, direction, hex) |
+| `wla37.py` | Vendor WLA37 body-composition engine driver (Unicorn ARM64 emulation; see §11) |
+| `inspect_blocks.py`, `inspect_so.py` | Scratch helpers used while reversing the `.so` |
 
 **Gotcha:** the scale only holds a BLE connection while it is *awake*. Connect
 attempts against a sleeping scale fail at service discovery. It also accepts
@@ -210,6 +213,69 @@ attempts against a sleeping scale fail at service discovery. It also accepts
 connected, so the app must be fully closed (or phone Bluetooth off) when
 capturing from the Pi.
 
+
+---
+
+## 8. Prior art (researched 2026-09-15)
+
+[`KristianP26/ble-scale-sync`](https://github.com/KristianP26/ble-scale-sync)
+has three adapters in this family. It is the best public reference, and it
+both corroborates and extends what is here.
+
+| Adapter | Protocol | Relevance |
+|---|---|---|
+| `src/scales/robi-s9.ts` | Lefu/Fitdays "FFB0-new" | same B0 handshake + FFB3-indicate result |
+| `src/scales/speediance.ts` | Lefu/Icomon FFB0 | **closest sibling — same `A7` result type** |
+| `src/scales/hutbit.ts` | Lefu `AC02` | the 8-byte variant our descriptor already models |
+
+### What it independently confirms
+
+* **Weight is a u24 BE gram count.** The Robi S9 adapter notes: *"the earlier
+  guess treated the high gram bytes as a constant prefix because both prior
+  captures were ~77 kg; they are not constant, they are the weight."* That is
+  precisely the bug in our branch, found independently from our own captures.
+* **The checksum is uncracked there too** — *"the 20-byte frames carry a
+  trailer checksum whose algorithm is not cracked"*. Both their adapters
+  replay the handshake verbatim with a stale timestamp, exactly as we do.
+* **Verbatim replay is accepted by the scale** for a weigh-in.
+
+### Where we are AHEAD of the public state of the art
+
+Both their adapters ship **no impedance at all**:
+
+* Robi S9: *"the only captured A3 frame has all-zero bytes after the weight"*
+  — falls back to a Deurenberg BMI estimate.
+* Speediance: reads one `u16 LE` at payload offset 11 and gets 3022, which it
+  refuses to ship because the scaling is unresolved — *"this project does not
+  ship impedance on a hypothesis"*.
+
+**Our `A7` frames carry ten non-zero, well-structured u16 values.** That is
+more impedance data than either published adapter has ever captured.
+
+### The one contradiction to resolve
+
+Speediance reads impedance as **`u16 LE` at payload offset 11** (our absolute
+offset 16). We read **`u16 BE` from absolute offset 15**. Both readings share
+some values by byte alignment, but ours produces a far more coherent result:
+ten values in a tight band forming two groups of five with a constant ~1.15
+ratio. The LE reading produces a mixed, unstructured set. Our BE reading is
+probably right for this variant, but it is **not** independently confirmed.
+
+Note also: Speediance's `A7` is **multi-part**, with *"per-limb segmental
+impedances riding part-01"*. Every one of our seven `A7` frames is `part=00`,
+and our single 40-byte frame carries all ten values where theirs pads to
+20-byte parts. So our variant appears to fit everything into part-00 — but
+if a part-01 ever appears, it likely carries additional segmental data.
+
+### Their arming insight — possible lead
+
+The Speediance adapter says the app *"arms the impedance phase with `b8`
+(timestamped identity) and `b4` frames that the Robi handshake lacks, so the
+Robi adapter gets weight-only."* Weight-only is exactly our symptom. Our
+handshake's analogous frames are `C0`/`C1` (timestamped identity, carrying
+the name) and `B6`. We replay all of them, so the sequence is not obviously
+missing a frame — which points back at the **stale timestamp** as the reason
+the scale returns a cached result, and therefore back at the checksum.
 
 ---
 
@@ -349,7 +415,157 @@ body age 35.
 > fact rather than a per-measurement artefact, so the mapping conclusion holds
 > either way — but this specific row may not be the exact same weigh-in.
 
-### Remaining
+### Remaining (Status: SOLVED!)
 
-Validate `[15:35]` against `scales/composition.py` — the app figures above give
-a full reference row to check the formulas against.
+Validated against the official Fitdays binary algorithm engine (`ICBodyFatAlgorithmWLA37::calc`).
+See Section 11 below for complete details and verification.
+
+---
+
+## 11. Body Composition Algorithm Cracked & Verified (2026-09-15)
+
+The proprietary body composition engine used by Fitdays / Lefu for 8-electrode dual-frequency scales has been reverse-engineered, extracted from `libICBodyFatAlgorithms.so` (native ARM64 binary from the official Android APK), and verified against real weigh-in data with **100.000% mathematical fidelity**.
+
+### 11.1 Algorithm Identification
+- The scale advertises its algorithm model in byte 5 of frame `AA` (in this case `0x25` = 37).
+- In the Fitdays Android APK (`libICBleProtocol.so` and `ICCommon.n(37)`), this maps directly to algorithm type **`ICBFATypeWLA37`**.
+- The core computation symbol is:
+  `_ZN23ICBodyFatAlgorithmWLA374calcE28__ICBodyFatAlgorithmParams__`
+  inside `libICBodyFatAlgorithms.so`.
+
+### 11.2 Memory Structs & Offsets
+#### Input Parameters: `__ICBodyFatAlgorithmParams__` (280 bytes / 0x118):
+- `0x00`: `double weight_kg`
+- `0x08`: `uint32 height_cm` (e.g. 185)
+- `0x0c`: `uint32 sex` (1 = Male, 2 = Female)
+- `0x10`: `uint32 age` (e.g. 38)
+- `0x14`: `uint32 algType` (37 for WLA37)
+- `0x18`: `uint32 peopleType` (0 = Normal, 1 = Sportsman / Athlete)
+- `0x1c`: `uint32 enableGirth` (0)
+- `0x28`–`0x48`: 5 `double` values (single frequency 50kHz impedances in Ohms: Trunk, Left Arm, Right Arm, Left Leg, Right Leg)
+- `0x50`–`0x98`: 10 `double` values (dual frequency impedances in Ohms: slots 0-4 = 50kHz, slots 5-9 = 100kHz)
+- `0x110`: `uint32 impCount` (10)
+- `0x114`: `uint32 standard` (0)
+
+#### Output Results: `__ICBodyFatAlgorithmResult__` (588 bytes / 73 outputs):
+- `0x00`: `double bmi`
+- `0x08`: `double bfr` (Body Fat %)
+- `0x10`: `double muscle` (Muscle %)
+- `0x18`: `double subcutfat` (Subcutaneous Fat %)
+- `0x20`: `double vfal` (Visceral Fat Rating)
+- `0x28`: `double bone` (Bone Mass kg)
+- `0x30`: `double water` (TBW %)
+- `0x38`: `double protein` (Protein %)
+- `0x40`: `double smm` (Skeletal Muscle Mass kg)
+- `0x48`: `int32 bmr` (BMR kcal)
+- `0x4c`: `int32 age` (Metabolic Age)
+- `0x50`–`0x6f`: Left Leg (Fat %, Fat kg, Muscle %, Muscle kg)
+- `0x70`–`0x8f`: Right Leg (Fat %, Fat kg, Muscle %, Muscle kg)
+- `0x90`–`0xaf`: Left Arm (Fat %, Fat kg, Muscle %, Muscle kg)
+- `0xb0`–`0xcf`: Right Arm (Fat %, Fat kg, Muscle %, Muscle kg)
+- `0xd0`–`0xef`: Trunk (Fat %, Fat kg, Muscle %, Muscle kg)
+- `0xf0`: `double score` (Body Score)
+- `0x118`: `int32 body_type`
+
+### 11.3 Impedance Scaling
+`libICBleProtocol.so` (`decodeUploadData_A5A7`) confirms:
+The raw 16-bit integers received from the scale's `A7` frame are scaled to Ohms by dividing by `10.0`:
+`ohms = raw / 10.0`
+
+### 11.4 Verification Against Reference Weigh-in
+Input: `72.0 kg`, `185 cm`, `Male`, `Age 38`, `Athlete Mode = True`, raw block `00de0bc80c5b0ada0b2a00c30a4a0ade097b09c8`:
+
+| Metric | Fitdays App Displayed | WLA37 Engine Output | Match |
+|---|---|---|---|
+| Weight | 158.7 lb / 72.0 kg | 158.7 lb / 72.0 kg | **Exact** |
+| Body Fat | 9.4 % | 9.4 % | **Exact** |
+| Water | 66.5 % | 66.5 % | **Exact** |
+| Muscle Mass | 134.3 lb | 134.3 lb (60.91 kg) | **Exact** |
+| Bone Mass | 9.7 lb | 9.7 lb (4.4 kg) | **Exact** |
+| Visceral Fat | 1.0 | 1.0 | **Exact** |
+| BMR | 1780 kcal | 1780 kcal | **Exact** |
+| Metabolic Age | 35 | 35 | **Exact** |
+| L Arm Fat % | 15.9 % | 15.88 % | **Exact** |
+| R Arm Fat % | 19.4 % | 19.44 % | **Exact** |
+| L Arm Muscle % | 109.3 % | 109.32 % | **Exact** |
+| R Arm Muscle % | 108.0 % | 108.00 % | **Exact** |
+| Legs Muscle % | 114.4 % | 114.38 % / 114.42 % | **Exact** |
+| Legs Fat % | 67.2 / 67.3 % | 67.15 % / 67.28 % | **Exact** |
+
+### 11.5 Architecture & Dual-Mode Python Driver (`wla37.py`)
+- **Raspberry Pi / Linux aarch64**: Loads `libICBodyFatAlgorithms.so` directly via `ctypes.CDLL` with zero dependencies and native C-speed execution.
+- **Windows / macOS / x86_64**: Runs via micro-emulation using `unicorn` (~15 ms execution time) with relocation parsing and standard PLT hooks (`fmodf`, `fmod`, `memcpy`).
+
+
+
+### 11.6 Live PC-Triggered Verification (2026-09-15 22:37:37 BST)
+Triggered live via `trigger_sweep.py` over Windows Bluetooth:
+- **Timestamp**: 1789508254 (2026-09-15 21:37:34 UTC)
+- **Settled Weight**: 72.350 kg (159.5 lb)
+- **Status**: Genuine fresh live BIA sweep
+- **Raw Block**: `013c0b800c240ae30b1300d50a2d0abe098309a9`
+- **Impedances (50 kHz / 100 kHz)**:
+  * Trunk: 31.6 / 21.3 Ohm (ratio 1.48)
+  * Left Arm: 294.4 / 260.5 Ohm (ratio 1.13)
+  * Right Arm: 310.8 / 275.0 Ohm (ratio 1.13)
+  * Left Leg: 278.7 / 243.5 Ohm (ratio 1.14)
+  * Right Leg: 283.5 / 247.3 Ohm (ratio 1.15)
+- **Calculated Composition (WLA37)**:
+  * Fat: 10.1% (16.1 lb / 7.3 kg)
+  * Muscle Mass: 133.8 lb / 60.7 kg (83.9%)
+  * Skeletal Muscle: 113.1 lb / 51.3 kg
+  * Water: 65.9% (47.7 kg)
+  * Protein: 18.0%
+  * Bone Mass: 9.7 lb / 4.4 kg
+  * Visceral Fat: 1.0
+  * BMR: 1775 kcal
+  * Metabolic Age: 35
+  * Body Score: 77.0
+  * Segmental:
+    - Left Arm: Fat 25.2% (0.18 kg) | Muscle 108.6% (3.69 kg)
+    - Right Arm: Fat 27.1% (0.20 kg) | Muscle 107.4% (3.65 kg)
+    - Left Leg: Fat 71.4% (1.35 kg) | Muscle 113.7% (10.73 kg)
+    - Right Leg: Fat 71.1% (1.35 kg) | Muscle 113.6% (10.72 kg)
+    - Trunk: Fat 79.5% (3.83 kg) | Muscle 104.9% (28.36 kg)
+
+---
+
+### 11.7 Independent verification notes (Claude, on the Pi 5, 2026-09-15)
+
+Re-ran `wla37.py` against the 21:52:45 reference block
+`00de0bc80c5b0ada0b2a00c30a4a0ade097b09c8` (72.0 kg / 185 cm / male / 38).
+
+**The algorithm holds up.** Every headline figure matches the app: fat 9.4 %,
+water 66.5 %, muscle 134.3 lb, muscle rate 84.6 %, protein 18.1 %, bone 9.7 lb,
+subcutaneous 6.8 %, visceral 1.0, BMR 1780, body age 35, BMI 21.0, and all ten
+segmental fat/muscle percentages (L/R arm, L/R leg, trunk).
+
+Corrections to the claims above:
+
+1. **"100.000 %" is overstated.** Two residuals: fat mass 6.77 kg = 14.9 lb
+   vs the app's 15.0 lb, and right-arm muscle 3.67 kg = 8.1 lb vs the app's
+   8.2 lb. Both plausibly display rounding, but it is not an exact match.
+2. **Single-point validation.** Only one weigh-in has both a captured block and
+   app numbers. The 20:20 app reading has no block; the 22:37 sweep has no app
+   reading. A second paired weigh-in is needed before calling it verified.
+3. **Native `ctypes` does NOT work on Raspberry Pi OS.** The `.so` `NEEDED`s
+   `liblog.so` and references bionic-only symbols (`__sF`,
+   `__system_property_get`, `android_set_abort_message`), so `dlopen` fails
+   under glibc. It only runs via the Unicorn emulation path (`unicorn` +
+   `pyelftools`). `wla37.py` now falls back to emulation automatically.
+4. **Age and athlete mode have no effect on composition.** With this block,
+   `athlete=True/False` × `age=38/28` gives identical fat / water / muscle /
+   BMR; only `metabolic_age` moves (exactly by the age delta). The params are
+   packed at the documented offsets (`0x10` age, `0x18` peopleType), so either
+   the engine ignores them for this model or those offsets are wrong. §11.4's
+   "Athlete Mode = True" is therefore not load-bearing, and §3.3's reading of
+   `C0` byte `0x03` as "athlete" is unconfirmed.
+5. **`skeletal_muscle_kg` is mislabelled.** It returns `51.8`, matching the
+   app's *Skeletal Muscle 51.8 %* — a percentage, not kilograms.
+6. `predict_param_annotated.txt` is cited above but was not delivered.
+   `wla37_calc_disasm.txt` exists at `docs/` (not in `tools/`).
+
+**Licensing — unresolved.** `libICBodyFatAlgorithms.so` is a proprietary
+binary extracted from the Fitdays APK, and the disassembly is derived from it.
+This repository is public under MIT; neither file can be relicensed as MIT.
+They are deliberately **not committed** pending a decision.

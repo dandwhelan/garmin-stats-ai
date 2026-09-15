@@ -27,13 +27,18 @@ FFB3 = "0000ffb3-0000-1000-8000-00805f9b34fb"  # indicate (A0, A5, A7, AA)
 STALE_BLOCKS = {
     "01260c050c550ac20b0300dd0a6b0ad709600998": "Old stale reading",
     "011b0bf40c520ab90af500da0a5e0ad10959098e": "App weigh-in stored reading",
+    "00de0bc80c5b0ada0b2a00c30a4a0ade097b09c8": "Pi sweep 21:52 reading",
+    "013c0b800c240ae30b1300d50a2d0abe098309a9": "PC sweep 22:37 reading",
 }
 
 class ScaleSession:
-    def __init__(self, client: BleakClient, user_weight_kg: float = 72.0, height_cm: int = 185, name: str = "Dan"):
+    def __init__(self, client: BleakClient, user_weight_kg: float = 72.0, height_cm: int = 185, age: int = 38, sex: int = 1, athlete: bool = True, name: str = "Dan"):
         self.client = client
         self.weight_kg = user_weight_kg
         self.height_cm = height_cm
+        self.age = age
+        self.sex = sex
+        self.athlete = athlete
         self.name = name
         self.current_live_weight = 0.0
         self.current_status = 0
@@ -102,6 +107,36 @@ class ScaleSession:
                     r = f"{ohms[i]/ohms[i+5]:.2f}" if ohms[i+5] else "n/a"
                     print(f"      {nm:<5} {ohms[i]:6.1f} / {ohms[i+5]:6.1f}   ratio {r}")
                 print("=" * 70)
+
+                if not all_zero:
+                    try:
+                        from wla37 import WLA37Calculator
+                        calc = WLA37Calculator()
+                        comp = calc.calculate(
+                            weight_kg=w,
+                            height_cm=self.height_cm,
+                            sex=self.sex,
+                            age=self.age,
+                            impedances=ohms,
+                            athlete=self.athlete
+                        )
+                        print("   BODY COMPOSITION (Exact WLA37 Algorithm Engine):")
+                        print(f"   Fat:          {comp['fat_percent']:.1f}% ({comp['fat_mass_lb']:.1f} lb / {comp['fat_mass_kg']:.1f} kg)")
+                        print(f"   Muscle Mass:  {comp['muscle_mass_lb']:.1f} lb / {comp['muscle_mass_kg']:.1f} kg ({comp['muscle_percent']:.1f}%)")
+                        print(f"   Skeletal Mus: {comp['skeletal_muscle_lb']:.1f} lb / {comp['skeletal_muscle_kg']:.1f} kg")
+                        print(f"   Water:        {comp['water_percent']:.1f}% ({comp['water_mass_kg']:.1f} kg)")
+                        print(f"   Protein:      {comp['protein_percent']:.1f}%")
+                        print(f"   Bone Mass:    {comp['bone_mass_lb']:.1f} lb / {comp['bone_mass_kg']:.1f} kg")
+                        print(f"   Visceral Fat: {comp['visceral_fat']:.1f}")
+                        print(f"   BMR:          {comp['bmr_kcal']} kcal")
+                        print(f"   Metabolic Age:{comp['metabolic_age']}")
+                        print(f"   Body Score:   {comp['body_score']:.1f}")
+                        print("   Segmental Breakdown:")
+                        for s_name, s_val in comp['segments'].items():
+                            print(f"      {s_name:<10}: Fat={s_val['fat_percent']:.1f}% ({s_val['fat_mass_kg']:.2f} kg) | Muscle={s_val['muscle_percent']:.1f}% ({s_val['muscle_mass_kg']:.2f} kg)")
+                        print("=" * 70)
+                    except Exception as e:
+                        print(f"   [WLA37 calculation failed: {e}]")
                 if is_fresh and ftype == 0xA7:
                     self.fresh_a7_received.set()
             elif ftype == 0xAA:
