@@ -37,6 +37,7 @@ __all__ = [
     "build_c0",
     "build_c1",
     "plan_writes",
+    "implausible_segments",
     "SEGMENTS",
 ]
 
@@ -174,14 +175,37 @@ def _result(payload: bytes) -> dict[str, Any] | None:
     }
 
 
+def implausible_segments(raw: list[int]) -> list[str]:
+    """Segments whose impedance is physically impossible.
+
+    Low-frequency impedance must exceed high-frequency: current only crosses
+    cell membranes at the higher frequency. A segment where f1 <= f2 means a
+    bad contact or a mis-sampled sweep, not a real body.
+
+    This is not hypothetical — a real scan returned a trunk of 25.7/33.6 ohm
+    (ratio 0.76) while all four limbs behaved normally, and the resulting body
+    fat came out 4 points low. Trunk impedance is small and weighs heavily in
+    the model, so one bad segment skews the whole reading.
+    """
+    if len(raw) != 10:
+        return []
+    return [seg for i, seg in enumerate(SEGMENTS)
+            if raw[i] and raw[i + 5] and raw[i] <= raw[i + 5]]
+
+
 def _impedance_extras(raw: list[int]) -> dict[str, Any]:
     ohms = [v / 10.0 for v in raw]
-    return {
+    out: dict[str, Any] = {
         "impedance_raw": raw,
         "impedance_segments_ohm": {
             seg: {"f1": ohms[i], "f2": ohms[i + 5]} for i, seg in enumerate(SEGMENTS)
         },
     }
+    suspect = implausible_segments(raw)
+    if suspect:
+        # Kept for diagnosis, but the caller must not compute composition from it.
+        out["impedance_suspect"] = suspect
+    return out
 
 
 class FitdaysAdapter:

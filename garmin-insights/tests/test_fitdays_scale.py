@@ -72,6 +72,33 @@ def test_result_after_settling_is_final_with_segments():
     json.dumps(reading.extras)
 
 
+def test_backwards_impedance_is_flagged_as_suspect():
+    """A real scan returned trunk 25.7/33.6 ohm - low frequency BELOW high,
+    which is physically impossible - and its body fat came out 4 points low."""
+    from garmin_insights.scales.fitdays import implausible_segments
+
+    good = [257, 3242, 3422, 2881, 2858, 206, 2806, 2988, 2401, 2392]
+    assert implausible_segments(good) == []
+
+    backwards = list(good)
+    backwards[0], backwards[5] = 257, 336  # trunk f1 < f2
+    assert implausible_segments(backwards) == ["trunk"]
+
+    reading = FitdaysAdapter().decode([SETTLED_72_1, _result_frame(backwards)])
+    assert reading.stable and reading.extras["impedance_suspect"] == ["trunk"]
+    # still kept, so a bad sweep can be diagnosed rather than silently dropped
+    assert reading.extras["impedance_raw"] == backwards
+
+
+def _result_frame(raw: list[int]) -> bytes:
+    """Build an A7 result frame carrying `raw` (10 impedance words)."""
+    body = bytearray(FRESH_RESULT)
+    for i, v in enumerate(raw):
+        body[15 + 2 * i:17 + 2 * i] = v.to_bytes(2, "big")
+    body[-1] = checksum(body[4], bytes(body[5:-1]))
+    return bytes(body)
+
+
 def test_all_zero_result_is_final_weight_only():
     zero = bytearray(FRESH_RESULT)
     zero[15:35] = bytes(20)

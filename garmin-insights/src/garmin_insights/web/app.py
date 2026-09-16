@@ -1267,7 +1267,16 @@ async def scale_frames(req: ScaleFramesRequest):
     comp_extras: dict[str, Any] = {}
     note: str | None = None
     impedance_raw = reading.extras.get("impedance_raw")
-    if impedance_raw and height_cm is not None:
+    # A segment reading low-frequency below high-frequency is physically
+    # impossible (bad contact / mis-sampled sweep). Computing composition from
+    # it produces a confident, wrong body-fat figure, so save the weight and
+    # the raw impedance instead and say what happened.
+    suspect = reading.extras.get("impedance_suspect")
+    if impedance_raw and suspect:
+        note = ("Electrode contact looked wrong (" + ", ".join(suspect).replace("_", " ") +
+                ") — body composition skipped so a bad figure isn't saved. "
+                "Weight is fine. Re-scan barefoot with dry feet, standing still.")
+    elif impedance_raw and height_cm is not None:
         from garmin_insights.scales.wla37 import compute_wla37, engine_status
 
         loop = asyncio.get_event_loop()
