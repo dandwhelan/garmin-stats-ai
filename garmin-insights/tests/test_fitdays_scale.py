@@ -104,6 +104,19 @@ def test_planner_arms_once_then_finalises_once():
     assert state["phase"] == "done" and plan_writes(frames, state, DAN) == []
 
 
+def test_profile_weight_can_be_pinned_independently_of_the_live_reading():
+    """The vendor app puts a stored weight in the profile frame, not the live
+    one: in the captured session it sent 71.334 kg before the weigh-in and
+    72.614 kg after, while the measurement itself was 71.95 kg."""
+    frames = [HELLO, LIVE_72_4]  # live reading is 72.400 kg
+    pinned = ScaleProfile(height_cm=185, sex="male", name="Dan", profile_weight_kg=71.334)
+    c0 = next(w for w in plan_writes(frames, {}, pinned, now=0x6AA9A5CD) if w[4] == 0xC0)
+    assert c0[14:16] == H("16a6")  # 71334 g, low 16 bits - the app's own value
+
+    c0_live = next(w for w in plan_writes(frames, {}, DAN, now=0x6AA9A5CD) if w[4] == 0xC0)
+    assert c0_live[14:16] == H("1ad0")  # 72400 g - falls back to the live reading
+
+
 def test_planner_without_profile_sends_nothing():
     assert plan_writes([HELLO, LIVE_72_4], {}, None) == []
 

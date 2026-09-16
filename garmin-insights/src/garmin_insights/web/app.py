@@ -1212,8 +1212,17 @@ async def scale_frames(req: ScaleFramesRequest):
 
         profile = None
         if height_cm is not None:
+            # The vendor app puts a STORED weight in the profile frame, not the
+            # live reading (see ScaleProfile.profile_weight_kg). Overriding it
+            # is how we A/B that against the age the scale displays.
+            override = os.environ.get("FITDAYS_PROFILE_WEIGHT_KG", "").strip()
+            try:
+                profile_weight = float(override) if override else None
+            except ValueError:
+                profile_weight = None
             profile = ScaleProfile(height_cm=int(round(height_cm)), sex=sex or "male",
-                                   name=identity.get("name") or "")
+                                   name=identity.get("name") or "",
+                                   profile_weight_kg=profile_weight)
         else:
             profile_note = "Set HEIGHT_CM in this user's env so the scale can run its body-composition sweep."
         plan_state = session.setdefault("plan", {})

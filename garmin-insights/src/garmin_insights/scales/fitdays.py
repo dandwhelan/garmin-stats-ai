@@ -106,6 +106,13 @@ class ScaleProfile:
     sex: str = "male"
     name: str = ""
     user_id: bytes = _DEFAULT_USER_ID
+    #: Weight written into the profile frame's 16-bit weight field. The vendor
+    #: app does NOT put the live reading there: across one captured session it
+    #: sent 71.334 kg before the weigh-in and 72.614 kg after, while the actual
+    #: measurement was 71.95 kg. So this is a stored profile weight, and
+    #: overwriting it with the live value appears to upset the age the scale
+    #: shows on its own display. ``None`` falls back to the live weight.
+    profile_weight_kg: float | None = None
 
     @property
     def gender_code(self) -> int:
@@ -292,7 +299,7 @@ def plan_writes(
         return s
 
     if phase == "waiting" and live_kg is not None and live_kg >= _ARM_MIN_KG:
-        w = live_kg
+        w = profile.profile_weight_kg or live_kg
         out = [
             _ctrl(nxt(), 0x30),
             build_c0(nxt(), profile, w, now, tz),
@@ -307,7 +314,7 @@ def plan_writes(
         ]
         state["phase"] = "armed"
     elif phase == "armed" and result is not None:
-        w = result["weight_kg"]
+        w = profile.profile_weight_kg or result["weight_kg"]
         out = [_ctrl(nxt(), 0x3A), build_c0(nxt(), profile, w, now, tz), build_c1(nxt(), profile, w)]
         state["phase"] = "done"
 
