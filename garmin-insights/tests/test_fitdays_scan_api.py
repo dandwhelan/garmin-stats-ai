@@ -94,3 +94,44 @@ def test_missing_vendor_engine_still_saves_weight_and_impedance(api_client, prof
     assert body["state"] == "final" and body["weight_kg"] == pytest.approx(72.1)
     assert "engine isn't installed" in body["note"]
     assert body["metrics"].get("bmi") is not None and "body_fat_pct" not in body["metrics"]
+
+
+# ==================================================================
+# BMR -> Garmin's basal_met (the one extra field the scan unlocked)
+# ==================================================================
+def test_bmr_is_uploaded_to_garmin_as_basal_met(api_client, monkeypatch):
+    import garmin_insights.garmin_upload as gu
+
+    sent: dict = {}
+    monkeypatch.setattr(gu, "upload_body_composition", lambda *a, **kw: sent.update(kw))
+    r = api_client.post("/api/weigh-in", json={
+        "user": "default", "weight_kg": 72.0, "basal_met_kcal": 1780, "body_fat_pct": 9.4,
+    })
+    assert r.status_code == 200
+    assert sent["basal_met_kcal"] == 1780 and sent["percent_fat"] == 9.4
+
+
+def test_implausible_bmr_is_rejected_before_garmin(api_client):
+    r = api_client.post("/api/weigh-in", json={
+        "user": "default", "weight_kg": 72.0, "basal_met_kcal": 99999,
+    })
+    assert r.status_code == 400 and "basal_met_kcal" in r.json()["detail"]
+
+
+def test_uploader_passes_bmr_through_to_garminconnect(monkeypatch, tmp_path):
+    """The kwarg must survive into the Garmin SDK call, not just the endpoint."""
+    from garmin_insights import garmin_upload as gu
+
+    captured: dict = {}
+
+    class FakeGarmin:
+        def login(self, _token_dir): return None
+        def connectapi(self, _path): return {"userName": "someone@example.com"}
+        def add_body_composition(self, timestamp, **kw): captured.update(kw)
+
+    monkeypatch.setitem(__import__("sys").modules, "garminconnect",
+                        type("M", (), {"Garmin": FakeGarmin}))
+    monkeypatch.setattr(gu, "_verify_token_owner", lambda *a, **k: None)
+    gu.upload_body_composition(str(tmp_path), "someone@example.com",
+                               weight_kg=72.0, basal_met_kcal=1780)
+    assert round(captured["basal_met"]) == 1780

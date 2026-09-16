@@ -162,6 +162,9 @@ class WeighInRequest(BaseModel):
     metabolic_age: float | None = None
     physique_rating: float | None = None
     bmi: float | None = None
+    # Basal metabolic rate. Garmin stores it as `basal_met`; the Fitdays
+    # scan supplies it, a manual entry usually will not.
+    basal_met_kcal: float | None = None
     # Id of a scale_readings row already saved by /api/scale/frames — set
     # when this weigh-in originated from a Bluetooth scan, so we mark that
     # row uploaded instead of creating a duplicate local reading.
@@ -1343,7 +1346,7 @@ async def upload_weigh_in(req: WeighInRequest):
         "body_fat_pct": (0, 100), "body_water_pct": (0, 100),
         "muscle_mass_kg": (1, 150), "bone_mass_kg": (0.5, 15),
         "visceral_fat": (1, 60), "metabolic_age": (10, 120),
-        "physique_rating": (1, 9), "bmi": (5, 80),
+        "physique_rating": (1, 9), "bmi": (5, 80), "basal_met_kcal": (500, 6000),
     }
     for name, (lo, hi) in _WEIGH_IN_BOUNDS.items():
         v = getattr(req, name)
@@ -1398,6 +1401,7 @@ async def upload_weigh_in(req: WeighInRequest):
             user_settings.garminconnect_email,
             timestamp=req.timestamp,
             weight_kg=req.weight_kg,
+            basal_met_kcal=req.basal_met_kcal,
             percent_fat=req.body_fat_pct,
             percent_hydration=req.body_water_pct,
             muscle_mass_kg=req.muscle_mass_kg,

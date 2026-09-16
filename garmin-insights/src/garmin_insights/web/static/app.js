@@ -5574,6 +5574,7 @@ async function scanScale() {
         _scaleReadingId = result.reading_id ?? null;
         initWeighInTimestamp(); // stamp the reading with "now"
         const x = result.extras || {};
+        _setWi('wi-bmr', x.bmr_kcal, 0); // Garmin stores this as basal_met
         const extra = [
           m.body_fat_pct != null ? `fat ${m.body_fat_pct}%` : null,
           x.bmr_kcal != null ? `BMR ${x.bmr_kcal} kcal` : null,
@@ -5614,6 +5615,7 @@ async function submitWeighIn() {
     visceral_fat: _wiNum('wi-visceral'),
     metabolic_age: _wiNum('wi-metabolic'),
     physique_rating: _wiNum('wi-physique'),
+    basal_met_kcal: _wiNum('wi-bmr'),
     // Links this upload to a prior Bluetooth scan's local reading row instead
     // of creating a duplicate one; null for a purely manual entry.
     reading_id: _scaleReadingId,
