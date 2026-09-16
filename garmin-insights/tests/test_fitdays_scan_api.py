@@ -80,6 +80,7 @@ def test_settled_result_persists_segments_and_acknowledges(api_client, profile, 
     }).json()["readings"]
     row = next(r for r in rows if r["id"] == body["reading_id"])
     assert row["body_fat_pct"] == 9.4 and row["adapter"] == "fitdays"
+    assert row["physique_rating"] is None  # never derived from the vendor body_type
     assert row["extras"]["segments"]["left_arm"]["muscle_pct"] == 109.3
     assert row["extras"]["impedance_segments_ohm"]["trunk"] == {"f1": 28.3, "f2": 21.8}
 

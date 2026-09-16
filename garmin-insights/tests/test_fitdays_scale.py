@@ -134,3 +134,6 @@ def test_wla37_reproduces_the_paired_app_weigh_in():
     # which is a different 1-9 scale (this enum was observed at 0-8).
     assert isinstance(x["body_type"], int) and 0 <= x["body_type"] <= 12
     assert 0 <= x["body_score"] <= 100
+    # body_type is for display only. It tracks body fat, while Garmin's
+    # physique_rating means 9 = very muscular, so it is never uploaded as one.
+    assert "physique_rating" not in m

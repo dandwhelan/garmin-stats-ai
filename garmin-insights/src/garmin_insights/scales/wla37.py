@@ -222,6 +222,11 @@ def compute_wla37(
             "bone_mass_kg": d(0x28),
             "visceral_fat": d(0x20),
             "metabolic_age": i(0x4C),
+            # No physique_rating. Garmin's is a 1-9 Tanita-style code where 9
+            # means "very muscular"; the vendor's body_type enum runs 0-8 and
+            # tracks body fat instead (9.4% fat -> 2, 47-60% fat -> 8), so
+            # body_type + 1 would tell Garmin the fattest reading is the most
+            # muscular. body_type is surfaced in `extras` for display only.
         },
         "extras": {
             "composition_engine": "wla37",
