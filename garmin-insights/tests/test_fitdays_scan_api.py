@@ -92,6 +92,28 @@ def test_settled_result_persists_segments_and_acknowledges(api_client, profile, 
     assert not {"composition_engine", "impedance_raw", "device_id", "variant"} & set(body["extras"])
 
 
+def test_profile_frame_carries_the_stored_weight_not_the_live_one(api_client, profile, monkeypatch):
+    """Writing the live reading into the profile frame made the scale display a
+    wrong age (confirmed on hardware); it must send the last saved weigh-in."""
+    from garmin_insights.scales import wla37
+    from garmin_insights.scales.fitdays import split_frame
+
+    monkeypatch.delenv("FITDAYS_PROFILE_WEIGHT_KG", raising=False)
+    monkeypatch.setattr(wla37, "compute_wla37", lambda *a, **k: None)
+
+    # First scan settles at 72.1 kg and is saved.
+    _post(api_client, "s-w1", [HELLO, LIVE_72_4])
+    first = _post(api_client, "s-w1", [SETTLED_72_1, FRESH_RESULT]).json()
+    assert first["state"] == "final"
+
+    # A later scan must put that stored 72.1 kg in the profile frame, even
+    # though the live reading on the platform now reads 72.4 kg.
+    body = _post(api_client, "s-w2", [HELLO, LIVE_72_4]).json()
+    c0 = next(bytes.fromhex(w) for w in body["writes"] if split_frame(bytes.fromhex(w))[1] == 0xC0)
+    assert c0[14:16] == (72100 & 0xFFFF).to_bytes(2, "big")
+    assert c0[14:16] != (72400 & 0xFFFF).to_bytes(2, "big")
+
+
 def test_missing_vendor_engine_still_saves_weight_and_impedance(api_client, profile, monkeypatch):
     from garmin_insights.scales import wla37
 

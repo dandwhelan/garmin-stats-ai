@@ -293,6 +293,31 @@ def _extract_assistant_text(history: list[dict]) -> str:
     return ""
 
 
+def _last_stored_weight(bundle) -> float | None:
+    """Most recent saved weigh-in for this user, or ``None`` if there is none.
+
+    Written into the scale's profile frame so it sees a stable stored weight
+    instead of the live reading. An override (``FITDAYS_PROFILE_WEIGHT_KG``)
+    stays available for protocol experiments.
+    """
+    override = os.environ.get("FITDAYS_PROFILE_WEIGHT_KG", "").strip()
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            logger.warning("Ignoring unparseable FITDAYS_PROFILE_WEIGHT_KG=%r", override)
+    try:
+        today = date.today()
+        rows = bundle.agent._memory.get_scale_readings(
+            (today - timedelta(days=365)).isoformat(), (today + timedelta(days=1)).isoformat()
+        )
+    except Exception:
+        logger.exception("Could not read the last stored weight for the scale profile")
+        return None
+    weights = [r.get("weight_kg") for r in rows if r.get("weight_kg")]
+    return float(weights[-1]) if weights else None
+
+
 def _evict_scale_sessions() -> None:
     """Drop expired scale sessions, oldest-first, ahead of every request.
 
@@ -1212,17 +1237,18 @@ async def scale_frames(req: ScaleFramesRequest):
 
         profile = None
         if height_cm is not None:
-            # The vendor app puts a STORED weight in the profile frame, not the
-            # live reading (see ScaleProfile.profile_weight_kg). Overriding it
-            # is how we A/B that against the age the scale displays.
-            override = os.environ.get("FITDAYS_PROFILE_WEIGHT_KG", "").strip()
-            try:
-                profile_weight = float(override) if override else None
-            except ValueError:
-                profile_weight = None
+            # The profile frame's weight field must NOT carry the live reading:
+            # the vendor app sends a stored weight there, and writing the live
+            # one made the scale show a wrong age on its own display (confirmed
+            # on hardware). Use the last saved weigh-in, resolved once per scan
+            # session rather than on every frame batch.
+            if "profile_weight" not in session:
+                session["profile_weight"] = await asyncio.get_event_loop().run_in_executor(
+                    None, _last_stored_weight, bundle
+                )
             profile = ScaleProfile(height_cm=int(round(height_cm)), sex=sex or "male",
                                    name=identity.get("name") or "",
-                                   profile_weight_kg=profile_weight)
+                                   profile_weight_kg=session["profile_weight"])
         else:
             profile_note = "Set HEIGHT_CM in this user's env so the scale can run its body-composition sweep."
         plan_state = session.setdefault("plan", {})
