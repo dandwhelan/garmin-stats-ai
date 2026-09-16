@@ -5337,6 +5337,81 @@ function initWeighInProfile() {
   }
 }
 
+// Full scan readout. Garmin Connect only stores a subset, so anything it has
+// no field for is shown and kept locally rather than quietly dropped.
+const _SCAN_ROWS = [
+  ['Weight', m => m.weight_kg, 'kg', 2, false],
+  ['BMI', m => m.bmi, '', 1, false],
+  ['Body fat', m => m.body_fat_pct, '%', 1, false],
+  ['Fat mass', (m, x) => x.fat_mass_kg, 'kg', 2, true],
+  ['Fat-free mass', (m, x) => x.fat_free_mass_kg, 'kg', 2, true],
+  ['Muscle mass', m => m.muscle_mass_kg, 'kg', 2, false],
+  ['Skeletal muscle', (m, x) => x.skeletal_muscle_pct, '%', 1, true],
+  ['Body water', m => m.body_water_pct, '%', 1, false],
+  ['Protein', (m, x) => x.protein_pct, '%', 1, true],
+  ['Bone mass', m => m.bone_mass_kg, 'kg', 2, false],
+  ['Subcutaneous fat', (m, x) => x.subcutaneous_fat_pct, '%', 1, true],
+  ['Visceral fat', m => m.visceral_fat, '', 1, false],
+  ['BMR', (m, x) => x.bmr_kcal, 'kcal', 0, false],
+  ['Metabolic age', m => m.metabolic_age, 'yrs', 0, false],
+  ['Body score', (m, x) => x.body_score, '/100', 0, true],
+  ['Body type', (m, x) => x.body_type, '', 0, true],
+];
+const _SCAN_LIMBS = [
+  ['left_arm', 'Left arm'], ['right_arm', 'Right arm'], ['trunk', 'Trunk'],
+  ['left_leg', 'Left leg'], ['right_leg', 'Right leg'],
+];
+
+function hideScanResults() {
+  document.getElementById('scan-results')?.setAttribute('hidden', '');
+}
+
+function renderScanResults(result) {
+  const panel = document.getElementById('scan-results');
+  if (!panel) return;
+  const m = result.metrics || {};
+  const x = result.extras || {};
+  const weight = { ...m, weight_kg: result.weight_kg };
+
+  const rows = _SCAN_ROWS
+    .map(([label, get, unit, dp, localOnly]) => [label, get(weight, x), unit, dp, localOnly])
+    .filter(([, v]) => v != null && v !== '');
+  if (!rows.length) { hideScanResults(); return; }
+  document.getElementById('scan-results-grid').innerHTML = rows.map(
+    ([label, v, unit, dp, localOnly]) =>
+      `<div class="scan-row${localOnly ? ' is-local' : ''}"><span>${label}</span>` +
+      `<b>${Number(v).toFixed(dp)}${unit ? ` ${unit}` : ''}</b>` +
+      `${localOnly ? '<span class="scan-local-tag">local</span>' : ''}</div>`
+  ).join('');
+
+  const segs = x.segments || {};
+  const limbs = _SCAN_LIMBS.filter(([k]) => segs[k]);
+  document.getElementById('scan-results-limbs').innerHTML = limbs.length ? (
+    '<table><thead><tr><th></th><th>Muscle</th><th>Fat</th></tr></thead><tbody>' +
+    limbs.map(([k, label]) => {
+      const s = segs[k];
+      const val = (pct, kg) => (pct == null ? '—'
+        : `${Number(pct).toFixed(1)}%${kg != null ? ` <small>(${Number(kg).toFixed(2)} kg)</small>` : ''}`);
+      return `<tr><td>${label}</td><td>${val(s.muscle_pct, s.muscle_mass_kg)}</td>` +
+             `<td>${val(s.fat_pct, s.fat_mass_kg)}</td></tr>`;
+    }).join('') + '</tbody></table>'
+  ) : '';
+
+  const imp = x.impedance_segments_ohm || result.impedance_segments_ohm || {};
+  const impRows = _SCAN_LIMBS.filter(([k]) => imp[k]);
+  document.getElementById('scan-results-impedance').innerHTML = impRows.length ? (
+    '<table><thead><tr><th></th><th>Low freq</th><th>High freq</th></tr></thead><tbody>' +
+    impRows.map(([k, label]) =>
+      `<tr><td>${label}</td><td>${imp[k].f1.toFixed(1)} Ω</td><td>${imp[k].f2.toFixed(1)} Ω</td></tr>`
+    ).join('') + '</tbody></table>'
+  ) : '';
+
+  document.querySelectorAll('#scan-results h4').forEach(h => {
+    h.style.display = (h.nextElementSibling?.innerHTML ? '' : 'none');
+  });
+  panel.removeAttribute('hidden');
+}
+
 function scanSetStatus(msg, isError) {
   const el = document.getElementById('weighin-scan-status');
   if (!el) return;
@@ -5491,6 +5566,7 @@ async function scanScale() {
   if (btn) btn.disabled = true;
   _scalePendingFrames = [];
   _scaleReadingId = null;
+  hideScanResults(); // a previous scan's numbers must never linger
 
   try {
     scanSetStatus('Looking up scale protocol…', false);
@@ -5575,6 +5651,7 @@ async function scanScale() {
         initWeighInTimestamp(); // stamp the reading with "now"
         const x = result.extras || {};
         _setWi('wi-bmr', x.bmr_kcal, 0); // Garmin stores this as basal_met
+        renderScanResults(result);
         const extra = [
           m.body_fat_pct != null ? `fat ${m.body_fat_pct}%` : null,
           x.bmr_kcal != null ? `BMR ${x.bmr_kcal} kcal` : null,

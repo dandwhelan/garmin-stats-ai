@@ -1963,3 +1963,63 @@ canvas { max-width: 100%; }
   font-family: inherit;
   margin: 0;
 }
+
+/* ---- Bluetooth scan results (Journal) ----
+   Shows everything a weigh-in measured. Rows tagged "local" have no Garmin
+   Connect field, so they live only in this app's database. */
+.scan-results {
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.02));
+}
+.scan-results h3 { margin: 0 0 10px; font-size: 0.95rem; }
+.scan-results h4 {
+  margin: 14px 0 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted, #8b93a7);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.scan-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 14px;
+}
+.scan-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.05));
+}
+.scan-row span:first-child { color: var(--muted, #8b93a7); font-size: 0.85rem; }
+.scan-row b { margin-left: auto; font-variant-numeric: tabular-nums; }
+.scan-local-tag {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--border, #2a2f3a);
+  color: var(--muted, #8b93a7);
+  white-space: nowrap;
+}
+.scan-results-table { overflow-x: auto; }
+.scan-results-table table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.scan-results-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted, #8b93a7);
+  font-size: 0.75rem;
+  padding: 3px 8px 3px 0;
+}
+.scan-results-table td {
+  padding: 3px 8px 3px 0;
+  border-top: 1px solid var(--border-soft, rgba(255, 255, 255, 0.05));
+  font-variant-numeric: tabular-nums;
+}
+.scan-results-table td:first-child { color: var(--muted, #8b93a7); }
+.scan-results-table small { color: var(--muted, #8b93a7); }

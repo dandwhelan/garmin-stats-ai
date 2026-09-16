@@ -130,3 +130,7 @@ def test_wla37_reproduces_the_paired_app_weigh_in():
     assert round(m["muscle_mass_kg"] * 2.20462, 1) == 134.3
     assert round(x["segments"]["left_arm"]["fat_pct"], 1) == 15.9
     assert round(x["segments"]["right_arm"]["fat_pct"], 1) == 19.4
+    # Shown in the UI; deliberately NOT uploaded as Garmin's physique_rating,
+    # which is a different 1-9 scale (this enum was observed at 0-8).
+    assert isinstance(x["body_type"], int) and 0 <= x["body_type"] <= 12
+    assert 0 <= x["body_score"] <= 100

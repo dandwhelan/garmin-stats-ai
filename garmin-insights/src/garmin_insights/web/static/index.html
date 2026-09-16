@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260711a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260916a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -873,6 +873,14 @@
               </div>
             </div>
           </div>
+          <div class="scan-results" id="scan-results" hidden>
+            <h3>Scan results <span class="info-icon" tabindex="0">i<span class="info-tooltip">Everything this weigh-in measured, from Fitdays&rsquo; own body-composition model. Rows marked <b>local only</b> have no field in Garmin Connect, so they are kept in this app&rsquo;s database and charted under Fitness &amp; Body rather than synced. All figures except weight are <b>bio-impedance estimates</b>, not lab measurements.</span></span></h3>
+            <div class="scan-results-grid" id="scan-results-grid"></div>
+            <h4>Per limb <span class="scan-local-tag">local only</span></h4>
+            <div class="scan-results-table" id="scan-results-limbs"></div>
+            <h4>Impedance <span class="scan-local-tag">local only</span></h4>
+            <div class="scan-results-table" id="scan-results-impedance"></div>
+          </div>
           <div class="weighin-grid">
             <label>When <input type="datetime-local" id="wi-timestamp"></label>
             <label>Weight (kg) * <input type="number" id="wi-weight" step="0.05" min="20" max="400" placeholder="80.0"></label>
@@ -945,6 +953,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260916a"></script>
+  <script src="/static/app.js?v=20260916b"></script>
 </body>
 </html>

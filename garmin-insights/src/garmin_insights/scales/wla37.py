@@ -235,6 +235,10 @@ def compute_wla37(
             "protein_pct": d(0x38),
             "subcutaneous_fat_pct": d(0x18),
             "body_score": d(0xF0),
+            # The vendor's own body-type enum (observed 0-8). NOT Garmin's
+            # physique_rating, which is a 1-9 Tanita-style code with different
+            # semantics — shown to the user, never uploaded as physique.
+            "body_type": i(0x118),
             "segments": {
                 seg: {
                     "fat_pct": d(_SEGMENT_OFFSETS[seg]),

@@ -83,6 +83,13 @@ def test_settled_result_persists_segments_and_acknowledges(api_client, profile, 
     assert row["extras"]["segments"]["left_arm"]["muscle_pct"] == 109.3
     assert row["extras"]["impedance_segments_ohm"]["trunk"] == {"f1": 28.3, "f2": 21.8}
 
+    # The Journal panel renders these from the response, not the DB row, so the
+    # response must carry the protocol decoder's impedance too - not just the
+    # composition engine's output - and none of the internal bookkeeping.
+    assert body["extras"]["impedance_segments_ohm"]["trunk"] == {"f1": 28.3, "f2": 21.8}
+    assert body["extras"]["segments"]["left_arm"]["muscle_pct"] == 109.3
+    assert not {"composition_engine", "impedance_raw", "device_id", "variant"} & set(body["extras"])
+
 
 def test_missing_vendor_engine_still_saves_weight_and_impedance(api_client, profile, monkeypatch):
     from garmin_insights.scales import wla37

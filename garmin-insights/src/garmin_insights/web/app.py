@@ -1298,7 +1298,14 @@ async def scale_frames(req: ScaleFramesRequest):
         "weight_kg": reading.weight_kg,
         "impedance_ohm": reading.impedance_ohm,
         "metrics": composition,
-        "extras": {k: v for k, v in comp_extras.items() if k != "composition_engine"},
+        # From the merged extras, not just the engine's: the per-segment
+        # impedance comes from the protocol decoder, and the UI shows it.
+        # Internal bookkeeping (raw words, ids, variant) stays out.
+        "extras": {
+            k: v for k, v in extras.items()
+            if k not in ("composition_engine", "variant", "impedance_raw",
+                         "result_timestamp", "device_id")
+        },
         "frame_count": frame_count,
         # Acknowledge the result to the scale so it stores the new weight.
         "writes": writes,
