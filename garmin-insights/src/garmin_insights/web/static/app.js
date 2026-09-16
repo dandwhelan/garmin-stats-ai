@@ -1549,7 +1549,45 @@ async function loadScaleDetail(start, end) {
   }
 }
 
+// Per-limb muscle / fat history. Garmin Connect has no fields for these, so
+// they exist only in the local scale_readings extras.
+function renderScaleSegments(readings) {
+  const data = (readings || []).filter(r => r.extras?.segments);
+  const segs = [
+    ['left_arm', 'Left arm', '#60a5fa'], ['right_arm', 'Right arm', '#a78bfa'],
+    ['trunk', 'Trunk', '#fbbf24'], ['left_leg', 'Left leg', '#34d399'], ['right_leg', 'Right leg', '#f472b6'],
+  ];
+  for (const [sectionId, canvasId, key, field] of [
+    ['scale-seg-muscle-section', 'scale-seg-muscle-chart', 'scaleSegMuscle', 'muscle_pct'],
+    ['scale-seg-fat-section', 'scale-seg-fat-chart', 'scaleSegFat', 'fat_pct'],
+  ]) {
+    const section = document.getElementById(sectionId);
+    if (!section) continue;
+    destroyAux(key);
+    if (data.length === 0) { section.style.display = 'none'; continue; }
+    section.style.display = '';
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) continue;
+    auxCharts[key] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(r => (r.taken_at || r.date || '').slice(5, 16).replace('T', ' ')),
+        datasets: segs.map(([seg, label, color]) => ({
+          label, borderColor: color, backgroundColor: 'transparent', tension: 0.3, spanGaps: true,
+          data: data.map(r => r.extras.segments?.[seg]?.[field] ?? null),
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: { x: commonScales().x, y: commonScales('% of standard').y },
+      },
+    });
+  }
+}
+
 function renderScaleDetail(readings) {
+  renderScaleSegments(readings);
   const section = document.getElementById('scale-detail-section');
   if (!section) return;
   const data = (readings || []).filter(r =>
@@ -4021,7 +4059,7 @@ const CHART_CATEGORIES = [
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag', 'overnight-quality-section'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart', 'overnight-hr-section'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
-  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
   { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },
@@ -5299,6 +5337,81 @@ function initWeighInProfile() {
   }
 }
 
+// Full scan readout. Garmin Connect only stores a subset, so anything it has
+// no field for is shown and kept locally rather than quietly dropped.
+const _SCAN_ROWS = [
+  ['Weight', m => m.weight_kg, 'kg', 2, false],
+  ['BMI', m => m.bmi, '', 1, false],
+  ['Body fat', m => m.body_fat_pct, '%', 1, false],
+  ['Fat mass', (m, x) => x.fat_mass_kg, 'kg', 2, true],
+  ['Fat-free mass', (m, x) => x.fat_free_mass_kg, 'kg', 2, true],
+  ['Muscle mass', m => m.muscle_mass_kg, 'kg', 2, false],
+  ['Skeletal muscle', (m, x) => x.skeletal_muscle_pct, '%', 1, true],
+  ['Body water', m => m.body_water_pct, '%', 1, false],
+  ['Protein', (m, x) => x.protein_pct, '%', 1, true],
+  ['Bone mass', m => m.bone_mass_kg, 'kg', 2, false],
+  ['Subcutaneous fat', (m, x) => x.subcutaneous_fat_pct, '%', 1, true],
+  ['Visceral fat', m => m.visceral_fat, '', 1, false],
+  ['BMR', (m, x) => x.bmr_kcal, 'kcal', 0, false],
+  ['Metabolic age', m => m.metabolic_age, 'yrs', 0, false],
+  ['Body score', (m, x) => x.body_score, '/100', 0, true],
+  ['Body type', (m, x) => x.body_type, '', 0, true],
+];
+const _SCAN_LIMBS = [
+  ['left_arm', 'Left arm'], ['right_arm', 'Right arm'], ['trunk', 'Trunk'],
+  ['left_leg', 'Left leg'], ['right_leg', 'Right leg'],
+];
+
+function hideScanResults() {
+  document.getElementById('scan-results')?.setAttribute('hidden', '');
+}
+
+function renderScanResults(result) {
+  const panel = document.getElementById('scan-results');
+  if (!panel) return;
+  const m = result.metrics || {};
+  const x = result.extras || {};
+  const weight = { ...m, weight_kg: result.weight_kg };
+
+  const rows = _SCAN_ROWS
+    .map(([label, get, unit, dp, localOnly]) => [label, get(weight, x), unit, dp, localOnly])
+    .filter(([, v]) => v != null && v !== '');
+  if (!rows.length) { hideScanResults(); return; }
+  document.getElementById('scan-results-grid').innerHTML = rows.map(
+    ([label, v, unit, dp, localOnly]) =>
+      `<div class="scan-row${localOnly ? ' is-local' : ''}"><span>${label}</span>` +
+      `<b>${Number(v).toFixed(dp)}${unit ? ` ${unit}` : ''}</b>` +
+      `${localOnly ? '<span class="scan-local-tag">local</span>' : ''}</div>`
+  ).join('');
+
+  const segs = x.segments || {};
+  const limbs = _SCAN_LIMBS.filter(([k]) => segs[k]);
+  document.getElementById('scan-results-limbs').innerHTML = limbs.length ? (
+    '<table><thead><tr><th></th><th>Muscle</th><th>Fat</th></tr></thead><tbody>' +
+    limbs.map(([k, label]) => {
+      const s = segs[k];
+      const val = (pct, kg) => (pct == null ? '—'
+        : `${Number(pct).toFixed(1)}%${kg != null ? ` <small>(${Number(kg).toFixed(2)} kg)</small>` : ''}`);
+      return `<tr><td>${label}</td><td>${val(s.muscle_pct, s.muscle_mass_kg)}</td>` +
+             `<td>${val(s.fat_pct, s.fat_mass_kg)}</td></tr>`;
+    }).join('') + '</tbody></table>'
+  ) : '';
+
+  const imp = x.impedance_segments_ohm || result.impedance_segments_ohm || {};
+  const impRows = _SCAN_LIMBS.filter(([k]) => imp[k]);
+  document.getElementById('scan-results-impedance').innerHTML = impRows.length ? (
+    '<table><thead><tr><th></th><th>Low freq</th><th>High freq</th></tr></thead><tbody>' +
+    impRows.map(([k, label]) =>
+      `<tr><td>${label}</td><td>${imp[k].f1.toFixed(1)} Ω</td><td>${imp[k].f2.toFixed(1)} Ω</td></tr>`
+    ).join('') + '</tbody></table>'
+  ) : '';
+
+  document.querySelectorAll('#scan-results h4').forEach(h => {
+    h.style.display = (h.nextElementSibling?.innerHTML ? '' : 'none');
+  });
+  panel.removeAttribute('hidden');
+}
+
 function scanSetStatus(msg, isError) {
   const el = document.getElementById('weighin-scan-status');
   if (!el) return;
@@ -5308,12 +5421,15 @@ function scanSetStatus(msg, isError) {
 
 let _scaleDevice = null;
 let _scaleNotifyChar = null;
+let _scaleIndicateChar = null;
+let _scaleWriteQueue = Promise.resolve(); // server-planned writes, strictly in order
 let _scaleWriteChar = null;
 let _scalePollTimer = null;
 let _scaleFlushTimer = null;
 let _scaleTimeoutTimer = null;
 let _scaleSessionId = null;
 let _scaleAdapterId = null;
+let _scaleServerWrites = false;
 let _scalePendingFrames = [];   // hex frames not yet POSTed
 let _scaleReadingId = null;     // stashed for submitWeighIn once a final reading lands
 const _SCALE_FLUSH_MS = 500;
@@ -5390,6 +5506,8 @@ async function stopScaleScan() {
   _scaleFlushTimer = null;
   _scaleTimeoutTimer = null;
   try { await _scaleNotifyChar?.stopNotifications(); } catch { /* already gone */ }
+  try { await _scaleIndicateChar?.stopNotifications(); } catch { /* already gone */ }
+  _scaleIndicateChar = null;
   try { _scaleDevice?.gatt?.disconnect(); } catch { /* already gone */ }
   _scaleNotifyChar = null;
   _scaleWriteChar = null;
@@ -5403,8 +5521,22 @@ function _setWi(id, value, decimals = 2) {
   if (el != null && value != null) el.value = Number(value).toFixed(decimals);
 }
 
+// Server-planned writes (the Fitdays full-BIA handshake): each must be
+// acknowledged, in order, with a short gap, or the scale drops the sweep.
+function _scaleQueueWrites(hexes) {
+  for (const hex of hexes || []) {
+    _scaleWriteQueue = _scaleWriteQueue.then(async () => {
+      if (!_scaleWriteChar) return;
+      _scaleDebugLine('↑', hex);
+      try { await _scaleWriteChar.writeValueWithResponse(_hexToBytes(hex)); } catch (e) { console.warn('Scale write failed', e); }
+      await new Promise(r => setTimeout(r, 150));
+    });
+  }
+  return _scaleWriteQueue;
+}
+
 async function _scaleFlushFrames() {
-  if (!_scalePendingFrames.length) return null;
+  if (!_scalePendingFrames.length && !_scaleServerWrites) return null;
   const frames = _scalePendingFrames;
   _scalePendingFrames = [];
   try {
@@ -5434,6 +5566,7 @@ async function scanScale() {
   if (btn) btn.disabled = true;
   _scalePendingFrames = [];
   _scaleReadingId = null;
+  hideScanResults(); // a previous scan's numbers must never linger
 
   try {
     scanSetStatus('Looking up scale protocol…', false);
@@ -5460,14 +5593,27 @@ async function scanScale() {
     _scaleNotifyChar = await service.getCharacteristic(d.notify_uuid);
     _scaleWriteChar = await service.getCharacteristic(d.write_uuid);
 
-    _scaleNotifyChar.addEventListener('characteristicvaluechanged', (event) => {
-      const hex = _bytesToHex(new Uint8Array(event.target.value.buffer));
+    const relay = (event) => {
+      const v = event.target.value;
+      const hex = _bytesToHex(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
       _scaleDebugLine('↓', hex);
       _scalePendingFrames.push(hex);
-    });
+    };
+    _scaleServerWrites = !!d.server_writes;
+    _scaleWriteQueue = Promise.resolve();
+    // Results arrive as indications on a second characteristic; the vendor
+    // app subscribes to it before the notify one, so do the same.
+    if (d.indicate_uuid) {
+      _scaleIndicateChar = await service.getCharacteristic(d.indicate_uuid);
+      _scaleIndicateChar.addEventListener('characteristicvaluechanged', relay);
+      await _scaleIndicateChar.startNotifications();
+    }
+    _scaleNotifyChar.addEventListener('characteristicvaluechanged', relay);
     await _scaleNotifyChar.startNotifications();
 
-    scanSetStatus('Connected — step on the scale (barefoot for impedance).', false);
+    scanSetStatus(_scaleServerWrites
+      ? 'Connected — stand on the scale barefoot and keep still while it measures.'
+      : 'Connected — step on the scale (barefoot for impedance).', false);
     for (const frame of d.handshake || []) {
       await _scaleWriteHex(frame);
       await new Promise(r => setTimeout(r, 60));
@@ -5484,11 +5630,13 @@ async function scanScale() {
     _scaleFlushTimer = setInterval(async () => {
       const result = await _scaleFlushFrames();
       if (!result) return;
+      if (result.writes?.length && result.state !== 'final') _scaleQueueWrites(result.writes);
       if (result.state === 'waiting') {
         scanSetStatus('Waiting for the scale…', false);
       } else if (result.state === 'reading') {
         _setWi('wi-weight', result.weight_kg, 2);
-        scanSetStatus(`Reading… ${result.weight_kg.toFixed(1)} kg — hold still for the impedance measurement.`, false);
+        scanSetStatus(`Reading… ${result.weight_kg.toFixed(1)} kg — hold still for the impedance measurement.` +
+          (result.note ? ` ⚠ ${result.note}` : ''), false);
       } else if (result.state === 'final') {
         const m = result.metrics || {};
         _setWi('wi-weight', result.weight_kg, 2);
@@ -5501,11 +5649,24 @@ async function scanScale() {
         _setWi('wi-metabolic', m.metabolic_age, 1);
         _scaleReadingId = result.reading_id ?? null;
         initWeighInTimestamp(); // stamp the reading with "now"
+        const x = result.extras || {};
+        _setWi('wi-bmr', x.bmr_kcal, 0); // Garmin stores this as basal_met
+        renderScanResults(result);
+        const extra = [
+          m.body_fat_pct != null ? `fat ${m.body_fat_pct}%` : null,
+          x.bmr_kcal != null ? `BMR ${x.bmr_kcal} kcal` : null,
+          x.protein_pct != null ? `protein ${x.protein_pct}%` : null,
+        ].filter(Boolean).join(', ');
         const done = `Done — ${result.weight_kg.toFixed(2)} kg` +
+          (extra ? ` (${extra})` : '') +
           (result.impedance_ohm ? `, impedance ${Math.round(result.impedance_ohm)} Ω` : '') +
-          '. Check the numbers, then Upload to Garmin.';
+          '. Saved with the per-limb breakdown — check the numbers, then Upload to Garmin.';
         scanSetStatus(result.note ? `${done} ⚠ ${result.note}` : done, false);
+        clearInterval(_scaleFlushTimer); // stop polling before the final writes
+        _scaleFlushTimer = null;
+        await _scaleQueueWrites(result.writes); // let the scale store the new weight
         await stopScaleScan();
+        loadScaleDetail();
       }
     }, _SCALE_FLUSH_MS);
   } catch (err) {
@@ -5531,6 +5692,7 @@ async function submitWeighIn() {
     visceral_fat: _wiNum('wi-visceral'),
     metabolic_age: _wiNum('wi-metabolic'),
     physique_rating: _wiNum('wi-physique'),
+    basal_met_kcal: _wiNum('wi-bmr'),
     // Links this upload to a prior Bluetooth scan's local reading row instead
     // of creating a duplicate one; null for a purely manual entry.
     reading_id: _scaleReadingId,

@@ -45,3 +45,7 @@ Thumbs.db
 
 # Claude Code local state (worktrees, sessions)
 .claude/
+
+# Proprietary vendor binaries (e.g. Fitdays libICBodyFatAlgorithms.so) — never commit
+vendor/
+*.so

@@ -46,6 +46,13 @@ class AdapterDescriptor:
     #: Fallback ``requestDevice`` name filters, for units that do not
     #: advertise their vendor service UUID in the advertisement packet.
     name_prefixes: list[str] = field(default_factory=list)
+    #: Optional second characteristic to subscribe to (GATT indications).
+    #: Its frames are relayed into the same session as ``notify_uuid``'s.
+    indicate_uuid: str | None = None
+    #: When true the handshake depends on what the scale has sent (timestamps,
+    #: checksums, live weight), so ``handshake`` stays empty and the server
+    #: returns the frames to write in each ``/api/scale/frames`` response.
+    server_writes: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Plain JSON-safe dict for the frontend."""
@@ -58,6 +65,8 @@ class AdapterDescriptor:
             "handshake": list(self.handshake),
             "poll": dict(self.poll) if self.poll else None,
             "name_prefixes": list(self.name_prefixes),
+            "indicate_uuid": self.indicate_uuid,
+            "server_writes": self.server_writes,
         }
 
 

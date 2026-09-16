@@ -162,6 +162,9 @@ class WeighInRequest(BaseModel):
     metabolic_age: float | None = None
     physique_rating: float | None = None
     bmi: float | None = None
+    # Basal metabolic rate. Garmin stores it as `basal_met`; the Fitdays
+    # scan supplies it, a manual entry usually will not.
+    basal_met_kcal: float | None = None
     # Id of a scale_readings row already saved by /api/scale/frames — set
     # when this weigh-in originated from a Bluetooth scan, so we mark that
     # row uploaded instead of creating a duplicate local reading.
@@ -288,6 +291,31 @@ def _extract_assistant_text(history: list[dict]) -> str:
             if text:
                 return text
     return ""
+
+
+def _last_stored_weight(bundle) -> float | None:
+    """Most recent saved weigh-in for this user, or ``None`` if there is none.
+
+    Written into the scale's profile frame so it sees a stable stored weight
+    instead of the live reading. An override (``FITDAYS_PROFILE_WEIGHT_KG``)
+    stays available for protocol experiments.
+    """
+    override = os.environ.get("FITDAYS_PROFILE_WEIGHT_KG", "").strip()
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            logger.warning("Ignoring unparseable FITDAYS_PROFILE_WEIGHT_KG=%r", override)
+    try:
+        today = date.today()
+        rows = bundle.agent._memory.get_scale_readings(
+            (today - timedelta(days=365)).isoformat(), (today + timedelta(days=1)).isoformat()
+        )
+    except Exception:
+        logger.exception("Could not read the last stored weight for the scale profile")
+        return None
+    weights = [r.get("weight_kg") for r in rows if r.get("weight_kg")]
+    return float(weights[-1]) if weights else None
 
 
 def _evict_scale_sessions() -> None:
@@ -1191,14 +1219,6 @@ async def scale_frames(req: ScaleFramesRequest):
     session["updated"] = datetime.utcnow()
 
     frame_count = len(session["frames"])
-    reading = adapter.decode(session["frames"])
-    if reading is None:
-        return {"state": "waiting", "frame_count": frame_count}
-    if not reading.stable:
-        return {"state": "reading", "weight_kg": reading.weight_kg, "frame_count": frame_count}
-
-    # Stable: compute whatever body composition the user's profile supports,
-    # persist locally, and drop the session buffer — the scan is done.
     identity = _resolve_user_identity(bundle.agent._settings)
     height_raw = identity.get("height_cm")
     try:
@@ -1208,23 +1228,86 @@ async def scale_frames(req: ScaleFramesRequest):
     age = identity.get("age")
     sex = identity.get("biological_sex") or ""
 
+    # Conversational protocols (Fitdays full BIA): the server decides what the
+    # browser writes next, from what the scale has said so far.
+    writes: list[str] = []
+    profile_note: str | None = None
+    if adapter.descriptor.server_writes:
+        from garmin_insights.scales.fitdays import ScaleProfile
+
+        profile = None
+        if height_cm is not None:
+            # The profile frame's weight field must NOT carry the live reading:
+            # the vendor app sends a stored weight there, and writing the live
+            # one made the scale show a wrong age on its own display (confirmed
+            # on hardware). Use the last saved weigh-in, resolved once per scan
+            # session rather than on every frame batch.
+            if "profile_weight" not in session:
+                session["profile_weight"] = await asyncio.get_event_loop().run_in_executor(
+                    None, _last_stored_weight, bundle
+                )
+            profile = ScaleProfile(height_cm=int(round(height_cm)), sex=sex or "male",
+                                   name=identity.get("name") or "",
+                                   profile_weight_kg=session["profile_weight"])
+        else:
+            profile_note = "Set HEIGHT_CM in this user's env so the scale can run its body-composition sweep."
+        plan_state = session.setdefault("plan", {})
+        writes = [f.hex() for f in adapter.plan_writes(session["frames"], plan_state, profile)]
+
+    reading = adapter.decode(session["frames"])
+    if reading is None:
+        return {"state": "waiting", "frame_count": frame_count, "writes": writes,
+                **({"note": profile_note} if profile_note else {})}
+    if not reading.stable:
+        return {"state": "reading", "weight_kg": reading.weight_kg, "frame_count": frame_count,
+                "writes": writes, **({"note": profile_note} if profile_note else {})}
+
+    # Stable: compute body composition, persist locally, drop the session.
     composition: dict[str, Any] = {}
-    if height_cm is not None:
+    comp_extras: dict[str, Any] = {}
+    note: str | None = None
+    impedance_raw = reading.extras.get("impedance_raw")
+    # A segment reading low-frequency below high-frequency is physically
+    # impossible (bad contact / mis-sampled sweep). Computing composition from
+    # it produces a confident, wrong body-fat figure, so save the weight and
+    # the raw impedance instead and say what happened.
+    suspect = reading.extras.get("impedance_suspect")
+    if impedance_raw and suspect:
+        note = ("Electrode contact looked wrong (" + ", ".join(suspect).replace("_", " ") +
+                ") — body composition skipped so a bad figure isn't saved. "
+                "Weight is fine. Re-scan barefoot with dry feet, standing still.")
+    elif impedance_raw and height_cm is not None:
+        from garmin_insights.scales.wla37 import compute_wla37, engine_status
+
+        loop = asyncio.get_event_loop()
+        vendor = await loop.run_in_executor(
+            None, lambda: compute_wla37(reading.weight_kg, height_cm, age, sex, impedance_raw)
+        )
+        if vendor is not None:
+            composition, comp_extras = dict(vendor["metrics"]), dict(vendor["extras"])
+            if age is None:
+                note = "Set BIRTH_DATE for an accurate metabolic age."
+        else:
+            status = engine_status()
+            note = ("Segmental impedance captured and saved, but Fitdays' body-composition "
+                    f"engine isn't installed ({status['error']}) — weight and BMI only.")
+    if not composition and height_cm is not None:
         composition = compute_body_composition(
             reading.weight_kg, reading.impedance_ohm, height_cm, float(age or 0), sex
         )
-    comp_extras = composition.pop("extras", {}) if composition else {}
+        comp_extras = composition.pop("extras", {}) if composition else {}
 
     _FULL_COMPOSITION_KEYS = {
         "bmi", "body_fat_pct", "body_water_pct", "muscle_mass_kg",
         "bone_mass_kg", "visceral_fat", "metabolic_age",
     }
-    note: str | None = None
-    if not _FULL_COMPOSITION_KEYS.issubset(composition.keys()):
-        if reading.impedance_ohm is None:
-            note = "Impedance not reported by the scale — weight and BMI only."
+    if note is None and not _FULL_COMPOSITION_KEYS.issubset(composition.keys()):
+        if reading.extras.get("no_impedance"):
+            note = "No electrode contact — stand barefoot with dry feet for body composition. Weight saved."
         elif height_cm is None or age is None or not sex:
             note = "Set HEIGHT_CM / BIRTH_DATE to compute body composition."
+        elif reading.impedance_ohm is None and not impedance_raw:
+            note = "Impedance not reported by the scale — weight and BMI only."
         else:
             note = "Impedance or profile values are out of the plausible range — weight and BMI only."
 
@@ -1259,7 +1342,17 @@ async def scale_frames(req: ScaleFramesRequest):
         "weight_kg": reading.weight_kg,
         "impedance_ohm": reading.impedance_ohm,
         "metrics": composition,
+        # From the merged extras, not just the engine's: the per-segment
+        # impedance comes from the protocol decoder, and the UI shows it.
+        # Internal bookkeeping (raw words, ids, variant) stays out.
+        "extras": {
+            k: v for k, v in extras.items()
+            if k not in ("composition_engine", "variant", "impedance_raw",
+                         "result_timestamp", "device_id")
+        },
         "frame_count": frame_count,
+        # Acknowledge the result to the scale so it stores the new weight.
+        "writes": writes,
     }
     if note:
         result["note"] = note
@@ -1304,7 +1397,7 @@ async def upload_weigh_in(req: WeighInRequest):
         "body_fat_pct": (0, 100), "body_water_pct": (0, 100),
         "muscle_mass_kg": (1, 150), "bone_mass_kg": (0.5, 15),
         "visceral_fat": (1, 60), "metabolic_age": (10, 120),
-        "physique_rating": (1, 9), "bmi": (5, 80),
+        "physique_rating": (1, 9), "bmi": (5, 80), "basal_met_kcal": (500, 6000),
     }
     for name, (lo, hi) in _WEIGH_IN_BOUNDS.items():
         v = getattr(req, name)
@@ -1359,6 +1452,7 @@ async def upload_weigh_in(req: WeighInRequest):
             user_settings.garminconnect_email,
             timestamp=req.timestamp,
             weight_kg=req.weight_kg,
+            basal_met_kcal=req.basal_met_kcal,
             percent_fat=req.body_fat_pct,
             percent_hydration=req.body_water_pct,
             muscle_mass_kg=req.muscle_mass_kg,
