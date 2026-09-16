@@ -110,8 +110,8 @@ def test_profile_frame_carries_the_stored_weight_not_the_live_one(api_client, pr
     # though the live reading on the platform now reads 72.4 kg.
     body = _post(api_client, "s-w2", [HELLO, LIVE_72_4]).json()
     c0 = next(bytes.fromhex(w) for w in body["writes"] if split_frame(bytes.fromhex(w))[1] == 0xC0)
-    assert c0[14:16] == (72100 & 0xFFFF).to_bytes(2, "big")
-    assert c0[14:16] != (72400 & 0xFFFF).to_bytes(2, "big")
+    assert c0[13:15] == (7210).to_bytes(2, "big")   # 72.10 kg, the stored weigh-in
+    assert c0[13:15] != (7240).to_bytes(2, "big")   # not the 72.40 kg live reading
 
 
 def test_missing_vendor_engine_still_saves_weight_and_impedance(api_client, profile, monkeypatch):

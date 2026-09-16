@@ -107,12 +107,10 @@ class ScaleProfile:
     sex: str = "male"
     name: str = ""
     user_id: bytes = _DEFAULT_USER_ID
-    #: Weight written into the profile frame's 16-bit weight field. The vendor
-    #: app does NOT put the live reading there: across one captured session it
-    #: sent 71.334 kg before the weigh-in and 72.614 kg after, while the actual
-    #: measurement was 71.95 kg. So this is a stored profile weight, and
-    #: overwriting it with the live value appears to upset the age the scale
-    #: shows on its own display. ``None`` falls back to the live weight.
+    #: Weight put in the profile frame while ARMING the sweep. The vendor app
+    #: sends the user's previous weight there (71.90 kg in the capture) and
+    #: only writes the newly measured value once the result arrives. ``None``
+    #: falls back to the live reading.
     profile_weight_kg: float | None = None
 
     @property
@@ -128,14 +126,29 @@ class ScaleProfile:
 
 
 def _weight_u16(weight_kg: float) -> bytes:
-    # Low 16 bits of grams; the scale assumes the 0x01 high byte (65-130 kg).
-    return (int(round(weight_kg * 1000)) & 0xFFFF).to_bytes(2, "big")
+    """Weight in units of 0.01 kg, big-endian.
+
+    Found by noticing the low byte never moved between the app's two profile
+    pushes (``1c 16 a6`` then ``1c 1b a6``): the weight is the u16 one byte
+    EARLIER than first assumed, and ``a6...`` begins a constant run. Decoded
+    that way the app's values are 71.90 kg before the weigh-in and 71.95 kg
+    after - the latter exactly the measurement.
+
+    Getting this offset wrong wrote our value one byte late, corrupting the
+    following byte, and the scale then displayed wild ages (16, then 110).
+    """
+    return (int(round(weight_kg * 100)) & 0xFFFF).to_bytes(2, "big")
+
+
+#: Fixed bytes between the weight and the user id. Unidentified, but constant
+#: in every profile frame the vendor app sent, so they are replayed verbatim.
+_PROFILE_CONST = bytes.fromhex("a61c251d6a0f")
 
 
 def _profile_tail(p: ScaleProfile, weight_kg: float) -> bytes:
     return (
-        bytes([p.gender_code, int(p.height_cm) & 0xFF, 0x1C]) + _weight_u16(weight_kg)
-        + bytes.fromhex("1c251d6a0f") + p.user_id + bytes([0x01, 0x01, 0x03]) + p.name_bytes
+        bytes([p.gender_code, int(p.height_cm) & 0xFF]) + _weight_u16(weight_kg)
+        + _PROFILE_CONST + p.user_id + bytes([0x01, 0x01, 0x03]) + p.name_bytes
     )
 
 
@@ -338,7 +351,8 @@ def plan_writes(
         ]
         state["phase"] = "armed"
     elif phase == "armed" and result is not None:
-        w = profile.profile_weight_kg or result["weight_kg"]
+        # Post-measurement the app writes the weight it just measured.
+        w = result["weight_kg"]
         out = [_ctrl(nxt(), 0x3A), build_c0(nxt(), profile, w, now, tz), build_c1(nxt(), profile, w)]
         state["phase"] = "done"
 

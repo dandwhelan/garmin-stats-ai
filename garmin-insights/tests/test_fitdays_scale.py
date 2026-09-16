@@ -44,11 +44,15 @@ def test_split_frame_rejects_bad_checksum_and_length():
 
 
 def test_profile_frames_reproduce_the_app_byte_for_byte():
-    weight = (0x10000 + 0x16A6) / 1000  # the C0 weight field the app sent
-    assert build_c0(1, DAN, weight, 0x6AA9A5CD, 60).hex() == (
+    # 71.90 kg is what the app's own frame encodes (0x1C16 = 7190, in 0.01 kg).
+    assert build_c0(1, DAN, 71.90, 0x6AA9A5CD, 60).hex() == (
         "01001b00c06aa9a5cd003c01b91c16a61c251d6a0f124de8bf01010344616e28")
-    assert build_c1(2, DAN, weight).hex() == (
+    assert build_c1(2, DAN, 71.90).hex() == (
         "02001600c10101b91c16a61c251d6a0f124de8bf01010344616e29")
+    # ...and the app's post-measurement frame carried exactly the weight it
+    # had just measured, 71.95 kg.
+    assert build_c0(11, DAN, 71.95, 0x6AA9A5E4, 60).hex() == (
+        "0b001b00c06aa9a5e4003c01b91c1ba61c251d6a0f124de8bf01010344616e24")
     assert make_frame(4, 0xB6, H("0000034000")).hex() == "04000600b6000003400039"
 
 
@@ -126,6 +130,8 @@ def test_planner_arms_once_then_finalises_once():
 
     frames += [SETTLED_72_1, FRESH_RESULT]
     final = plan_writes(frames, state, DAN, now=0x6AA9A5CD)
+    # post-measurement the app writes the weight it just measured (72.10 kg)
+    assert next(f for f in final if f[4] == 0xC0)[13:15] == H("1c2a")
     assert [f[4] for f in final] == [0xB0, 0xC0, 0xC1] and final[0][5] == 0x3A
     assert [f[0] for f in final] == [10, 11, 12]
     assert state["phase"] == "done" and plan_writes(frames, state, DAN) == []
@@ -136,12 +142,12 @@ def test_profile_weight_can_be_pinned_independently_of_the_live_reading():
     one: in the captured session it sent 71.334 kg before the weigh-in and
     72.614 kg after, while the measurement itself was 71.95 kg."""
     frames = [HELLO, LIVE_72_4]  # live reading is 72.400 kg
-    pinned = ScaleProfile(height_cm=185, sex="male", name="Dan", profile_weight_kg=71.334)
+    pinned = ScaleProfile(height_cm=185, sex="male", name="Dan", profile_weight_kg=71.90)
     c0 = next(w for w in plan_writes(frames, {}, pinned, now=0x6AA9A5CD) if w[4] == 0xC0)
-    assert c0[14:16] == H("16a6")  # 71334 g, low 16 bits - the app's own value
+    assert c0[13:15] == H("1c16")  # 7190 = 71.90 kg - the app's own value
 
     c0_live = next(w for w in plan_writes(frames, {}, DAN, now=0x6AA9A5CD) if w[4] == 0xC0)
-    assert c0_live[14:16] == H("1ad0")  # 72400 g - falls back to the live reading
+    assert c0_live[13:15] == H("1c48")  # 7240 - falls back to the live reading
 
 
 def test_planner_without_profile_sends_nothing():
