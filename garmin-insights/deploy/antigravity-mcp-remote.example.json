@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "garmin-dan": {
+      "serverUrl": "http://192.168.4.148:8765/mcp"
+    },
+    "garmin-helen": {
+      "serverUrl": "http://192.168.4.148:8766/mcp"
+    }
+  }
+}

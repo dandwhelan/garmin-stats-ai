@@ -26,7 +26,7 @@ A privacy-first health analytics platform: fetches data from Garmin Connect, sto
 ## Project Structure
 
 - **`garmin-grafana/`** — Data ingestion engine. Fetches metrics (HR, sleep, stress, HRV, activities, body composition) from Garmin Connect and writes them to SQLite.
-- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab) and CLI, powered by Claude. Defaults to `claude-sonnet-5`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-8`. Multi-user aware: one web server can serve any number of users via a header dropdown, each backed by their own SQLite DB and AI agent instance.
+- **`garmin-insights/`** — AI analysis layer. Web interface (dashboard + chat + custom-chart "Entities" tab), CLI, and an optional **MCP server** (`garmin-insights-mcp`) so Cursor / other MCP clients can query the same tools. Defaults to `claude-sonnet-5`; opt into Opus by setting `CLAUDE_MODEL=claude-opus-4-8`. Multi-user aware: one web server can serve any number of users via a header dropdown, each backed by their own SQLite DB and AI agent instance.
 - **`users/`** — Per-user `.env` files for multi-user mode (one Garmin account per file). Real `.env`s are git-ignored; `*.env.example` templates are checked in. Each file declares `DISPLAY_NAME`, `BIOLOGICAL_SEX`, `START_WEB`, plus its own DB / token paths.
 - **`scripts/`** — Launcher scripts (`run-user.sh`, `run-dan.sh`, `run-helen.sh`) that start a fetcher (and optionally a web server) for one user, suitable for `cron @reboot`. Honours `START_WEB=false` so only one user's launcher owns the shared dashboard while others run fetchers only.
 
@@ -47,6 +47,8 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 pip install -e garmin-grafana
 pip install -e garmin-insights
+# Optional: MCP server for Cursor / Claude Desktop
+pip install -e "garmin-insights[mcp]"
 ```
 
 ## Configuration
@@ -229,6 +231,19 @@ garmin-insights scan --weekly # full weekly summary
 garmin-insights status        # check DB + API connectivity
 ```
 
+### MCP (Cursor / Claude Desktop / Antigravity)
+
+Two always-on servers on the Pi, one per user — each only ever reads that user's DB:
+
+| Client entry | URL | systemd unit |
+|---|---|---|
+| `garmin-dan` | `http://192.168.4.148:8765/mcp` | `garmin-insights-mcp@dan` |
+| `garmin-helen` | `http://192.168.4.148:8766/mcp` | `garmin-insights-mcp@helen` |
+
+Each server carries the in-app agent's full guidance (medical knowledge base, evidence-tier wording rules, identity) as its MCP instructions, names its user, and adds `get_current_context` (today's date, cycle phase, environmental confounders, deterministic findings) and `get_evidence(rule)` (citations for knowledge-base rules). The scan prompts (`morning` … `weekly`) are built live with today's findings. Read-only unless `--allow-writes`.
+
+Client setup, operations and troubleshooting: **[docs/mcp.md](docs/mcp.md)**.
+
 ## Multi-user mode — how it works at runtime
 
 The full setup steps live under [Multi-user setup (one web server, N fetchers)](#multi-user-setup-one-web-server-n-fetchers). At runtime:
@@ -397,6 +412,8 @@ The agent defaults to **`claude-sonnet-5`** (fast, cost-effective). Set `CLAUDE_
 - **Per-session memory** — each browser tab has its own conversation history, separate from CLI sessions
 - **True token streaming** — the web chat uses Server-Sent Events to stream tokens as Claude generates them
 - **Copy prompt** — a button in the scan/chat area generates a single self-contained portable prompt (system context + 30-day data snapshot, minified and optimised) that can be pasted into any external LLM (Claude.ai, ChatGPT, Gemini, etc.) without needing API keys. The snapshot includes daily summaries, baselines, lifestyle logs, per-session workouts (type / HR / km / kcal), and slow-moving fitness markers (VO2 max, fitness age, weight, body fat), plus any per-day environment context — the same picture the tool-calling agent would assemble for itself
+- **MCP server** (`garmin-insights-mcp`) — optional per-user bridge so Cursor, Claude Desktop, or Antigravity get the same tools, live scan prompts and evidence guardrails as the in-app agent; see [docs/mcp.md](docs/mcp.md)
+- **Predefined chat chips + full scan set** — the web chat offers one-click questions; AI Health Scan exposes morning / midday / evening / night / weekly / general
 - **Copy stats** (Activity Map) — exports all stats for the selected activity as formatted markdown to clipboard; no GPS coordinates included
 - **User identity in the header** — web UI shows a name badge (`DISPLAY_NAME` or name derived from the Garmin email) and a colour-coded last-sync badge that auto-refreshes every 30 s (green < 10 min, amber < 60 min, red otherwise). In multi-user mode a dropdown switches between configured users; the badge, AI agent, chat session, and dashboard all repoint to the selected user.
 - **Cycle-aware AI (framed as confounder, not cause)** — for users whose `BIOLOGICAL_SEX=Female` and who have data in the `menstrual_cycle` table, every Claude API call gets a dynamic system block with the user's current phase + day. The block instructs the model to use cycle phase as a context label, not a single explanation — luteal-phase RHR↑ / HRV↓ is normal physiology and should be ranked against sleep loss, alcohol, late training, heat, and travel before being attributed to phase. Male users are explicitly told they have no cycle data so the model doesn't fabricate cycle interpretations.

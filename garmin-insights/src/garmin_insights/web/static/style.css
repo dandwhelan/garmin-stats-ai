@@ -1376,13 +1376,47 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   40% { transform: translateY(-6px); }
 }
 
+/* Chat suggestion chips */
+.chat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.chat-chip {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  line-height: 1.2;
+  font-family: inherit;
+}
+
+.chat-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+}
+
+.chat-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Chat footer */
 .chat-footer {
   display: flex;
   gap: 8px;
   align-items: flex-end;
   padding: 12px 0 16px;
-  border-top: 1px solid var(--border);
+  border-top: none;
 }
 
 #chat-input {

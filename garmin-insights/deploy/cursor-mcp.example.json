@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "garmin-dan": {
+      "command": "/home/you/garmin-stats-ai/.venv/bin/garmin-insights-mcp",
+      "args": ["--user", "dan"],
+      "cwd": "/home/you/garmin-stats-ai"
+    },
+    "garmin-helen": {
+      "command": "/home/you/garmin-stats-ai/.venv/bin/garmin-insights-mcp",
+      "args": ["--user", "helen"],
+      "cwd": "/home/you/garmin-stats-ai"
+    }
+  }
+}

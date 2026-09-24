@@ -1502,9 +1502,13 @@ async def chat_history(
 async def scan(body: ScanRequest):
     bundle = _require_user(body.user)
 
-    valid_focus = {"general", "morning", "midday", "evening", "night", "weekly"}
-    if body.focus not in valid_focus:
-        raise HTTPException(status_code=400, detail=f"focus must be one of {valid_focus}")
+    from garmin_insights.agent import ALL_SCAN_FOCUSES
+
+    if body.focus not in ALL_SCAN_FOCUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"focus must be one of {sorted(ALL_SCAN_FOCUSES)}",
+        )
 
     try:
         loop = asyncio.get_event_loop()
@@ -1553,9 +1557,13 @@ async def generate_prompt(body: PromptRequest):
     if not body.message and not body.focus:
         raise HTTPException(status_code=400, detail="Provide either 'message' or 'focus'")
     if body.focus:
-        valid_focus = {"general", "morning", "midday", "evening", "weekly"}
-        if body.focus not in valid_focus:
-            raise HTTPException(status_code=400, detail=f"focus must be one of {valid_focus}")
+        from garmin_insights.agent import ALL_SCAN_FOCUSES
+
+        if body.focus not in ALL_SCAN_FOCUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"focus must be one of {sorted(ALL_SCAN_FOCUSES)}",
+            )
     try:
         loop = asyncio.get_event_loop()
         prompt = await loop.run_in_executor(
