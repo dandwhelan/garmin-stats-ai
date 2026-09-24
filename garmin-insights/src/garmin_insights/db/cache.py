@@ -24,6 +24,9 @@ from garmin_insights.stats_utils import metabolic_age_years, to_kg
 
 logger = logging.getLogger(__name__)
 
+# Below this much recorded sleep the night wasn't captured by the watch.
+_MIN_RECORDED_SLEEP_S = 3600
+
 # Key metrics we track baselines for
 _BASELINE_METRICS = [
     "restingHeartRate", "stressPercentage", "highStressPercentage",
@@ -106,6 +109,16 @@ class CacheBuilder:
                 if val is not None and not (isinstance(val, float) and np.isnan(val)):
                     key = logical if logical not in summary else f"sleep_{logical}"
                     summary[key] = float(val) if isinstance(val, (int, float, np.number)) else val
+
+        # A night the watch didn't record (off the wrist / charging) leaves
+        # sleepingSeconds ~0 and Garmin books the whole night as sedentary —
+        # ~21 h "sedentary" days that inflate the sedentarySeconds baseline and
+        # fire false sedentary_stress_coupling findings. Neither value measures
+        # anything on such a day, so drop both rather than cache them.
+        sleeping = summary.get("sleepingSeconds")
+        if is_complete and (sleeping is None or sleeping < _MIN_RECORDED_SLEEP_S):
+            summary.pop("sleepingSeconds", None)
+            summary.pop("sedentarySeconds", None)
 
         # -- TrainingReadiness --
         df_tr = self._repo.query_training_readiness(date, date)

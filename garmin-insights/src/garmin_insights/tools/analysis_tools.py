@@ -148,12 +148,47 @@ _CUMULATIVE_METRICS = {
     "moderateIntensityMinutes", "vigorousIntensityMinutes",
     "stressPercentage", "highStressPercentage",
     "bodyBatteryDrainedValue", "bodyBatteryChargedValue",
-    "sleepingSeconds",
+    "sleepingSeconds", "sedentarySeconds",
     # Not sums, but only final at end of day: the battery floor happens in the
     # evening and the day's max HR can rise until midnight, so a mid-day value
     # reads as a false "above baseline" anomaly.
     "bodyBatteryLowestValue", "maxHeartRate",
 }
+
+
+def _behavior_present(entry: dict | None) -> bool:
+    """Presence convention shared across the codebase: status==1 OR value>0."""
+    return bool(entry) and (
+        entry.get("status") == 1 or (entry.get("value") or 0) > 0
+    )
+
+
+# A day counts as journaled when something was logged present within this
+# many days either side — tolerant of short gaps (a genuine all-"no" day, a
+# single-behaviour tracker) while excluding a stretch where logging stopped.
+JOURNAL_ACTIVE_RADIUS_DAYS = 3
+
+
+def journal_active_dates(present_dates) -> set[str]:
+    """Dates (YYYY-MM-DD) on which the lifestyle journal was in use.
+
+    Garmin writes a status-0 row for every tracked behaviour every day, whether
+    or not the user opened the journal, so "logged no" and "didn't log" are
+    indistinguishable. Once a user stops journaling, every later day would land
+    in a comparison's "behaviour absent" arm and bias it; only days near an
+    actual logged-present entry are evidence the journal was in use.
+    """
+    from datetime import datetime, timedelta
+
+    active: set[str] = set()
+    for d in present_dates:
+        try:
+            day = datetime.strptime(str(d)[:10], "%Y-%m-%d")
+        except ValueError:
+            continue
+        for off in range(-JOURNAL_ACTIVE_RADIUS_DAYS, JOURNAL_ACTIVE_RADIUS_DAYS + 1):
+            active.add((day + timedelta(days=off)).strftime("%Y-%m-%d"))
+    return active
 
 
 class AnalysisEngine:
@@ -245,6 +280,12 @@ class AnalysisEngine:
         # +1 shift, any missing day (unworn watch / sync gap) pairs a behavior
         # with the wrong night's sleep. Look the target date up explicitly.
         by_date = {s["date"]: s for s in summaries if s.get("date")}
+        active_dates = journal_active_dates(
+            s["date"] for s in summaries
+            if s.get("date") and any(
+                _behavior_present(e) for e in (s.get("lifestyle") or {}).values()
+            )
+        )
 
         for s in summaries:
             behavior_date = s.get("date")
@@ -271,7 +312,7 @@ class AnalysisEngine:
             # Check if behavior was present (status=1)
             if behavior_data and behavior_data.get("status") == 1:
                 vals_with.append(float(metric_val))
-            else:
+            elif behavior_date in active_dates:
                 vals_without.append(float(metric_val))
 
         # We allow N=1 for descriptive stats, even if significance test is impossible
@@ -380,11 +421,10 @@ class AnalysisEngine:
                 continue
 
             behavior_data = s.get("lifestyle", {}).get(canonical) if canonical else None
-            # Presence convention shared across the codebase: status==1 OR value>0.
-            on = bool(behavior_data) and (
-                behavior_data.get("status") == 1 or (behavior_data.get("value") or 0) > 0
-            )
-            (vals_on if on else vals_off).append(float(metric_val))
+            # No journal_active_dates gate here: the experiment protocol has the
+            # user leave the journal unlogged on off-days, so every day since
+            # the start date is a deliberate on- or off-day.
+            (vals_on if _behavior_present(behavior_data) else vals_off).append(float(metric_val))
 
         n_on, n_off = len(vals_on), len(vals_off)
         mean_on = float(np.mean(vals_on)) if vals_on else None
