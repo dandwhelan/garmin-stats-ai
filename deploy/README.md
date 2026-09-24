@@ -6,6 +6,7 @@
 |------|---------|
 | `garmin-insights.service` | Runs the web server on boot (one instance, all users) |
 | `garmin-fetch@.service` | Template — one running instance per Garmin account |
+| `garmin-insights-mcp@.service` | Always-on MCP HTTP for Windows clients (`@dan` :8765, `@helen` :8766) — see [docs/mcp.md](../docs/mcp.md) |
 
 ---
 

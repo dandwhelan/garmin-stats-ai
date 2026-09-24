@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from garmin_insights.db.sqlite_repo import utc_to_local_day
+from garmin_insights.tools.analysis_tools import journal_active_dates
 from garmin_insights.stats_utils import (
     NEXT_DAY_LAG_METRICS,
     correlate_pair,
@@ -330,6 +331,16 @@ class VisualizationService:
         for k in ("sleepScore", "avgOvernightHrv", "restingHeartRate"):
             ds[k] = ds["metric_json"].apply(lambda j, kk=k: _val(j, kk))
 
+        # Only days the journal was actually used can be "behaviour absent" —
+        # Garmin can't distinguish "logged no" from "didn't log", so once a
+        # user stops journaling every later day would otherwise pile into the
+        # without-arm (see analysis_tools.journal_active_dates).
+        active_dates = journal_active_dates(lj["date"])
+        active_next = {
+            (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+            for d in active_dates
+        }
+
         results = []
         for behavior in sorted(lj["behavior"].dropna().unique().tolist()):
             with_dates = set(lj[lj["behavior"] == behavior]["date"])
@@ -344,7 +355,7 @@ class VisualizationService:
                 for d in with_dates
             }
             ds_with = ds[ds["date"].isin(next_dates)]
-            ds_without = ds[~ds["date"].isin(next_dates)]
+            ds_without = ds[ds["date"].isin(active_next) & ~ds["date"].isin(next_dates)]
             row: dict = {
                 "behavior": behavior,
                 "n_with": int(len(ds_with)),
@@ -355,7 +366,8 @@ class VisualizationService:
                               ("restingHeartRate", "rhr")):
                 if k not in NEXT_DAY_LAG_METRICS:  # same-day metric — no lag
                     w = ds[ds["date"].isin(with_dates)][k].dropna().astype(float)
-                    wo = ds[~ds["date"].isin(with_dates)][k].dropna().astype(float)
+                    wo = ds[ds["date"].isin(active_dates)
+                            & ~ds["date"].isin(with_dates)][k].dropna().astype(float)
                 else:
                     w = ds_with[k].dropna().astype(float)
                     wo = ds_without[k].dropna().astype(float)

@@ -197,3 +197,43 @@ def test_social_jet_lag_none_without_sleep_table(memory):
     # No sleep_summary table at all -> graceful None, not a crash.
     engine = AnalysisEngine(memory)
     assert engine.detect_social_jet_lag(days=25) is None
+
+
+def test_days_after_journaling_stopped_are_not_behavior_absent(memory):
+    # Logged daily (Alcohol or Sunlight) for 10 days, then stopped. The
+    # untracked stretch has great sleep; counting it as "no alcohol" would
+    # inflate the without-arm and exaggerate the alcohol effect.
+    base = datetime.now() - timedelta(days=28)
+
+    def day(offset):
+        return (base + timedelta(days=offset)).strftime("%Y-%m-%d")
+
+    for i in range(10):
+        drank = i % 2 == 0
+        life = {"Alcohol": {"status": 1 if drank else 0},
+                "Sunlight": {"status": 0 if drank else 1}}
+        memory.upsert_daily_summary(day(i), {"sleepScore": 70 if drank else 80,
+                                             "is_complete": True}, life)
+    for i in range(10, 27):
+        memory.upsert_daily_summary(day(i), {"sleepScore": 99, "is_complete": True},
+                                    {"Alcohol": {"status": 0}, "Sunlight": {"status": 0}})
+
+    result = AnalysisEngine(memory).compare_metric_with_behavior("Alcohol", "sleepScore", days=30)
+    assert result is not None
+    # Without-arm = nights after the logged sober days (80) plus the few
+    # nights inside the 3-day grace window — never the 17-day 99 stretch.
+    assert result.n_without <= 5 + 1 + 3
+
+
+def test_journal_active_dates_radius():
+    from garmin_insights.tools.analysis_tools import journal_active_dates
+
+    active = journal_active_dates(["2026-09-10"])
+    assert "2026-09-07" in active and "2026-09-13" in active
+    assert "2026-09-14" not in active and "2026-09-06" not in active
+
+
+def test_sedentary_seconds_is_cumulative():
+    from garmin_insights.tools.analysis_tools import _CUMULATIVE_METRICS
+
+    assert "sedentarySeconds" in _CUMULATIVE_METRICS

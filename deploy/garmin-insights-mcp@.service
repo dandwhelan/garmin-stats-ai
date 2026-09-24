@@ -1,0 +1,29 @@
+[Unit]
+Description=Garmin Insights MCP server (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dan
+Group=dan
+WorkingDirectory=/home/dan/garmin-data
+EnvironmentFile=-/home/dan/garmin-data/.env
+EnvironmentFile=-/home/dan/garmin-data/deploy/mcp-%i.env
+# MCP_PORT comes from deploy/mcp-%i.env (dan=8765, helen=8766)
+ExecStart=/home/dan/garmin-data/.venv/bin/garmin-insights-mcp \
+    --user %i \
+    --transport streamable-http \
+    --host 0.0.0.0 \
+    --port ${MCP_PORT} \
+    --allowed-host 192.168.4.148:* \
+    --allowed-host localhost:* \
+    --allowed-host 127.0.0.1:* \
+    --allowed-host pi5:*
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
