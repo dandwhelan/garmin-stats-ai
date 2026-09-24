@@ -86,6 +86,7 @@ def upload_body_composition(
     metabolic_age: float | None = None,
     physique_rating: float | None = None,
     bmi: float | None = None,
+    basal_met_kcal: float | None = None,
 ) -> None:
     """Push one weigh-in to Garmin Connect via the stored fetcher tokens.
 
@@ -142,6 +143,10 @@ def upload_body_composition(
             metabolic_age=_fit(metabolic_age, 1),
             physique_rating=_fit(physique_rating, 1),
             bmi=_fit(bmi, 10),
+            # Garmin also accepts active_met and visceral_fat_mass; the scale
+            # reports neither (its visceral figure is a rating, not a mass), so
+            # they stay unset rather than being synthesised.
+            basal_met=_fit(basal_met_kcal, 1),
         )
     except Exception as err:
         raise GarminUploadError(f"Garmin Connect rejected the upload: {err}") from err

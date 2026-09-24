@@ -5,12 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from .base import ScaleAdapter
+from .fitdays import FitdaysAdapter
 from .lefu import LefuAdapter
 
 __all__ = ["ADAPTERS", "get_adapter", "descriptors"]
 
 #: Adding a scale family is a one-line change here.
 ADAPTERS: dict[str, ScaleAdapter] = {
+    # First = the one the browser scans with by default.
+    "fitdays": FitdaysAdapter(),
     "lefu": LefuAdapter(),
 }
 

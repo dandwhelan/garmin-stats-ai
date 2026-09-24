@@ -27,6 +27,23 @@ open with *"Every tool on this server reads <Name>'s database only… if the
 conversation is about someone else, you are on the wrong server"*, and
 `garmin://profile` / `get_current_context` both report the user.
 
+## Quick start (send this to each user)
+
+Swap in your own entry — Dan: `garmin-dan` / port **8765**; Helen: `garmin-helen` / port **8766**.
+You must be on the home network (or Tailscale when away).
+
+| Client | Add inside `"mcpServers"` |
+|---|---|
+| Cursor (Settings → MCP, or `%USERPROFILE%\.cursor\mcp.json`) | `"garmin-helen": { "url": "http://192.168.4.148:8766/mcp" }` |
+| Claude Desktop (Settings → Developer → Edit Config; needs Node.js; fully quit + reopen) | `"garmin-helen": { "command": "npx", "args": ["-y", "mcp-remote", "http://192.168.4.148:8766/mcp"] }` |
+| Antigravity (Agent → ⋯ → MCP Servers → Manage → View raw config) | `"garmin-helen": { "serverUrl": "http://192.168.4.148:8766/mcp" }` |
+
+Then ask things like *"How was last night's sleep vs my baseline?"* or *"Any
+anomalies this week?"*, or pick a prompt: **morning, midday, evening, night,
+weekly, general**. The server knows your cycle phase, local weather / air
+quality / pollen and personal baselines, words findings by strength of
+evidence, never diagnoses, and is read-only.
+
 ## What a server exposes
 
 ### Instructions (sent once at connect)
