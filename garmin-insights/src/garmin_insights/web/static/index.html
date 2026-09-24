@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260916a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260924b" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -762,16 +762,25 @@
       <div class="scan-buttons">
         <button class="scan-btn" data-focus="general">General Scan</button>
         <button class="scan-btn" data-focus="morning">Morning Brief</button>
+        <button class="scan-btn" data-focus="midday">Midday Check-in</button>
+        <button class="scan-btn" data-focus="evening">Evening Review</button>
+        <button class="scan-btn" data-focus="night">Pre-bed Wind-down</button>
         <button class="scan-btn" data-focus="weekly">Weekly Summary</button>
       </div>
       <div class="scan-copy-row">
         <span class="scan-copy-label">Don't want to spend API tokens? Copy or download the prompt and paste/upload it into your own LLM chat (Claude.ai, ChatGPT, Gemini…):</span>
         <button class="copy-prompt-btn" data-focus="general" title="Copy General Scan prompt to clipboard">📋 General</button>
-        <button class="download-prompt-btn" data-focus="general" title="Download General Scan prompt as a .txt file (more reliable for large prompts)">⬇</button>
+        <button class="download-prompt-btn" data-focus="general" title="Download General Scan prompt as a .txt file">⬇</button>
         <button class="copy-prompt-btn" data-focus="morning" title="Copy Morning Brief prompt to clipboard">📋 Morning</button>
-        <button class="download-prompt-btn" data-focus="morning" title="Download Morning Brief prompt as a .txt file (more reliable for large prompts)">⬇</button>
+        <button class="download-prompt-btn" data-focus="morning" title="Download Morning Brief prompt as a .txt file">⬇</button>
+        <button class="copy-prompt-btn" data-focus="midday" title="Copy Midday Check-in prompt to clipboard">📋 Midday</button>
+        <button class="download-prompt-btn" data-focus="midday" title="Download Midday Check-in prompt as a .txt file">⬇</button>
+        <button class="copy-prompt-btn" data-focus="evening" title="Copy Evening Review prompt to clipboard">📋 Evening</button>
+        <button class="download-prompt-btn" data-focus="evening" title="Download Evening Review prompt as a .txt file">⬇</button>
+        <button class="copy-prompt-btn" data-focus="night" title="Copy Pre-bed Wind-down prompt to clipboard">📋 Night</button>
+        <button class="download-prompt-btn" data-focus="night" title="Download Pre-bed Wind-down prompt as a .txt file">⬇</button>
         <button class="copy-prompt-btn" data-focus="weekly" title="Copy Weekly Summary prompt to clipboard">📋 Weekly</button>
-        <button class="download-prompt-btn" data-focus="weekly" title="Download Weekly Summary prompt as a .txt file (more reliable for large prompts)">⬇</button>
+        <button class="download-prompt-btn" data-focus="weekly" title="Download Weekly Summary prompt as a .txt file">⬇</button>
       </div>
       <div id="scan-output" class="scan-output hidden"></div>
     </section>
@@ -934,9 +943,17 @@
             <button class="welcome-toggle" id="chat-welcome-toggle" title="Collapse welcome">−</button>
             <strong>Health Agent</strong>
             <p>Hello! I'm your personal health insights agent. I can analyse your Garmin data — ask me about your sleep, heart rate, HRV, activity history, lifestyle patterns, and more.</p>
-            <p>Try: <em>"How has my sleep been this week?"</em> or <em>"Does alcohol affect my HRV?"</em></p>
+            <p>Pick a suggestion below, or type your own question.</p>
           </div>
         </div>
+      </div>
+      <div class="chat-chips" id="chat-chips" aria-label="Suggested questions">
+        <button type="button" class="chat-chip" data-prompt="How was last night's sleep compared to my baseline?">Last night's sleep</button>
+        <button type="button" class="chat-chip" data-prompt="Any noteworthy anomalies in the last 7 days?">Anomalies this week</button>
+        <button type="button" class="chat-chip" data-prompt="Does alcohol affect my sleep score and overnight HRV? Use compare_behavior_impact with enough history.">Alcohol vs sleep/HRV</button>
+        <button type="button" class="chat-chip" data-prompt="Summarise my current baselines for RHR, overnight HRV, sleep score and body battery.">My baselines</button>
+        <button type="button" class="chat-chip" data-prompt="Are there any active personal experiments, and how are they going?">Active experiments</button>
+        <button type="button" class="chat-chip" data-prompt="How has bedroom temperature related to my sleep over the last 30 days?">Bedroom temp &amp; sleep</button>
       </div>
       <div class="chat-footer">
         <button id="history-btn" class="reset-btn" title="Load recent chat memory">🕘</button>
@@ -953,6 +970,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260916d"></script>
+  <script src="/static/app.js?v=20260924b"></script>
 </body>
 </html>

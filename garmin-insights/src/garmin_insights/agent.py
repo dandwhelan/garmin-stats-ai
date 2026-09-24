@@ -224,6 +224,9 @@ _SCAN_PROMPTS = {
     ),
 }
 
+# Web UI /api/scan and /api/prompt/generate stay in sync with this set.
+ALL_SCAN_FOCUSES = frozenset(_SCAN_PROMPTS)
+
 # Per-focus default snapshot window for the portable prompt. A morning brief
 # only needs the last few days (last night's sleep is keyed to today; yesterday
 # carries the relevant lifestyle/workouts), whereas a weekly/general scan wants
@@ -1656,6 +1659,12 @@ class HealthAgent:
         except Exception as e:
             logger.warning("Local scan for context injection failed: %s", e)
             return ""
+        # Non-significant behaviour comparisons (after the scanner's BH-FDR
+        # correction) are noise — handing them to the model as "findings"
+        # invites it to narrate them. Keep only the ones that survived.
+        findings["behavior_impacts"] = [
+            f for f in findings.get("behavior_impacts", []) if f.get("significant")
+        ]
         drop = {
             "medical_context", "citation", "confounders",
             "claim_strength", "measurement_confidence",

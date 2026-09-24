@@ -24,6 +24,9 @@ dev = [
     # anthropic transitive dep today, but the API tests depend on it directly.
     "httpx>=0.27",
 ]
+mcp = [
+    "mcp>=2.0",
+]
 
 # Runs Fitdays' own body-composition model (scales/wla37.py) under emulation.
 # Also needs the proprietary libICBodyFatAlgorithms.so in <repo>/vendor/ or at
@@ -36,6 +39,7 @@ scale-engine = [
 [project.scripts]
 garmin-insights = "garmin_insights.cli:main"
 garmin-web = "garmin_insights.web.app:run_server"
+garmin-insights-mcp = "garmin_insights.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=75.0"]

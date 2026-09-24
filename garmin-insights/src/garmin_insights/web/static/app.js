@@ -2414,6 +2414,18 @@ chatInput.addEventListener('keydown', e => {
 
 sendBtn.addEventListener('click', sendMessage);
 
+// Suggested questions — fill the composer and send immediately.
+document.querySelectorAll('.chat-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const prompt = chip.dataset.prompt;
+    if (!prompt || sendBtn.disabled) return;
+    openChatDrawer();
+    chatInput.value = prompt;
+    chatInput.dispatchEvent(new Event('input'));
+    sendMessage();
+  });
+});
+
 resetBtn.addEventListener('click', async () => {
   if (sessionId) {
     await fetch('/api/chat/reset', {
@@ -2488,6 +2500,7 @@ async function sendMessage() {
   chatInput.style.height = 'auto';
   sendBtn.disabled = true;
   chatInput.disabled = true;
+  document.querySelectorAll('.chat-chip').forEach(c => { c.disabled = true; });
 
   addMessage('user', escapeHtml(text).replace(/\n/g, '<br>'));
   addTypingIndicator();
@@ -2578,6 +2591,7 @@ async function sendMessage() {
     removeTypingIndicator();
     sendBtn.disabled = false;
     chatInput.disabled = false;
+    document.querySelectorAll('.chat-chip').forEach(c => { c.disabled = false; });
     chatInput.focus();
   }
 }

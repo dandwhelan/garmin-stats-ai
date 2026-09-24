@@ -384,9 +384,11 @@ def test_stress_trigger_leaderboard_thresholds_on_the_top_quintile(svc, sample_d
 
     for trigger in out["triggers"]:
         assert trigger["behavior"]
-        # lift is the frequency gap between high-stress and normal days.
+        # lift is the frequency gap between high-stress and normal days —
+        # computed from the unrounded frequencies, so allow one unit of
+        # 3-d.p. rounding against the rounded fields.
         assert trigger["lift"] == pytest.approx(
-            round(trigger["high_stress_freq"] - trigger["normal_stress_freq"], 3))
+            trigger["high_stress_freq"] - trigger["normal_stress_freq"], abs=0.0011)
         assert trigger["odds_ratio"] > 0
         total = trigger["count_on_high"] + trigger["count_on_low"]
         expected = "high" if total >= 20 else "medium" if total >= 10 else "low"

@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "garmin-dan": {
+      "command": "ssh",
+      "args": [
+        "-T",
+        "dan@192.168.4.148",
+        "cd /home/dan/garmin-data && exec /home/dan/garmin-data/.venv/bin/garmin-insights-mcp --user dan"
+      ]
+    },
+    "garmin-helen": {
+      "command": "ssh",
+      "args": [
+        "-T",
+        "dan@192.168.4.148",
+        "cd /home/dan/garmin-data && exec /home/dan/garmin-data/.venv/bin/garmin-insights-mcp --user helen"
+      ]
+    }
+  }
+}
