@@ -1311,6 +1311,10 @@ async def scale_frames(req: ScaleFramesRequest):
         else:
             note = "Impedance or profile values are out of the plausible range — weight and BMI only."
 
+    if composition:
+        from garmin_insights.scales.standards import enrich
+
+        comp_extras = enrich(composition, comp_extras, reading.weight_kg, height_cm, sex, age)
     extras = {**dict(reading.extras), **comp_extras, "variant": reading.variant}
     raw_frames_hex = "\n".join(f.hex() for f in session["frames"])
     taken_at = datetime.now().isoformat(timespec="seconds")

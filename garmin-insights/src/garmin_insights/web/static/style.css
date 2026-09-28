@@ -2057,3 +2057,16 @@ canvas { max-width: 100%; }
 }
 .scan-results-table td:first-child { color: var(--muted, #8b93a7); }
 .scan-results-table small { color: var(--muted, #8b93a7); }
+.scan-rating {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.scan-rating-standard, .scan-rating-excellent { background: rgba(46, 204, 113, 0.18); color: #2ecc71; }
+.scan-rating-low { background: rgba(52, 152, 219, 0.18); color: #5dade2; }
+.scan-rating-high { background: rgba(243, 156, 18, 0.18); color: #f5a623; }
