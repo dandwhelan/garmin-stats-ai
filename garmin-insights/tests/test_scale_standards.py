@@ -37,3 +37,8 @@ def test_helen_scan_ratings_match_app():
                ("bmi", "body_fat_pct", "body_water_pct", "muscle_rate_pct",
                 "skeletal_muscle_pct", "protein_pct", "visceral_fat"))
     assert r["subcutaneous_fat_pct"] == "Low"
+
+
+def test_enrich_tolerates_sparse_reading():
+    out = enrich({}, {}, 70.0, None, "", None)
+    assert "ratings" not in out and "ideal_weight_kg" not in out

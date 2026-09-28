@@ -2070,3 +2070,5 @@ canvas { max-width: 100%; }
 .scan-rating-standard, .scan-rating-excellent { background: rgba(46, 204, 113, 0.18); color: #2ecc71; }
 .scan-rating-low { background: rgba(52, 152, 219, 0.18); color: #5dade2; }
 .scan-rating-high { background: rgba(243, 156, 18, 0.18); color: #f5a623; }
+.scale-ratings { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 8px; font-size: 0.8rem; color: var(--muted, #8b93a7); }
+.scale-rating-item { white-space: nowrap; }

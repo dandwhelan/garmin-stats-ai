@@ -26,7 +26,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["compute_wla37", "engine_status"]
+__all__ = ["compute_wla37", "engine_status", "run_raw"]
 
 _SYMBOL = "_ZN23ICBodyFatAlgorithmWLA374calcE28__ICBodyFatAlgorithmParams__"
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -186,6 +186,16 @@ def compute_wla37(
     ``impedance_raw`` is the ten words straight from the result frame (ohms x10).
     Returns ``{"metrics": <DB columns>, "extras": <everything else>}``.
     """
+    raw = run_raw(weight_kg, height_cm, age, sex, impedance_raw)
+    if raw is None:
+        return None
+    return _decode(raw, weight_kg)
+
+
+def run_raw(
+    weight_kg: float, height_cm: float, age: float | None, sex: str, impedance_raw: list[int]
+) -> bytes | None:
+    """The engine's raw output struct, for decoding or offset discovery."""
     if len(impedance_raw) != 10 or not any(impedance_raw) or not height_cm:
         return None
     sex_code = 2 if str(sex).strip().lower() in ("female", "f", "2") else 1
@@ -208,7 +218,10 @@ def compute_wla37(
         except Exception as e:
             logger.warning("WLA37 emulation failed: %s", e)
             return None
+    return raw
 
+
+def _decode(raw: bytes, weight_kg: float) -> dict[str, Any]:
     d = lambda off: round(struct.unpack_from("<d", raw, off)[0], 2)  # noqa: E731
     i = lambda off: struct.unpack_from("<i", raw, off)[0]  # noqa: E731
     fat_pct, muscle_pct = d(0x08), d(0x10)

@@ -1557,9 +1557,9 @@ function renderScaleSegments(readings) {
     ['left_arm', 'Left arm', '#60a5fa'], ['right_arm', 'Right arm', '#a78bfa'],
     ['trunk', 'Trunk', '#fbbf24'], ['left_leg', 'Left leg', '#34d399'], ['right_leg', 'Right leg', '#f472b6'],
   ];
-  for (const [sectionId, canvasId, key, field] of [
-    ['scale-seg-muscle-section', 'scale-seg-muscle-chart', 'scaleSegMuscle', 'muscle_pct'],
-    ['scale-seg-fat-section', 'scale-seg-fat-chart', 'scaleSegFat', 'fat_pct'],
+  for (const [sectionId, canvasId, key, field, ratingField] of [
+    ['scale-seg-muscle-section', 'scale-seg-muscle-chart', 'scaleSegMuscle', 'muscle_pct', 'muscle_rating'],
+    ['scale-seg-fat-section', 'scale-seg-fat-chart', 'scaleSegFat', 'fat_pct', 'fat_rating'],
   ]) {
     const section = document.getElementById(sectionId);
     if (!section) continue;
@@ -1581,9 +1581,35 @@ function renderScaleSegments(readings) {
         responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
         scales: { x: commonScales().x, y: commonScales('% of standard').y },
+        plugins: {
+          ...commonPlugins(),
+          tooltip: {
+            ...(commonPlugins().tooltip || {}),
+            callbacks: {
+              label: (c) => {
+                const seg = segs[c.datasetIndex][0];
+                const rating = data[c.dataIndex].extras.segments?.[seg]?.[ratingField];
+                return `${c.dataset.label}: ${c.parsed.y?.toFixed(1)}%${rating ? ` (${rating})` : ''}`;
+              },
+            },
+          },
+        },
       },
     });
   }
+}
+
+// Latest reading's Fitdays-style ratings, as chips under the Scale Detail chart.
+function renderScaleRatings(readings) {
+  const el = document.getElementById('scale-ratings');
+  if (!el) return;
+  const latest = [...(readings || [])].reverse().find(r => r.extras?.ratings);
+  const labels = Object.fromEntries(Object.entries(_SCAN_RATING_KEYS).map(([l, k]) => [k, l]));
+  const ratings = latest?.extras?.ratings || {};
+  el.innerHTML = Object.keys(ratings).length
+    ? `<small>Latest (${(latest.taken_at || latest.date || '').slice(0, 10)}):</small> ` +
+      Object.entries(ratings).map(([k, r]) => `<span class="scale-rating-item">${labels[k] || k}${_ratingChip(r)}</span>`).join('')
+    : '';
 }
 
 function renderScaleDetail(readings) {
@@ -1596,6 +1622,7 @@ function renderScaleDetail(readings) {
   if (data.length === 0) { section.style.display = 'none'; return; }
   section.style.display = '';
 
+  renderScaleRatings(readings);
   const ctx = document.getElementById('scale-detail-chart');
   if (!ctx) return;
   const labels = data.map(r => (r.date || r.taken_at || '').slice(5, 10));
