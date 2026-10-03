@@ -605,8 +605,13 @@ class LifestyleService:
             cells = []
             seen = set(sub["date"])
             for d in dates:
-                v = sub[sub["date"] == d]["value"].mean() if d in seen else None
-                cells.append(None if pd.isna(v) else (1.0 if v is None else round(float(v), 2)))
+                if d not in seen:
+                    cells.append(None)
+                    continue
+                # A yes/no behaviour logged with no value has a NaN mean but was
+                # still logged — mark it 1.0 rather than dropping it.
+                v = sub[sub["date"] == d]["value"].mean()
+                cells.append(1.0 if pd.isna(v) else round(float(v), 2))
             out.append({
                 "behavior": behavior,
                 "count": int(counts[behavior]),

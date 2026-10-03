@@ -293,7 +293,9 @@ def _sample_rows(days: int = SAMPLE_DAYS):
         sleep_secs = int(max(3 * 3600, rng.gauss(7.1 * 3600, 2400) - drinks * 900))
 
         # Sleep midpoint drifts later at weekends -> social jet lag signal.
-        bed_hour = 23.2 + (1.2 if weekend else 0) + rng.gauss(0, 0.35)
+        # Capped before midnight: the fixture models "sleep started the previous
+        # evening", and a weekend drift past 24h would flip that per run date.
+        bed_hour = min(23.95, 22.4 + (1.2 if weekend else 0) + rng.gauss(0, 0.35))
         sleep_start = datetime.combine(day - timedelta(days=1), datetime.min.time()) \
             + timedelta(hours=bed_hour)
         sleep_end = sleep_start + timedelta(seconds=sleep_secs)

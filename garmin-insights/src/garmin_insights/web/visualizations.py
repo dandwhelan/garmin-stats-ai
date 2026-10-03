@@ -431,6 +431,8 @@ class VisualizationService:
         out: list[dict] = []
         for _, r in df.iterrows():
             secs = r["sleep_time_seconds"]
+            if pd.isna(secs):
+                secs = None
             try:
                 # Prefer stored timestamps; fall back to deriving from wake - duration.
                 if r.get("sleep_end") and not str(r["sleep_end"]) in ("", "None", "nan"):
@@ -466,7 +468,9 @@ class VisualizationService:
                 "dow": dow,
                 "bedtime": round(bed_h, 2),
                 "waketime": round(wake_h, 2),
-                "duration_h": round(int(secs) / 3600, 2),
+                # A row can carry bed/wake timestamps but a NULL duration —
+                # fall back to the bed→wake span rather than int(NaN).
+                "duration_h": round((int(secs) if secs else (wake_dt - bed_dt).total_seconds()) / 3600, 2),
                 "score": int(score) if score is not None and not (isinstance(score, float) and score != score) else None,
             })
         return out
