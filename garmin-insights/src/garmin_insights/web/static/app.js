@@ -4073,11 +4073,15 @@ function renderCycleHrv(payload) {
   renderCycleStress(payload.stress_by_phase);
 }
 
+// Deliberately not passed through tc(): these are cell fills carrying dark
+// flow marks (.cycle-cell is #0b0d12), and they must match the static legend
+// chips in index.html. Deepened for the light theme, Luteal fell to ~1.6:1
+// against the marks and no longer matched its legend chip.
 const CYCLE_PHASE_COLORS = {
-  Menstrual:  tc('#f87171'),
-  Follicular: tc('#34d399'),
-  Ovulatory:  tc('#fbbf24'),
-  Luteal:     tc('#a78bfa'),
+  Menstrual:  '#f87171',
+  Follicular: '#34d399',
+  Ovulatory:  '#fbbf24',
+  Luteal:     '#a78bfa',
 };
 
 function renderCycleCalendar(entries) {
