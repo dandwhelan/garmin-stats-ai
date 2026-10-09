@@ -23,6 +23,98 @@ function renderMarkdown(md) {
   return DOMPurify.sanitize(marked.parse(md));
 }
 
+// ---- Theme ----
+// The light theme is the default; the island nav's theme button cycles
+// light / dark / auto (stored under THEME_KEY, applied to <html data-theme>
+// by an inline script in index.html before first paint).
+//
+// Chart colours throughout this file are written as the original dark-palette
+// literals and passed through tc(). Dark theme: returned untouched. Light
+// theme: chrome colours (ticks, grid, tooltip, empty cells) map to the light
+// tokens and series hues are deepened so lines and fills stay legible on
+// white. Hex in -> 6-digit hex out, so callers that append an alpha suffix
+// (`color + '22'`) or interpolate gradient stops keep working.
+const THEME_KEY = 'garmin-theme';
+const isDarkTheme = () => document.documentElement.dataset.theme === 'dark';
+const LIGHT_CHROME = {
+  '#8892a4': '#5f6877',  // muted text, ticks, legends
+  '#2e3350': '#e2e5ea',  // grid lines, tooltip border
+  '#e2e8f0': '#14181e',  // primary text, composite line
+  '#22263a': '#ffffff',  // tooltip background
+  '#1a1d27': '#eceef1',  // empty heatmap / calendar cell
+  '#0f1117': '#eceef1',
+  '#3b3f4d': '#d6dae0',  // "rest" stress band
+  '#3a3f5a': '#cdd2da',
+  '#2a2d37': '#e3e6ea',
+  '#ffffff': '#14181e',
+  '#888888': '#7d8694',
+};
+const _tcCache = new Map();
+function _hex6(h) {
+  h = h.slice(1).toLowerCase();
+  return '#' + (h.length === 3 ? h.split('').map(c => c + c).join('') : h);
+}
+function _deepenRgb(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  let h = 0, sat = 0, l = (mx + mn) / 2;
+  if (mx !== mn) {
+    const d = mx - mn;
+    sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h /= 6;
+  }
+  if (l > 0.46) l = 0.46 - (l - 0.46) * 0.35;  // pull light hues down, keep their order
+  const q = l < 0.5 ? l * (1 + sat) : l + sat - l * sat, p = 2 * l - q;
+  const ch = t => {
+    t = (t + 1) % 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [ch(h + 1 / 3), ch(h), ch(h - 1 / 3)].map(v => Math.round(v * 255));
+}
+function tc(color) {
+  if (isDarkTheme()) return color;
+  if (_tcCache.has(color)) return _tcCache.get(color);
+  let out = color;
+  if (color[0] === '#') {
+    const hex = _hex6(color);
+    if (LIGHT_CHROME[hex]) out = LIGHT_CHROME[hex];
+    else {
+      const n = parseInt(hex.slice(1), 16);
+      out = '#' + _deepenRgb(n >> 16, (n >> 8) & 255, n & 255).map(v => v.toString(16).padStart(2, '0')).join('');
+    }
+  } else {
+    const m = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/);
+    if (m) {
+      const [r, g, b] = [+m[1], +m[2], +m[3]], a = m[4] ?? '1';
+      const rgb = (r > 200 && g > 200 && b > 200) ? [20, 28, 44]   // white/near-white overlay -> ink overlay
+        : (r === 120 && g === 130 && b === 150) ? [r, g, b]
+        : _deepenRgb(r, g, b);
+      out = `rgba(${rgb.join(',')},${a})`;
+    }
+  }
+  _tcCache.set(color, out);
+  return out;
+}
+
+const themeBtn = document.getElementById('theme-btn');
+const THEME_LABELS = { light: 'Theme: light', dark: 'Theme: dark', auto: 'Theme: follows your device' };
+function syncThemeButton() {
+  const pref = document.documentElement.dataset.themePref || 'light';
+  if (themeBtn) { themeBtn.title = THEME_LABELS[pref]; themeBtn.setAttribute('aria-label', THEME_LABELS[pref]); }
+}
+themeBtn?.addEventListener('click', () => {
+  const order = ['light', 'dark', 'auto'];
+  const cur = document.documentElement.dataset.themePref || 'light';
+  const next = order[(order.indexOf(cur) + 1) % order.length];
+  try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+  location.reload();
+});
+syncThemeButton();
+
 // ---- Active user ----
 const USER_KEY = 'garmin-active-user';
 let activeUser = localStorage.getItem(USER_KEY) || 'default';
@@ -119,6 +211,14 @@ function closeChatDrawer() {
   chatLauncher?.classList.remove('hidden');
 }
 chatLauncher?.addEventListener('click', openChatDrawer);
+// The bento's own "Ask" card does the launcher's job while it's on screen,
+// and the fixed launcher would sit on top of it.
+const bentoAsk = document.querySelector('.bento-ask');
+if (bentoAsk && chatLauncher && 'IntersectionObserver' in window) {
+  new IntersectionObserver(([entry]) => {
+    chatLauncher.classList.toggle('launcher-yield', entry.isIntersecting);
+  }, { threshold: 0.25 }).observe(bentoAsk);
+}
 chatDrawerClose?.addEventListener('click', closeChatDrawer);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && chatDrawer?.classList.contains('open')) closeChatDrawer();
@@ -142,6 +242,8 @@ function renderUserBadge(user) {
   userBadge.title = email ? `Logged in as ${email}` : name;
   // Also reflect the user in the document title so multi-tab browsing is clear
   document.title = `${name} · Garmin Health Insights`;
+  // The greeting names the user; the dashboard may have rendered first.
+  if (typeof dashboardData !== 'undefined' && dashboardData) renderTodayHero(dashboardData.summaries, dashboardData.baselines);
 }
 
 function formatRelativeTime(date) {
@@ -247,14 +349,26 @@ let activeMetric = 'sleepScore';
 // Date range state — null means "use default" (30d)
 let selectedStart = null;
 let selectedEnd = null;
+// The highlighted preset, in days, or null for a custom range. While a preset
+// is active its window is recomputed from today on every load, so the first
+// load matches the highlighted 30d (the backend's own default is end − 30,
+// i.e. 31 days) and the 5-minute refresh rolls over at midnight.
+let activePresetDays = 30;
+
+function presetRange(days) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - (days - 1));
+  return [localDateStr(start), localDateStr(end)];
+}
 
 const METRIC_CONFIG = {
-  sleepScore:            { label: 'Sleep Score',        unit: '',    decimals: 0, good: v => v >= 80, warn: v => v >= 60 },
-  restingHeartRate:      { label: 'Resting HR',         unit: ' bpm', decimals: 0, good: v => v <= 58, warn: v => v <= 65 },
-  avgOvernightHrv:       { label: 'Overnight HRV',      unit: ' ms',  decimals: 0, good: v => v >= 50, warn: v => v >= 35 },
-  bodyBatteryAtWakeTime: { label: 'Battery (wake)',      unit: '',    decimals: 0, good: v => v >= 70, warn: v => v >= 50 },
-  totalSteps:            { label: 'Steps',              unit: '',    decimals: 0, format: v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : String(Math.round(v)), good: v => v >= 10000, warn: v => v >= 7000 },
-  stressPercentage:      { label: 'Stress %',           unit: '%',   decimals: 0, good: v => v <= 20, warn: v => v <= 35 },
+  sleepScore:            { label: 'Sleep Score',        unit: '',    decimals: 0, dir: 1, good: v => v >= 80, warn: v => v >= 60 },
+  restingHeartRate:      { label: 'Resting HR',         unit: ' bpm', decimals: 0, dir: -1, poor: 'elevated', good: v => v <= 58, warn: v => v <= 65 },
+  avgOvernightHrv:       { label: 'Overnight HRV',      unit: ' ms',  decimals: 0, dir: 1, good: v => v >= 50, warn: v => v >= 35 },
+  bodyBatteryAtWakeTime: { label: 'Battery (wake)',      unit: '',    decimals: 0, dir: 1, good: v => v >= 70, warn: v => v >= 50 },
+  totalSteps:            { label: 'Steps',              unit: '',    decimals: 0, dir: 1, format: v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : String(Math.round(v)), good: v => v >= 10000, warn: v => v >= 7000 },
+  stressPercentage:      { label: 'Stress %',           unit: '%',   decimals: 0, dir: -1, poor: 'high', good: v => v <= 20, warn: v => v <= 35 },
 };
 
 function colorClass(metric, value) {
@@ -294,6 +408,23 @@ function getLatestAndPrev(summaries, key) {
   };
 }
 
+// Delta vs the 7-day average, classed by the metric's concern direction:
+// 'good' / 'bad' only once it moves more than half a 30-day sd, so ordinary
+// day-to-day noise stays neutral.
+function deltaVs7d(key, value, baseline) {
+  if (baseline?.avg_7d == null || value == null) return null;
+  const diff = value - baseline.avg_7d;
+  const spread = baseline.std_30d || baseline.std_7d;
+  const dir = METRIC_CONFIG[key]?.dir || 1;
+  const z = spread ? diff / spread : 0;
+  const cls = Math.abs(z) < 0.5 ? '' : (Math.sign(diff) === dir ? 'good' : 'bad');
+  // Whole units for counts: a steps delta read "-868.9".
+  const mag = Math.abs(diff) >= 100 ? Math.round(Math.abs(diff)).toLocaleString() : Math.abs(diff).toFixed(1);
+  return { diff, cls, text: `${diff >= 0 ? '+' : '−'}${mag} vs 7d avg` };
+}
+
+const THRESHOLD_WORDS = { good: 'good', warn: 'fair' };
+
 function renderCards(summaries, baselines) {
   Object.keys(METRIC_CONFIG).forEach(key => {
     const card = document.getElementById(`card-${key}`);
@@ -302,21 +433,140 @@ function renderCards(summaries, baselines) {
     if (!card || !valEl || !subEl) return;
 
     card.classList.remove('skeleton');
-    const { value, prevValue, date } = getLatestAndPrev(summaries, key);
+    const cfg = METRIC_CONFIG[key];
+    const { value, date } = getLatestAndPrev(summaries, key);
 
-    valEl.textContent = formatValue(key, value);
-    valEl.className = `metric-value ${colorClass(key, value)}`;
+    const text = formatValue(key, value);
+    const unit = (cfg.unit || '').trim();
+    valEl.innerHTML = unit && text.endsWith(cfg.unit)
+      ? `${escapeHtml(text.slice(0, -cfg.unit.length))}<small>${escapeHtml(unit)}</small>`
+      : escapeHtml(text);
+    const level = colorClass(key, value);
+    valEl.className = `metric-value ${level}`;
 
-    const baseline = baselines?.[key];
-    let sub = '';
-    if (date) sub += date;
-    if (baseline?.avg_7d != null && value != null) {
-      const diff = value - baseline.avg_7d;
-      const sign = diff >= 0 ? '+' : '';
-      sub += ` · ${sign}${diff.toFixed(1)} vs 7d avg`;
-    }
-    subEl.textContent = sub;
+    const chips = [];
+    const delta = deltaVs7d(key, value, baselines?.[key]);
+    if (delta) chips.push(`<span class="chip ${delta.cls}">${delta.text}</span>`);
+    if (level) chips.push(`<span class="chip level-${level}">${THRESHOLD_WORDS[level] || cfg.poor || 'low'}</span>`);
+    subEl.innerHTML = chips.join('') + (date ? `<span class="metric-when">${fmtShortDate(date)}</span>` : '');
   });
+  renderTodayExtras(summaries, baselines);
+  renderTodayHero(summaries, baselines);
+}
+
+function fmtShortDate(iso) {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+// Sleep-stage fills come from the --st-* tokens so the stage charts match the
+// bento's stage bar in both themes (an ordered ramp: deep strongest, then
+// REM, then light; awake in amber).
+function sleepStageColors() {
+  const v = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  return { deep: v('--st-deep'), rem: v('--st-rem'), light: v('--st-light'), awake: v('--st-awake') };
+}
+
+// Inline SVG sparkline of the last n values, endpoint emphasised.
+function sparklineSvg(values, n = 14) {
+  const pts = values.filter(v => v != null && isFinite(v)).slice(-n);
+  if (pts.length < 2) return '';
+  const lo = Math.min(...pts), hi = Math.max(...pts), w = 200, h = 44;
+  const xy = pts.map((p, i) => [i * w / (pts.length - 1), h - 6 - (p - lo) / ((hi - lo) || 1) * (h - 12)]);
+  const d = xy.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
+  const [ex, ey] = xy[xy.length - 1];
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+    `<path d="${d} L ${w} ${h} L 0 ${h} Z" class="spark-fill"/>` +
+    `<path d="${d}" class="spark-line" vector-effect="non-scaling-stroke"/>` +
+    `<circle cx="${ex}" cy="${ey}" r="3.5" class="spark-dot"/></svg>`;
+}
+
+function fmtHM(seconds) {
+  const m = Math.round((seconds || 0) / 60);
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+// The bento's per-card visuals: stage bar + 14-night bars on the sleep card,
+// sparklines on HRV / RHR / stress, a gauge for Body Battery, a reference
+// meter for steps. All drawn from the same summaries the numbers come from.
+function renderTodayExtras(summaries) {
+  const asc = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
+  const today = getLocalToday();
+  const complete = asc.filter(s => s.date < today);
+  const set = (key, html) => { const el = document.getElementById(`extra-${key}`); if (el) el.innerHTML = html; };
+
+  const night = [...asc].reverse().find(s => s.deepSleepSeconds != null || s.sleepTimeSeconds != null);
+  if (night) {
+    const parts = [
+      ['Deep', night.deepSleepSeconds, 'deep'], ['REM', night.remSleepSeconds, 'rem'],
+      ['Light', night.lightSleepSeconds, 'light'], ['Awake', night.awakeSleepSeconds, 'awake'],
+    ].filter(p => p[1] > 0);
+    const scores = asc.map(s => s.sleepScore).filter(v => v != null).slice(-14);
+    const lo = Math.min(...scores), hi = Math.max(...scores);
+    set('sleepScore',
+      (night.sleepTimeSeconds ? `<div class="sleep-asleep">${fmtHM(night.sleepTimeSeconds)} asleep</div>` : '') +
+      (parts.length ? `<div class="stage-bar" role="img" aria-label="Sleep stages">${parts.map(p =>
+          `<i class="st-${p[2]}" style="flex:${p[1]}" title="${p[0]} ${fmtHM(p[1])}"></i>`).join('')}</div>
+        <div class="stage-key">${parts.map(p => `<span class="st-${p[2]}">${p[0]} ${fmtHM(p[1])}</span>`).join('')}</div>` : '') +
+      (scores.length > 1 ? `<div class="nights-label"><span>Sleep score, last ${scores.length} nights</span><span>${lo} to ${hi}</span></div>
+        <div class="nights">${scores.map((v, i) =>
+          `<i class="${i === scores.length - 1 ? 'last' : ''}" style="height:${Math.max(8, (v - 40) / 60 * 100).toFixed(0)}%" title="${v}"></i>`).join('')}</div>` : ''));
+  }
+
+  set('avgOvernightHrv', sparklineSvg(asc.map(s => s.avgOvernightHrv)));
+  set('restingHeartRate', sparklineSvg(asc.map(s => s.restingHeartRate)));
+  set('stressPercentage', sparklineSvg(complete.map(s => s.stressPercentage)));
+
+  const bb = getLatestAndPrev(summaries, 'bodyBatteryAtWakeTime').value;
+  if (bb != null) {
+    const a = Math.PI * (1 - Math.max(0, Math.min(100, bb)) / 100);
+    const x = (110 + 90 * Math.cos(a)).toFixed(1), y = (110 - 90 * Math.sin(a)).toFixed(1);
+    set('bodyBatteryAtWakeTime', `<svg class="gauge" viewBox="0 0 220 124" role="img" aria-label="Body Battery ${bb} of 100">
+      <path d="M20 110 A90 90 0 0 1 200 110" class="gauge-track"/>
+      <path d="M20 110 A90 90 0 0 1 ${x} ${y}" class="gauge-fill"/>
+      <text x="20" y="124" class="gauge-tick">0</text><text x="200" y="124" text-anchor="end" class="gauge-tick">100</text></svg>`);
+  }
+
+  const steps = getLatestAndPrev(summaries, 'totalSteps').value;
+  if (steps != null) {
+    const scale = Math.max(12000, steps * 1.1), ref = 7500;
+    set('totalSteps', `<div class="meter" title="Marker at 7,500/day"><i style="width:${(steps / scale * 100).toFixed(1)}%"></i><b style="left:${(ref / scale * 100).toFixed(1)}%"></b></div>
+      <div class="meter-note">Marker at 7,500/day, a commonly used mortality-benefit reference.</div>`);
+  }
+}
+
+// "Good morning, Dan." plus one plain sentence written from the numbers.
+function renderTodayHero(summaries, baselines) {
+  const dateEl = document.getElementById('today-date');
+  const greetEl = document.getElementById('today-greeting');
+  const ledeEl = document.getElementById('today-lede');
+  if (!greetEl || !ledeEl) return;
+  const now = new Date();
+  if (dateEl) dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  const hr = now.getHours();
+  const name = document.querySelector('#user-badge .badge-name')?.textContent?.trim();
+  greetEl.textContent = `Good ${hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : 'evening'}${name ? `, ${name}` : ''}.`;
+
+  const asc = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
+  const night = [...asc].reverse().find(s => s.sleepScore != null);
+  const parts = [];
+  if (night) {
+    const hrs = night.sleepTimeSeconds ? `${(night.sleepTimeSeconds / 3600).toFixed(1)} hours` : null;
+    const when = night.date === getLocalToday() ? 'Last night you slept' : `On the night to ${fmtShortDate(night.date)} you slept`;
+    parts.push(hrs ? `${when} <b>${hrs}</b> for a sleep score of <b>${night.sleepScore}</b>.`
+                   : `Your latest sleep score is <b>${night.sleepScore}</b>.`);
+  }
+  const hrv = getLatestAndPrev(summaries, 'avgOvernightHrv').value;
+  const dh = deltaVs7d('avgOvernightHrv', hrv, baselines?.avgOvernightHrv);
+  const steps = getLatestAndPrev(summaries, 'totalSteps').value;
+  const ds = deltaVs7d('totalSteps', steps, baselines?.totalSteps);
+  const clauses = [];
+  if (dh) clauses.push(`overnight HRV is <b>${dh.cls === 'good' ? 'better than usual' : dh.cls === 'bad' ? 'lower than usual' : 'about usual'}</b> at ${Math.round(hrv)} ms`);
+  if (ds) clauses.push(`yesterday's steps came in <b>${Math.round(Math.abs(ds.diff)).toLocaleString()} ${ds.diff < 0 ? 'under' : 'over'}</b> your 7-day average`);
+  if (clauses.length) {
+    const sentence = clauses.join(', and ');
+    parts.push(sentence[0].toUpperCase() + sentence.slice(1) + '.');
+  }
+  ledeEl.innerHTML = parts.join(' ');
 }
 
 function getMetricSeries(summaries, key) {
@@ -338,10 +588,10 @@ function renderChart(summaries, metric) {
       datasets: [{
         label: cfg.label || metric,
         data,
-        borderColor: '#4f9cf9',
-        backgroundColor: 'rgba(79,156,249,0.08)',
+        borderColor: tc('#4f9cf9'),
+        backgroundColor: tc('rgba(79,156,249,0.08)'),
         borderWidth: 2,
-        pointBackgroundColor: '#4f9cf9',
+        pointBackgroundColor: tc('#4f9cf9'),
         pointRadius: 4,
         pointHoverRadius: 6,
         tension: 0.3,
@@ -356,22 +606,22 @@ function renderChart(summaries, metric) {
       scales: {
         x: {
           type: 'category',
-          ticks: { color: '#8892a4', maxTicksLimit: 7, maxRotation: 0 },
-          grid: { color: '#2e3350' },
+          ticks: { color: tc('#8892a4'), maxTicksLimit: 7, maxRotation: 0 },
+          grid: { color: tc('#2e3350') },
         },
         y: {
-          ticks: { color: '#8892a4' },
-          grid: { color: '#2e3350' },
+          ticks: { color: tc('#8892a4') },
+          grid: { color: tc('#2e3350') },
         },
       },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#22263a',
-          borderColor: '#2e3350',
+          backgroundColor: tc('#22263a'),
+          borderColor: tc('#2e3350'),
           borderWidth: 1,
-          titleColor: '#e2e8f0',
-          bodyColor: '#8892a4',
+          titleColor: tc('#e2e8f0'),
+          bodyColor: tc('#8892a4'),
           callbacks: {
             label: ctx => `${cfg.label || metric}: ${formatValue(metric, ctx.parsed.y)}`,
           },
@@ -426,26 +676,26 @@ function lastNDays(summaries, n) {
 function commonScales(yLabel = '') {
   return {
     x: {
-      ticks: { color: '#8892a4', maxTicksLimit: 7, maxRotation: 0 },
-      grid: { color: '#2e3350' },
+      ticks: { color: tc('#8892a4'), maxTicksLimit: 7, maxRotation: 0 },
+      grid: { color: tc('#2e3350') },
     },
     y: {
-      ticks: { color: '#8892a4' },
-      grid: { color: '#2e3350' },
-      title: yLabel ? { display: true, text: yLabel, color: '#8892a4' } : { display: false },
+      ticks: { color: tc('#8892a4') },
+      grid: { color: tc('#2e3350') },
+      title: yLabel ? { display: true, text: yLabel, color: tc('#8892a4') } : { display: false },
     },
   };
 }
 
 function commonPlugins(extra = {}) {
   return {
-    legend: { labels: { color: '#8892a4', boxWidth: 12, padding: 10 } },
+    legend: { labels: { color: tc('#8892a4'), boxWidth: 12, padding: 10 } },
     tooltip: {
-      backgroundColor: '#22263a',
-      borderColor: '#2e3350',
+      backgroundColor: tc('#22263a'),
+      borderColor: tc('#2e3350'),
       borderWidth: 1,
-      titleColor: '#e2e8f0',
-      bodyColor: '#8892a4',
+      titleColor: tc('#e2e8f0'),
+      bodyColor: tc('#8892a4'),
     },
     ...extra,
   };
@@ -455,6 +705,7 @@ function renderSleepArchitecture(summaries) {
   const recent = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const labels = recent.map(s => s.date.slice(5));
   const toHours = secs => secs == null ? null : +(secs / 3600).toFixed(2);
+  const stage = sleepStageColors();
 
   destroyAux('sleep');
   auxCharts.sleep = new Chart(document.getElementById('sleep-architecture-chart'), {
@@ -462,10 +713,10 @@ function renderSleepArchitecture(summaries) {
     data: {
       labels,
       datasets: [
-        { label: 'Deep',  data: recent.map(s => toHours(s.deepSleepSeconds)),  backgroundColor: '#4f9cf9' },
-        { label: 'REM',   data: recent.map(s => toHours(s.remSleepSeconds)),   backgroundColor: '#7c6af7' },
-        { label: 'Light', data: recent.map(s => toHours(s.lightSleepSeconds)), backgroundColor: '#34d399' },
-        { label: 'Awake', data: recent.map(s => toHours(s.awakeSleepSeconds)), backgroundColor: '#f87171' },
+        { label: 'Deep',  data: recent.map(s => toHours(s.deepSleepSeconds)),  backgroundColor: stage.deep },
+        { label: 'REM',   data: recent.map(s => toHours(s.remSleepSeconds)),   backgroundColor: stage.rem },
+        { label: 'Light', data: recent.map(s => toHours(s.lightSleepSeconds)), backgroundColor: stage.light },
+        { label: 'Awake', data: recent.map(s => toHours(s.awakeSleepSeconds)), backgroundColor: stage.awake },
       ],
     },
     options: {
@@ -497,10 +748,10 @@ function renderRecoveryChart(summaries, baselines) {
     data: {
       labels,
       datasets: [
-        { label: 'Sleep score', data: normalized('sleepScore'),       borderColor: '#4f9cf9', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-        { label: 'HRV',         data: normalized('avgOvernightHrv'),  borderColor: '#34d399', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-        { label: 'RHR (inv)',   data: normalized('restingHeartRate').map(v => v == null ? null : 200 - v), borderColor: '#fbbf24', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, borderDash: [4, 4] },
-        { label: 'Body Battery',data: normalized('bodyBatteryAtWakeTime'), borderColor: '#7c6af7', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Sleep score', data: normalized('sleepScore'),       borderColor: tc('#4f9cf9'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'HRV',         data: normalized('avgOvernightHrv'),  borderColor: tc('#34d399'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'RHR (inv)',   data: normalized('restingHeartRate').map(v => v == null ? null : 200 - v), borderColor: tc('#fbbf24'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true, borderDash: [4, 4] },
+        { label: 'Body Battery',data: normalized('bodyBatteryAtWakeTime'), borderColor: tc('#7c6af7'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
       ],
     },
     options: {
@@ -509,11 +760,11 @@ function renderRecoveryChart(summaries, baselines) {
       scales: commonScales('% of baseline'),
       plugins: commonPlugins({
         tooltip: {
-          backgroundColor: '#22263a',
-          borderColor: '#2e3350',
+          backgroundColor: tc('#22263a'),
+          borderColor: tc('#2e3350'),
           borderWidth: 1,
-          titleColor: '#e2e8f0',
-          bodyColor: '#8892a4',
+          titleColor: tc('#e2e8f0'),
+          bodyColor: tc('#8892a4'),
           callbacks: {
             label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y + '%'}`,
           },
@@ -533,8 +784,8 @@ function renderActivityChart(summaries) {
     data: {
       labels,
       datasets: [
-        { label: 'Moderate', data: recent.map(s => s.moderateIntensityMinutes ?? 0), backgroundColor: '#34d399' },
-        { label: 'Vigorous', data: recent.map(s => s.vigorousIntensityMinutes ?? 0), backgroundColor: '#f87171' },
+        { label: 'Moderate', data: recent.map(s => s.moderateIntensityMinutes ?? 0), backgroundColor: tc('#34d399') },
+        { label: 'Vigorous', data: recent.map(s => s.vigorousIntensityMinutes ?? 0), backgroundColor: tc('#f87171') },
       ],
     },
     options: {
@@ -562,8 +813,8 @@ function renderStressChart(summaries) {
         {
           label: 'Stress %',
           data: recent.map(s => s.stressPercentage ?? null),
-          borderColor: '#f87171',
-          backgroundColor: 'rgba(248,113,113,0.1)',
+          borderColor: tc('#f87171'),
+          backgroundColor: tc('rgba(248,113,113,0.1)'),
           tension: 0.3,
           yAxisID: 'y',
           spanGaps: true,
@@ -571,8 +822,8 @@ function renderStressChart(summaries) {
         {
           label: 'Body Battery (peak)',
           data: recent.map(s => s.bodyBatteryHighestValue ?? null),
-          borderColor: '#34d399',
-          backgroundColor: 'rgba(52,211,153,0.1)',
+          borderColor: tc('#34d399'),
+          backgroundColor: tc('rgba(52,211,153,0.1)'),
           tension: 0.3,
           yAxisID: 'y1',
           spanGaps: true,
@@ -595,8 +846,9 @@ function renderStressChart(summaries) {
 
 function buildDashboardUrl() {
   const params = new URLSearchParams();
-  if (selectedStart) params.set('start', selectedStart);
-  if (selectedEnd) params.set('end', selectedEnd);
+  const [start, end] = activePresetDays ? presetRange(activePresetDays) : [selectedStart, selectedEnd];
+  if (start) params.set('start', start);
+  if (end) params.set('end', end);
   addUserParam(params);
   return `/api/dashboard?${params.toString()}`;
 }
@@ -604,7 +856,7 @@ function buildDashboardUrl() {
 function updateChartTitles(dateRange) {
   const { start, end } = dateRange;
   const days = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
-  const label = selectedStart ? `${start} → ${end}` : `${days}-Day`;
+  const label = activePresetDays ? `${days}-Day` : `${start} → ${end}`;
   const title = document.getElementById('trend-chart-title');
   if (title) title.textContent = `${label} Trend`;
   const sleepTitle = document.getElementById('sleep-chart-title');
@@ -739,8 +991,8 @@ const ENTITY_LABELS = {
 const ENTITY_EXCLUDE = new Set(['date', 'is_complete', 'lifestyle']);
 
 const ENTITY_COLORS = [
-  '#4f9cf9', '#34d399', '#fbbf24', '#f87171',
-  '#7c6af7', '#22d3ee', '#f472b6', '#a78bfa',
+  tc('#4f9cf9'), tc('#34d399'), tc('#fbbf24'), tc('#f87171'),
+  tc('#7c6af7'), tc('#22d3ee'), tc('#f472b6'), tc('#a78bfa'),
 ];
 
 function entityLabel(key) {
@@ -959,21 +1211,21 @@ function renderAcwrChart(training) {
         {
           label: 'Acute load (7d)',
           data: ts.map(r => r.acute_load ?? null),
-          borderColor: '#f87171',
-          backgroundColor: 'rgba(248,113,113,0.1)',
+          borderColor: tc('#f87171'),
+          backgroundColor: tc('rgba(248,113,113,0.1)'),
           tension: 0.3, spanGaps: true, yAxisID: 'y',
         },
         {
           label: 'Chronic load (28d)',
           data: ts.map(r => r.chronic_load ?? null),
-          borderColor: '#4f9cf9',
-          backgroundColor: 'rgba(79,156,249,0.1)',
+          borderColor: tc('#4f9cf9'),
+          backgroundColor: tc('rgba(79,156,249,0.1)'),
           tension: 0.3, spanGaps: true, yAxisID: 'y',
         },
         {
           label: 'ACWR (%)',
           data: ts.map(r => r.acwr_percent ?? null),
-          borderColor: '#fbbf24',
+          borderColor: tc('#fbbf24'),
           backgroundColor: 'transparent',
           borderDash: [4, 4],
           tension: 0.3, spanGaps: true, yAxisID: 'y1',
@@ -1008,16 +1260,16 @@ function renderReadinessChart(training) {
     data: {
       labels,
       datasets: [
-        { label: 'Sleep',     data: tr.map(r => r.f_sleep ?? 0),    backgroundColor: '#4f9cf9' },
-        { label: 'Recovery',  data: tr.map(r => r.f_recovery ?? 0), backgroundColor: '#34d399' },
-        { label: 'ACWR',      data: tr.map(r => r.f_acwr ?? 0),     backgroundColor: '#fbbf24' },
-        { label: 'Stress',    data: tr.map(r => r.f_stress ?? 0),   backgroundColor: '#f87171' },
-        { label: 'HRV',       data: tr.map(r => r.f_hrv ?? 0),      backgroundColor: '#7c6af7' },
+        { label: 'Sleep',     data: tr.map(r => r.f_sleep ?? 0),    backgroundColor: tc('#4f9cf9') },
+        { label: 'Recovery',  data: tr.map(r => r.f_recovery ?? 0), backgroundColor: tc('#34d399') },
+        { label: 'ACWR',      data: tr.map(r => r.f_acwr ?? 0),     backgroundColor: tc('#fbbf24') },
+        { label: 'Stress',    data: tr.map(r => r.f_stress ?? 0),   backgroundColor: tc('#f87171') },
+        { label: 'HRV',       data: tr.map(r => r.f_hrv ?? 0),      backgroundColor: tc('#7c6af7') },
         {
           label: 'Score',
           type: 'line',
           data: tr.map(r => r.score ?? null),
-          borderColor: '#e2e8f0',
+          borderColor: tc('#e2e8f0'),
           backgroundColor: 'transparent',
           tension: 0.3, spanGaps: true, pointRadius: 3,
           yAxisID: 'y1',
@@ -1055,8 +1307,8 @@ function renderHeatAcclimationChart(training) {
     {
       label: 'Heat acclimation (%)',
       data: pts.map(r => r.heat_acclimation ?? null),
-      borderColor: '#f97316',
-      backgroundColor: 'rgba(249,115,22,0.15)',
+      borderColor: tc('#f97316'),
+      backgroundColor: tc('rgba(249,115,22,0.15)'),
       fill: true,
       tension: 0.3, spanGaps: true, pointRadius: 2,
     },
@@ -1065,7 +1317,7 @@ function renderHeatAcclimationChart(training) {
     datasets.push({
       label: 'Altitude acclimation (%)',
       data: pts.map(r => r.altitude_acclimation ?? null),
-      borderColor: '#4f9cf9',
+      borderColor: tc('#4f9cf9'),
       backgroundColor: 'transparent',
       tension: 0.3, spanGaps: true, pointRadius: 2,
     });
@@ -1108,7 +1360,7 @@ function renderSleepTimeline(timeline) {
         {
           label: 'Bedtime',
           data: data.map(r => r.bedtime),
-          borderColor: '#7c6af7',
+          borderColor: tc('#7c6af7'),
           backgroundColor: 'transparent',
           tension: 0.25,
           pointRadius: 3, spanGaps: true,
@@ -1116,7 +1368,7 @@ function renderSleepTimeline(timeline) {
         {
           label: 'Waketime',
           data: data.map(r => r.waketime),
-          borderColor: '#fbbf24',
+          borderColor: tc('#fbbf24'),
           backgroundColor: 'transparent',
           tension: 0.25,
           pointRadius: 3, spanGaps: true,
@@ -1131,7 +1383,7 @@ function renderSleepTimeline(timeline) {
         y: {
           ...commonScales('hour of day').y,
           ticks: {
-            color: '#8892a4',
+            color: tc('#8892a4'),
             callback: v => {
               const h = ((v % 24) + 24) % 24;
               return `${Math.floor(h).toString().padStart(2, '0')}:${Math.round((h % 1) * 60).toString().padStart(2, '0')}`;
@@ -1142,11 +1394,11 @@ function renderSleepTimeline(timeline) {
       },
       plugins: commonPlugins({
         tooltip: {
-          backgroundColor: '#22263a',
-          borderColor: '#2e3350',
+          backgroundColor: tc('#22263a'),
+          borderColor: tc('#2e3350'),
           borderWidth: 1,
-          titleColor: '#e2e8f0',
-          bodyColor: '#8892a4',
+          titleColor: tc('#e2e8f0'),
+          bodyColor: tc('#8892a4'),
           callbacks: {
             label: ctx => {
               const v = ctx.parsed.y;
@@ -1185,10 +1437,10 @@ function renderSleepWindow(timeline) {
   });
 
   const scoreColor = s => {
-    if (s == null) return 'rgba(120,130,150,0.55)';
-    if (s >= 80)   return 'rgba(34,197,94,0.65)';
-    if (s >= 60)   return 'rgba(234,179,8,0.65)';
-    return             'rgba(239,68,68,0.65)';
+    if (s == null) return tc('rgba(120,130,150,0.55)');
+    if (s >= 80)   return tc('rgba(34,197,94,0.65)');
+    if (s >= 60)   return tc('rgba(234,179,8,0.65)');
+    return             tc('rgba(239,68,68,0.65)');
   };
   const colors = rows.map(r => scoreColor(r.score));
 
@@ -1215,7 +1467,7 @@ function renderSleepWindow(timeline) {
           min: 19, max: 33,
           ticks: {
             stepSize: 1,
-            color: '#8892a4',
+            color: tc('#8892a4'),
             callback: v => {
               const h = ((v % 24) + 24) % 24;
               if (h === 0)  return 'Midnight';
@@ -1223,18 +1475,18 @@ function renderSleepWindow(timeline) {
               return h < 12 ? `${h}am` : `${h - 12}pm`;
             },
           },
-          grid: { color: 'rgba(255,255,255,0.06)' },
+          grid: { color: tc('rgba(255,255,255,0.06)') },
         },
-        y: { ticks: { color: '#8892a4', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: tc('#8892a4'), font: { size: 11 } }, grid: { color: tc('rgba(255,255,255,0.04)') } },
       },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#22263a',
-          borderColor: '#2e3350',
+          backgroundColor: tc('#22263a'),
+          borderColor: tc('#2e3350'),
           borderWidth: 1,
-          titleColor: '#e2e8f0',
-          bodyColor: '#8892a4',
+          titleColor: tc('#e2e8f0'),
+          bodyColor: tc('#8892a4'),
           callbacks: {
             title: items => items[0].label,
             label: item => {
@@ -1269,21 +1521,21 @@ function renderBodyComposition(records) {
         {
           label: 'Weight (kg)',
           data: data.map(r => r.weight ?? null),
-          borderColor: '#4f9cf9',
-          backgroundColor: 'rgba(79,156,249,0.1)',
+          borderColor: tc('#4f9cf9'),
+          backgroundColor: tc('rgba(79,156,249,0.1)'),
           tension: 0.3, spanGaps: true, yAxisID: 'y',
         },
         {
           label: 'Body fat %',
           data: data.map(r => r.body_fat ?? null),
-          borderColor: '#f87171',
+          borderColor: tc('#f87171'),
           backgroundColor: 'transparent',
           tension: 0.3, spanGaps: true, yAxisID: 'y1',
         },
         {
           label: 'Muscle mass',
           data: data.map(r => r.muscle_mass ?? null),
-          borderColor: '#34d399',
+          borderColor: tc('#34d399'),
           backgroundColor: 'transparent',
           tension: 0.3, spanGaps: true, yAxisID: 'y',
           borderDash: [4, 4],
@@ -1328,14 +1580,14 @@ function renderBodyCompositionDetail(records) {
         {
           label: 'Body water %',
           data: data.map(r => r.body_water ?? null),
-          borderColor: '#38bdf8',
-          backgroundColor: 'rgba(56,189,248,0.1)',
+          borderColor: tc('#38bdf8'),
+          backgroundColor: tc('rgba(56,189,248,0.1)'),
           tension: 0.3, spanGaps: true, yAxisID: 'y',
         },
         {
           label: 'Bone mass (kg)',
           data: data.map(r => r.bone_mass ?? null),
-          borderColor: '#a78bfa',
+          borderColor: tc('#a78bfa'),
           backgroundColor: 'transparent',
           tension: 0.3, spanGaps: true, yAxisID: 'y1',
           borderDash: [4, 4],
@@ -1343,7 +1595,7 @@ function renderBodyCompositionDetail(records) {
         {
           label: 'Visceral fat (rating)',
           data: data.map(r => r.visceral_fat ?? null),
-          borderColor: '#fbbf24',
+          borderColor: tc('#fbbf24'),
           backgroundColor: 'transparent',
           tension: 0.3, spanGaps: true, yAxisID: 'y1',
         },
@@ -1422,8 +1674,8 @@ function renderOvernight(data) {
               {
                 label: 'HR fall to overnight low (%)',
                 data: nights.map(n => n.hr_dip_pct ?? null),
-                backgroundColor: 'rgba(96,165,250,0.55)',
-                borderColor: '#60a5fa',
+                backgroundColor: tc('rgba(96,165,250,0.55)'),
+                borderColor: tc('#60a5fa'),
                 borderWidth: 1,
                 yAxisID: 'y',
               },
@@ -1431,7 +1683,7 @@ function renderOvernight(data) {
                 label: 'Low arrived at (% of night)',
                 type: 'line',
                 data: nights.map(n => n.hr_nadir_pct_of_night ?? null),
-                borderColor: '#f59e0b',
+                borderColor: tc('#f59e0b'),
                 backgroundColor: 'transparent',
                 tension: 0.3, spanGaps: true, pointRadius: 2,
                 yAxisID: 'y1',
@@ -1471,8 +1723,8 @@ function renderOvernight(data) {
               {
                 label: 'SpO2 drops / hour (device-estimated)',
                 data: nights.map(n => n.desat_index_per_hour ?? null),
-                backgroundColor: 'rgba(248,113,113,0.5)',
-                borderColor: '#f87171',
+                backgroundColor: tc('rgba(248,113,113,0.5)'),
+                borderColor: tc('#f87171'),
                 borderWidth: 1,
                 yAxisID: 'y',
               },
@@ -1480,7 +1732,7 @@ function renderOvernight(data) {
                 label: 'Awake after sleep onset (min)',
                 type: 'line',
                 data: nights.map(n => n.waso_minutes ?? null),
-                borderColor: '#a78bfa',
+                borderColor: tc('#a78bfa'),
                 backgroundColor: 'transparent',
                 tension: 0.3, spanGaps: true, pointRadius: 2,
                 yAxisID: 'y1',
@@ -1554,8 +1806,8 @@ async function loadScaleDetail(start, end) {
 function renderScaleSegments(readings) {
   const data = (readings || []).filter(r => r.extras?.segments);
   const segs = [
-    ['left_arm', 'Left arm', '#60a5fa'], ['right_arm', 'Right arm', '#a78bfa'],
-    ['trunk', 'Trunk', '#fbbf24'], ['left_leg', 'Left leg', '#34d399'], ['right_leg', 'Right leg', '#f472b6'],
+    ['left_arm', 'Left arm', tc('#60a5fa')], ['right_arm', 'Right arm', tc('#a78bfa')],
+    ['trunk', 'Trunk', tc('#fbbf24')], ['left_leg', 'Left leg', tc('#34d399')], ['right_leg', 'Right leg', tc('#f472b6')],
   ];
   for (const [sectionId, canvasId, key, field, ratingField] of [
     ['scale-seg-muscle-section', 'scale-seg-muscle-chart', 'scaleSegMuscle', 'muscle_pct', 'muscle_rating'],
@@ -1635,21 +1887,21 @@ function renderScaleDetail(readings) {
         {
           label: 'Fat mass (kg)',
           data: data.map(r => r.extras?.fat_mass_kg ?? null),
-          borderColor: '#fbbf24',
-          backgroundColor: 'rgba(251,191,36,0.12)',
+          borderColor: tc('#fbbf24'),
+          backgroundColor: tc('rgba(251,191,36,0.12)'),
           tension: 0.3, spanGaps: true, yAxisID: 'y',
         },
         {
           label: 'Fat-free mass (kg)',
           data: data.map(r => r.extras?.fat_free_mass_kg ?? null),
-          borderColor: '#10b981',
-          backgroundColor: 'rgba(16,185,129,0.12)',
+          borderColor: tc('#10b981'),
+          backgroundColor: tc('rgba(16,185,129,0.12)'),
           tension: 0.3, spanGaps: true, yAxisID: 'y',
         },
         {
           label: 'BMR (kcal)',
           data: data.map(r => r.extras?.bmr_kcal ?? null),
-          borderColor: '#a78bfa',
+          borderColor: tc('#a78bfa'),
           backgroundColor: 'transparent',
           borderDash: [4, 4],
           tension: 0.3, spanGaps: true, yAxisID: 'y1',
@@ -1693,12 +1945,12 @@ function renderBehaviorImpact(rows, metric) {
         {
           label: `Without (${metric})`,
           data: data.map(r => r[`${metric}_without`]),
-          backgroundColor: '#3a3f5a',
+          backgroundColor: tc('#3a3f5a'),
         },
         {
           label: `With (${metric})`,
           data: data.map(r => r[`${metric}_with`]),
-          backgroundColor: '#4f9cf9',
+          backgroundColor: tc('#4f9cf9'),
         },
       ],
     },
@@ -1707,16 +1959,16 @@ function renderBehaviorImpact(rows, metric) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
-        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+        x: { ticks: { color: tc('#8892a4') }, grid: { color: tc('#2e3350') } },
+        y: { ticks: { color: tc('#8892a4') }, grid: { color: tc('#2e3350') } },
       },
       plugins: commonPlugins({
         tooltip: {
-          backgroundColor: '#22263a',
-          borderColor: '#2e3350',
+          backgroundColor: tc('#22263a'),
+          borderColor: tc('#2e3350'),
           borderWidth: 1,
-          titleColor: '#e2e8f0',
-          bodyColor: '#8892a4',
+          titleColor: tc('#e2e8f0'),
+          bodyColor: tc('#8892a4'),
           callbacks: {
             afterBody: items => {
               const i = items[0]?.dataIndex;
@@ -1756,7 +2008,7 @@ function renderAnomalyCalendar(payload) {
   const inverted = new Set(['restingHeartRate', 'stressPercentage']);
 
   function colorFor(z, key) {
-    if (z == null) return '#1a1d27';
+    if (z == null) return tc('#1a1d27');
     const adj = inverted.has(key) ? -z : z;
     // Clamp z between -3 and +3
     const c = Math.max(-3, Math.min(3, adj));
@@ -1809,11 +2061,11 @@ function renderHrZones(payload) {
     data: {
       labels: rows.map(r => r.activity_type),
       datasets: [
-        { label: 'Z1 warm-up',  data: rows.map(r => r.z1), backgroundColor: '#4f9cf9' },
-        { label: 'Z2 easy',     data: rows.map(r => r.z2), backgroundColor: '#34d399' },
-        { label: 'Z3 aerobic',  data: rows.map(r => r.z3), backgroundColor: '#fbbf24' },
-        { label: 'Z4 threshold', data: rows.map(r => r.z4), backgroundColor: '#fb923c' },
-        { label: 'Z5 max',      data: rows.map(r => r.z5), backgroundColor: '#f87171' },
+        { label: 'Z1 warm-up',  data: rows.map(r => r.z1), backgroundColor: tc('#4f9cf9') },
+        { label: 'Z2 easy',     data: rows.map(r => r.z2), backgroundColor: tc('#34d399') },
+        { label: 'Z3 aerobic',  data: rows.map(r => r.z3), backgroundColor: tc('#fbbf24') },
+        { label: 'Z4 threshold', data: rows.map(r => r.z4), backgroundColor: tc('#fb923c') },
+        { label: 'Z5 max',      data: rows.map(r => r.z5), backgroundColor: tc('#f87171') },
       ],
     },
     options: {
@@ -1821,8 +2073,8 @@ function renderHrZones(payload) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { stacked: true, ...commonScales('minutes').x, ticks: { color: '#8892a4' } },
-        y: { stacked: true, ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+        x: { stacked: true, ...commonScales('minutes').x, ticks: { color: tc('#8892a4') } },
+        y: { stacked: true, ticks: { color: tc('#8892a4') }, grid: { color: tc('#2e3350') } },
       },
       plugins: commonPlugins(),
     },
@@ -1854,7 +2106,7 @@ function renderCorrelationMatrix(payload) {
   };
 
   function colorFor(v) {
-    if (v == null || isNaN(v)) return '#1a1d27';
+    if (v == null || isNaN(v)) return tc('#1a1d27');
     if (v >= 0) {
       const a = Math.min(1, v);
       return `rgba(79, 156, 249, ${0.15 + a * 0.7})`;
@@ -1918,12 +2170,12 @@ function renderIntradayHeatmap(data) {
   // Heart Rate and Steps have no published bands, so we keep the 3-stop
   // winsorised gradient (clipped to p2–p98 so outliers don't compress it).
   const BAND_PALETTES = {
-    stress:       ['#3b3f4d', '#34d399', '#fbbf24', '#f87171'],  // grey → green → amber → red
-    body_battery: ['#ef4444', '#fbbf24', '#34d399', '#22c55e'],  // red → amber → green → bright green
+    stress:       [tc('#3b3f4d'), tc('#34d399'), tc('#fbbf24'), tc('#f87171')],  // grey → green → amber → red
+    body_battery: [tc('#ef4444'), tc('#fbbf24'), tc('#34d399'), tc('#22c55e')],  // red → amber → green → bright green
   };
   const GRADIENT_PALETTES = {
-    heart_rate:   ['#1a1d27', '#7c6af7', '#f87171'],
-    steps:        ['#1a1d27', '#22d3ee', '#34d399'],
+    heart_rate:   [tc('#1a1d27'), tc('#7c6af7'), tc('#f87171')],
+    steps:        [tc('#1a1d27'), tc('#22d3ee'), tc('#34d399')],
   };
 
   const isBanded = metric in BAND_PALETTES;
@@ -1949,7 +2201,7 @@ function renderIntradayHeatmap(data) {
 
   const stopRgb = stops.map(hexToRgb);
   function colorFor(v) {
-    if (v == null) return '#0f1117';
+    if (v == null) return tc('#0f1117');
     const raw = (v - min) / (max - min);
     const t = Math.max(0, Math.min(1, raw));
     // n stops divide [0,1] into n-1 equal-width intervals; find which interval
@@ -2081,11 +2333,8 @@ function localDateStr(d) {
 }
 
 function applyPreset(days) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - (days - 1));
-  selectedEnd = localDateStr(end);
-  selectedStart = localDateStr(start);
+  activePresetDays = days;
+  [selectedStart, selectedEnd] = presetRange(days);
   dateStartInput.value = selectedStart;
   dateEndInput.value = selectedEnd;
   setActivePreset(days);
@@ -2103,19 +2352,18 @@ document.getElementById('date-apply-btn').addEventListener('click', () => {
   if (s > e) { alert('Start date must be before end date.'); return; }
   selectedStart = s;
   selectedEnd = e;
+  activePresetDays = null;
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
   loadDashboard();
 });
 
 // Initialise date inputs with default 30d range
 (function initDateInputs() {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - 29);
-  dateStartInput.value = localDateStr(start);
-  dateEndInput.value = localDateStr(end);
-  dateStartInput.max = localDateStr(end);
-  dateEndInput.max = localDateStr(end);
+  const [start, end] = presetRange(activePresetDays);
+  dateStartInput.value = start;
+  dateEndInput.value = end;
+  dateStartInput.max = end;
+  dateEndInput.max = end;
 })();
 
 // Note: the initial loadDashboard() + 5-min refresh interval are registered
@@ -2742,8 +2990,8 @@ function renderMenstrual(entries) {
     data: {
       labels,
       datasets: [
-        { label: 'Day of cycle', data: dayOfCycle, borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.15)', tension: 0.25, yAxisID: 'y' },
-        { label: 'Flow intensity', data: flow, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.3)', type: 'bar', yAxisID: 'y1' },
+        { label: 'Day of cycle', data: dayOfCycle, borderColor: tc('#a855f7'), backgroundColor: tc('rgba(168,85,247,0.15)'), tension: 0.25, yAxisID: 'y' },
+        { label: 'Flow intensity', data: flow, borderColor: tc('#ef4444'), backgroundColor: tc('rgba(239,68,68,0.3)'), type: 'bar', yAxisID: 'y1' },
       ],
     },
     options: {
@@ -2921,7 +3169,7 @@ function renderActivityTrack() {
   if (!cfg) {
     // Plain — single thick polyline
     const latlngs = points.map(p => [p.latitude, p.longitude]);
-    activityTrackLayer = L.polyline(latlngs, { color: '#ea580c', weight: 6, opacity: 0.95 }).addTo(map);
+    activityTrackLayer = L.polyline(latlngs, { color: tc('#ea580c'), weight: 6, opacity: 0.95 }).addTo(map);
     map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
     if (legend) legend.style.display = 'none';
   } else {
@@ -2929,7 +3177,7 @@ function renderActivityTrack() {
     if (!vals.length) {
       // Fall back to plain line if metric missing
       const latlngs = points.map(p => [p.latitude, p.longitude]);
-      activityTrackLayer = L.polyline(latlngs, { color: '#ea580c', weight: 6, opacity: 0.95 }).addTo(map);
+      activityTrackLayer = L.polyline(latlngs, { color: tc('#ea580c'), weight: 6, opacity: 0.95 }).addTo(map);
       map.fitBounds(activityTrackLayer.getBounds(), { padding: [20, 20] });
       if (legend) legend.style.display = 'none';
       if (meta) meta.textContent = `${points.length} GPS points · ${cfg.label} unavailable for this activity`;
@@ -2983,10 +3231,10 @@ function renderIllnessRadar(data) {
     data: {
       labels,
       datasets: [
-        { label: 'RHR z',         data: series.map(r => r.z_rhr),     borderColor: '#f87171', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-        { label: 'HRV z (inv)',   data: series.map(r => r.z_hrv_inv), borderColor: '#fbbf24', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-        { label: 'Respiration z', data: series.map(r => r.z_resp),    borderColor: '#7c6af7', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-        { label: 'Composite',     data: series.map(r => r.composite), borderColor: '#e2e8f0', backgroundColor: 'rgba(226,232,240,0.08)', tension: 0.3, spanGaps: true, fill: true },
+        { label: 'RHR z',         data: series.map(r => r.z_rhr),     borderColor: tc('#f87171'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'HRV z (inv)',   data: series.map(r => r.z_hrv_inv), borderColor: tc('#fbbf24'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Respiration z', data: series.map(r => r.z_resp),    borderColor: tc('#7c6af7'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+        { label: 'Composite',     data: series.map(r => r.composite), borderColor: tc('#e2e8f0'), backgroundColor: tc('rgba(226,232,240,0.08)'), tension: 0.3, spanGaps: true, fill: true },
       ],
     },
     options: {
@@ -3016,8 +3264,8 @@ function renderRecoveryDebt(rows) {
     data: {
       labels,
       datasets: [
-        { label: 'Cumulative debt', data: data.map(r => r.cumulative_debt), borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.2)', tension: 0.3, spanGaps: true, fill: true, yAxisID: 'y' },
-        { label: 'Wake battery',    data: data.map(r => r.wake_battery),    borderColor: '#34d399', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, yAxisID: 'y1' },
+        { label: 'Cumulative debt', data: data.map(r => r.cumulative_debt), borderColor: tc('#f87171'), backgroundColor: tc('rgba(248,113,113,0.2)'), tension: 0.3, spanGaps: true, fill: true, yAxisID: 'y' },
+        { label: 'Wake battery',    data: data.map(r => r.wake_battery),    borderColor: tc('#34d399'), backgroundColor: 'transparent', tension: 0.3, spanGaps: true, yAxisID: 'y1' },
       ],
     },
     options: {
@@ -3046,8 +3294,8 @@ function renderInflammation(rows) {
       datasets: [{
         label: 'Inflammation z-sum',
         data: data.map(r => r.index),
-        borderColor: '#fb923c',
-        backgroundColor: 'rgba(251,146,60,0.15)',
+        borderColor: tc('#fb923c'),
+        backgroundColor: tc('rgba(251,146,60,0.15)'),
         tension: 0.3, spanGaps: true, fill: true,
       }],
     },
@@ -3072,8 +3320,8 @@ function renderSRI(payload) {
       datasets: [{
         label: 'SRI',
         data: series.map(r => r.sri),
-        borderColor: '#7c6af7',
-        backgroundColor: 'rgba(124,106,247,0.15)',
+        borderColor: tc('#7c6af7'),
+        backgroundColor: tc('rgba(124,106,247,0.15)'),
         tension: 0.3, spanGaps: true, fill: true,
       }],
     },
@@ -3136,8 +3384,8 @@ function renderResilience(rows) {
       datasets: [{
         label: 'Resilience',
         data: data.map(r => r.resilience),
-        borderColor: '#34d399',
-        backgroundColor: 'rgba(52,211,153,0.15)',
+        borderColor: tc('#34d399'),
+        backgroundColor: tc('rgba(52,211,153,0.15)'),
         tension: 0.3, spanGaps: true, fill: true,
       }],
     },
@@ -3162,7 +3410,7 @@ function renderBBDecay(rows) {
       datasets: [{
         label: 'Decay (pts/h)',
         data: data.map(r => r.decay_per_hour),
-        backgroundColor: data.map(r => (r.decay_per_hour ?? 0) < -3 ? '#f87171' : '#7c6af7'),
+        backgroundColor: data.map(r => (r.decay_per_hour ?? 0) < -3 ? tc('#f87171') : tc('#7c6af7')),
       }],
     },
     options: {
@@ -3186,20 +3434,20 @@ function renderRecoveryCost(rows) {
       datasets: [{
         label: 'Median days to baseline',
         data: data.map(r => r.median_recovery_days),
-        backgroundColor: '#fbbf24',
+        backgroundColor: tc('#fbbf24'),
       }],
     },
     options: {
       indexAxis: 'y',
       responsive: true, maintainAspectRatio: false,
       scales: {
-        x: { ...commonScales('days').x, ticks: { color: '#8892a4' } },
-        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3350' } },
+        x: { ...commonScales('days').x, ticks: { color: tc('#8892a4') } },
+        y: { ticks: { color: tc('#8892a4') }, grid: { color: tc('#2e3350') } },
       },
       plugins: commonPlugins({
         tooltip: {
-          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
-          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          backgroundColor: tc('#22263a'), borderColor: tc('#2e3350'), borderWidth: 1,
+          titleColor: tc('#e2e8f0'), bodyColor: tc('#8892a4'),
           callbacks: {
             afterBody: items => {
               const r = data[items[0]?.dataIndex ?? 0];
@@ -3219,10 +3467,10 @@ function renderRecoveryCost(rows) {
 // That surfaces the actual dose→response relationship instead of piling four
 // incompatible scales onto one 0–100 axis.
 const DOSE_METRICS = [
-  { key: 'sleepScore',     label: 'Sleep score', color: '#4f9cf9', unit: '',     lowerBetter: false },
-  { key: 'hrv',            label: 'HRV',         color: '#34d399', unit: ' ms',  lowerBetter: false },
-  { key: 'deepSleepHours', label: 'Deep sleep',  color: '#a78bfa', unit: ' h',   lowerBetter: false },
-  { key: 'rhr',            label: 'RHR',         color: '#f87171', unit: ' bpm', lowerBetter: true },
+  { key: 'sleepScore',     label: 'Sleep score', color: tc('#4f9cf9'), unit: '',     lowerBetter: false },
+  { key: 'hrv',            label: 'HRV',         color: tc('#34d399'), unit: ' ms',  lowerBetter: false },
+  { key: 'deepSleepHours', label: 'Deep sleep',  color: tc('#a78bfa'), unit: ' h',   lowerBetter: false },
+  { key: 'rhr',            label: 'RHR',         color: tc('#f87171'), unit: ' bpm', lowerBetter: true },
 ];
 
 function destroyDoseCharts() {
@@ -3329,7 +3577,7 @@ function renderDoseResponse(payload) {
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
-          x: { ...commonScales(`${target.behavior}`).x, type: 'linear', ticks: { stepSize: 1, color: '#8892a4' } },
+          x: { ...commonScales(`${target.behavior}`).x, type: 'linear', ticks: { stepSize: 1, color: tc('#8892a4') } },
           y: commonScales(m.label + m.unit).y,
         },
         plugins: {
@@ -3429,7 +3677,7 @@ function renderStreakCalendar(payload) {
     b.cells.forEach((v, i) => {
       const cell = document.createElement('div');
       cell.className = 'streak-cell';
-      cell.style.background = v == null ? '#1a1d27' : '#34d399';
+      cell.style.background = v == null ? tc('#1a1d27') : tc('#34d399');
       cell.title = `${b.behavior} · ${dates[i]} · ${v == null ? '—' : v}`;
       grid.appendChild(cell);
     });
@@ -3514,7 +3762,7 @@ function renderStepCDF(payload) {
       datasets: [
         { label: 'Steps survival',
           data: points,
-          borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)',
+          borderColor: tc('#4f9cf9'), backgroundColor: tc('rgba(79,156,249,0.1)'),
           tension: 0.1, fill: true, pointRadius: 0 },
       ],
     },
@@ -3550,8 +3798,8 @@ function renderWhoTarget(payload) {
     data: {
       labels: weeks.map(w => w.week.slice(5)),
       datasets: [
-        { label: 'Moderate',         data: weeks.map(w => w.moderate), backgroundColor: '#34d399', stack: 's' },
-        { label: 'Vigorous (×2)',    data: weeks.map(w => w.vigorous * 2), backgroundColor: '#f87171', stack: 's' },
+        { label: 'Moderate',         data: weeks.map(w => w.moderate), backgroundColor: tc('#34d399'), stack: 's' },
+        { label: 'Vigorous (×2)',    data: weeks.map(w => w.vigorous * 2), backgroundColor: tc('#f87171'), stack: 's' },
       ],
     },
     options: {
@@ -3559,14 +3807,14 @@ function renderWhoTarget(payload) {
       scales: {
         x: { stacked: true, ...commonScales().x },
         y: { stacked: true, ...commonScales('min/wk equiv').y,
-             ticks: { color: '#8892a4' },
-             grid: { color: ctx => ctx.tick.value === 150 ? '#fbbf24' : '#2e3350' } },
+             ticks: { color: tc('#8892a4') },
+             grid: { color: ctx => ctx.tick.value === 150 ? tc('#fbbf24') : tc('#2e3350') } },
       },
       plugins: commonPlugins({
         annotation: undefined,
         tooltip: {
-          backgroundColor: '#22263a', borderColor: '#2e3350', borderWidth: 1,
-          titleColor: '#e2e8f0', bodyColor: '#8892a4',
+          backgroundColor: tc('#22263a'), borderColor: tc('#2e3350'), borderWidth: 1,
+          titleColor: tc('#e2e8f0'), bodyColor: tc('#8892a4'),
           callbacks: {
             afterBody: items => {
               const w = weeks[items[0]?.dataIndex];
@@ -3589,8 +3837,8 @@ function renderStressFingerprint(payload) {
     data: {
       labels: (payload?.hours || []).map(h => `${h}:00`),
       datasets: [
-        { label: 'Weekday', data: payload?.weekday || [], borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.4, spanGaps: true, fill: true },
-        { label: 'Weekend', data: payload?.weekend || [], borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)', tension: 0.4, spanGaps: true, fill: true },
+        { label: 'Weekday', data: payload?.weekday || [], borderColor: tc('#4f9cf9'), backgroundColor: tc('rgba(79,156,249,0.1)'), tension: 0.4, spanGaps: true, fill: true },
+        { label: 'Weekend', data: payload?.weekend || [], borderColor: tc('#fbbf24'), backgroundColor: tc('rgba(251,191,36,0.1)'), tension: 0.4, spanGaps: true, fill: true },
       ],
     },
     options: {
@@ -3620,7 +3868,7 @@ function renderFitnessAge(rows) {
       datasets: numericKeys.map((k, i) => ({
         label: k,
         data: data.map(r => r[k]),
-        borderColor: ['#4f9cf9', '#34d399', '#fbbf24', '#7c6af7'][i % 4],
+        borderColor: [tc('#4f9cf9'), tc('#34d399'), tc('#fbbf24'), tc('#7c6af7')][i % 4],
         backgroundColor: 'transparent',
         tension: 0.3, spanGaps: true,
       })),
@@ -3649,8 +3897,8 @@ function renderFitnessTrajectory(payload) {
   const vctx = document.getElementById('vo2-trajectory-chart');
   if (vctx) {
     const series = [
-      { key: 'running', label: 'VO2 max (run)', color: '#4f9cf9' },
-      { key: 'cycling', label: 'VO2 max (cycle)', color: '#34d399' },
+      { key: 'running', label: 'VO2 max (run)', color: tc('#4f9cf9') },
+      { key: 'cycling', label: 'VO2 max (cycle)', color: tc('#34d399') },
     ].filter(s => vo2.some(r => r[s.key] != null));
     auxCharts.vo2Trajectory = new Chart(vctx, {
       type: 'line',
@@ -3663,8 +3911,8 @@ function renderFitnessTrajectory(payload) {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        scales: { x: commonScales().x, y: { ...commonScales().y, title: { display: true, text: 'ml/kg/min', color: '#8892a4' } } },
-        plugins: { ...commonPlugins(), legend: { display: series.length > 1, labels: { color: '#8892a4' } } },
+        scales: { x: commonScales().x, y: { ...commonScales().y, title: { display: true, text: 'ml/kg/min', color: tc('#8892a4') } } },
+        plugins: { ...commonPlugins(), legend: { display: series.length > 1, labels: { color: tc('#8892a4') } } },
       },
     });
   }
@@ -3674,10 +3922,10 @@ function renderFitnessTrajectory(payload) {
   const rctx = document.getElementById('race-prediction-chart');
   if (rctx) {
     const dists = [
-      { key: '5k', label: '5k', color: '#4f9cf9' },
-      { key: '10k', label: '10k', color: '#34d399' },
-      { key: 'half', label: 'Half', color: '#fbbf24' },
-      { key: 'marathon', label: 'Marathon', color: '#7c6af7' },
+      { key: '5k', label: '5k', color: tc('#4f9cf9') },
+      { key: '10k', label: '10k', color: tc('#34d399') },
+      { key: 'half', label: 'Half', color: tc('#fbbf24') },
+      { key: 'marathon', label: 'Marathon', color: tc('#7c6af7') },
     ].filter(d => rp.some(r => r[d.key] != null));
     auxCharts.racePrediction = new Chart(rctx, {
       type: 'line',
@@ -3690,10 +3938,10 @@ function renderFitnessTrajectory(payload) {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        scales: { x: commonScales().x, y: { ...commonScales().y, title: { display: true, text: 'predicted minutes', color: '#8892a4' } } },
+        scales: { x: commonScales().x, y: { ...commonScales().y, title: { display: true, text: 'predicted minutes', color: tc('#8892a4') } } },
         plugins: {
           ...commonPlugins(),
-          legend: { display: dists.length > 0, labels: { color: '#8892a4' } },
+          legend: { display: dists.length > 0, labels: { color: tc('#8892a4') } },
           tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtMinutes(c.parsed.y)}` } },
         },
       },
@@ -3766,10 +4014,10 @@ function renderCycleHrv(payload) {
       data: {
         labels,
         datasets: [
-          { label: 'RHR (bpm)',          data: phaseRows.map(r => r.rhr),          backgroundColor: '#f87171', yAxisID: 'y' },
-          { label: 'HRV (ms)',           data: phaseRows.map(r => r.hrv),          backgroundColor: '#4f9cf9', yAxisID: 'y' },
-          { label: 'Sleep score',        data: phaseRows.map(r => r.sleep_score),  backgroundColor: '#34d399', yAxisID: 'y' },
-          { label: 'Body Battery (wake)',data: phaseRows.map(r => r.body_battery), backgroundColor: '#fbbf24', yAxisID: 'y' },
+          { label: 'RHR (bpm)',          data: phaseRows.map(r => r.rhr),          backgroundColor: tc('#f87171'), yAxisID: 'y' },
+          { label: 'HRV (ms)',           data: phaseRows.map(r => r.hrv),          backgroundColor: tc('#4f9cf9'), yAxisID: 'y' },
+          { label: 'Sleep score',        data: phaseRows.map(r => r.sleep_score),  backgroundColor: tc('#34d399'), yAxisID: 'y' },
+          { label: 'Body Battery (wake)',data: phaseRows.map(r => r.body_battery), backgroundColor: tc('#fbbf24'), yAxisID: 'y' },
         ],
       },
       options: {
@@ -3802,8 +4050,8 @@ function renderCycleHrv(payload) {
       data: {
         labels: byDay.map(r => `D${r.day}`),
         datasets: [
-          { label: 'RHR (bpm)', data: byDay.map(r => r.rhr), borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.1)', tension: 0.3, spanGaps: true, yAxisID: 'y' },
-          { label: 'HRV (ms)', data: byDay.map(r => r.hrv), borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.3, spanGaps: true, yAxisID: 'y1' },
+          { label: 'RHR (bpm)', data: byDay.map(r => r.rhr), borderColor: tc('#f87171'), backgroundColor: tc('rgba(248,113,113,0.1)'), tension: 0.3, spanGaps: true, yAxisID: 'y' },
+          { label: 'HRV (ms)', data: byDay.map(r => r.hrv), borderColor: tc('#4f9cf9'), backgroundColor: tc('rgba(79,156,249,0.1)'), tension: 0.3, spanGaps: true, yAxisID: 'y1' },
         ],
       },
       options: {
@@ -3825,6 +4073,10 @@ function renderCycleHrv(payload) {
   renderCycleStress(payload.stress_by_phase);
 }
 
+// Deliberately not passed through tc(): these are cell fills carrying dark
+// flow marks (.cycle-cell is #0b0d12), and they must match the static legend
+// chips in index.html. Deepened for the light theme, Luteal fell to ~1.6:1
+// against the marks and no longer matched its legend chip.
 const CYCLE_PHASE_COLORS = {
   Menstrual:  '#f87171',
   Follicular: '#34d399',
@@ -3847,7 +4099,7 @@ function renderCycleCalendar(entries) {
   entries.forEach(e => {
     const cell = document.createElement('div');
     cell.className = 'cycle-cell';
-    cell.style.background = CYCLE_PHASE_COLORS[e.phase] || '#2a2d37';
+    cell.style.background = CYCLE_PHASE_COLORS[e.phase] || tc('#2a2d37');
     const flow = (e.flow || '').toString().toLowerCase();
     let mark = '';
     if (flow.includes('heavy')) mark = '⬤';
@@ -3877,15 +4129,16 @@ function renderCycleSleep(rows) {
   }
   section.style.display = '';
   const labels = rows.map(r => `${r.phase} (n=${r.n})`);
+  const stage = sleepStageColors();
   auxCharts.cycleSleep = new Chart(ctx, {
     type: 'bar',
     data: {
       labels,
       datasets: [
-        { label: 'Deep',  data: rows.map(r => r.deep_min),  backgroundColor: '#4f9cf9', stack: 'sleep' },
-        { label: 'REM',   data: rows.map(r => r.rem_min),   backgroundColor: '#a78bfa', stack: 'sleep' },
-        { label: 'Light', data: rows.map(r => r.light_min), backgroundColor: '#34d399', stack: 'sleep' },
-        { label: 'Awake', data: rows.map(r => r.awake_min), backgroundColor: '#f87171', stack: 'sleep' },
+        { label: 'Deep',  data: rows.map(r => r.deep_min),  backgroundColor: stage.deep,  stack: 'sleep' },
+        { label: 'REM',   data: rows.map(r => r.rem_min),   backgroundColor: stage.rem,   stack: 'sleep' },
+        { label: 'Light', data: rows.map(r => r.light_min), backgroundColor: stage.light, stack: 'sleep' },
+        { label: 'Awake', data: rows.map(r => r.awake_min), backgroundColor: stage.awake, stack: 'sleep' },
       ],
     },
     options: {
@@ -3914,10 +4167,10 @@ function renderCycleStress(rows) {
     data: {
       labels,
       datasets: [
-        { label: 'Stress %',       data: rows.map(r => r.stress_pct),      backgroundColor: '#f87171', yAxisID: 'y' },
-        { label: 'High-stress %',  data: rows.map(r => r.high_stress_pct), backgroundColor: '#fbbf24', yAxisID: 'y' },
-        { label: 'BB lowest',      data: rows.map(r => r.bb_lowest),       backgroundColor: '#4f9cf9', yAxisID: 'y1' },
-        { label: 'BB drained/day', data: rows.map(r => r.bb_drained),      backgroundColor: '#a78bfa', yAxisID: 'y1' },
+        { label: 'Stress %',       data: rows.map(r => r.stress_pct),      backgroundColor: tc('#f87171'), yAxisID: 'y' },
+        { label: 'High-stress %',  data: rows.map(r => r.high_stress_pct), backgroundColor: tc('#fbbf24'), yAxisID: 'y' },
+        { label: 'BB lowest',      data: rows.map(r => r.bb_lowest),       backgroundColor: tc('#4f9cf9'), yAxisID: 'y1' },
+        { label: 'BB drained/day', data: rows.map(r => r.bb_drained),      backgroundColor: tc('#a78bfa'), yAxisID: 'y1' },
       ],
     },
     options: {
@@ -3964,10 +4217,10 @@ function renderCycleLengthHistory(rows, section) {
     data: {
       labels,
       datasets: [
-        { type: 'bar',  label: 'Cycle length (days)',     data: actual,    backgroundColor: '#a78bfa', borderColor: '#a78bfa' },
-        { type: 'line', label: 'Predicted',               data: predicted, borderColor: '#4f9cf9', backgroundColor: 'rgba(79,156,249,0.1)', tension: 0.2, spanGaps: true },
-        { type: 'line', label: 'Normal range (21–35 d)',  data: hi,        borderColor: 'rgba(52,211,153,0.5)', borderDash: [4,4], pointRadius: 0, fill: '+1' },
-        { type: 'line', label: '',                         data: lo,        borderColor: 'rgba(52,211,153,0.5)', borderDash: [4,4], pointRadius: 0, backgroundColor: 'rgba(52,211,153,0.08)' },
+        { type: 'bar',  label: 'Cycle length (days)',     data: actual,    backgroundColor: tc('#a78bfa'), borderColor: tc('#a78bfa') },
+        { type: 'line', label: 'Predicted',               data: predicted, borderColor: tc('#4f9cf9'), backgroundColor: tc('rgba(79,156,249,0.1)'), tension: 0.2, spanGaps: true },
+        { type: 'line', label: 'Normal range (21–35 d)',  data: hi,        borderColor: tc('rgba(52,211,153,0.5)'), borderDash: [4,4], pointRadius: 0, fill: '+1' },
+        { type: 'line', label: '',                         data: lo,        borderColor: tc('rgba(52,211,153,0.5)'), borderDash: [4,4], pointRadius: 0, backgroundColor: tc('rgba(52,211,153,0.08)') },
       ],
     },
     options: {
@@ -4023,13 +4276,13 @@ function renderCycleVitalsTrend(rows, section) {
   const rhrTrend = _linearTrendline(rhr);
   const hrvTrend = _linearTrendline(hrv);
   const datasets = [
-    { label: 'RHR (bpm)',           data: rhr,   borderColor: '#f87171', backgroundColor: '#f87171', showLine: false, pointRadius: 4, yAxisID: 'y' },
-    { label: 'HRV (ms)',            data: hrv,   borderColor: '#4f9cf9', backgroundColor: '#4f9cf9', showLine: false, pointRadius: 4, yAxisID: 'y1' },
-    { label: 'Sleep score',         data: sleep, borderColor: '#34d399', backgroundColor: '#34d399', showLine: false, pointRadius: 4, yAxisID: 'y' },
-    { label: 'Body Battery (wake)', data: bb,    borderColor: '#fbbf24', backgroundColor: '#fbbf24', showLine: false, pointRadius: 4, yAxisID: 'y' },
+    { label: 'RHR (bpm)',           data: rhr,   borderColor: tc('#f87171'), backgroundColor: tc('#f87171'), showLine: false, pointRadius: 4, yAxisID: 'y' },
+    { label: 'HRV (ms)',            data: hrv,   borderColor: tc('#4f9cf9'), backgroundColor: tc('#4f9cf9'), showLine: false, pointRadius: 4, yAxisID: 'y1' },
+    { label: 'Sleep score',         data: sleep, borderColor: tc('#34d399'), backgroundColor: tc('#34d399'), showLine: false, pointRadius: 4, yAxisID: 'y' },
+    { label: 'Body Battery (wake)', data: bb,    borderColor: tc('#fbbf24'), backgroundColor: tc('#fbbf24'), showLine: false, pointRadius: 4, yAxisID: 'y' },
   ];
-  if (rhrTrend) datasets.push({ label: 'RHR trend', data: rhrTrend, borderColor: 'rgba(248,113,113,0.7)', borderDash: [6,4], pointRadius: 0, fill: false, yAxisID: 'y' });
-  if (hrvTrend) datasets.push({ label: 'HRV trend', data: hrvTrend, borderColor: 'rgba(79,156,249,0.7)', borderDash: [6,4], pointRadius: 0, fill: false, yAxisID: 'y1' });
+  if (rhrTrend) datasets.push({ label: 'RHR trend', data: rhrTrend, borderColor: tc('rgba(248,113,113,0.7)'), borderDash: [6,4], pointRadius: 0, fill: false, yAxisID: 'y' });
+  if (hrvTrend) datasets.push({ label: 'HRV trend', data: hrvTrend, borderColor: tc('rgba(79,156,249,0.7)'), borderDash: [6,4], pointRadius: 0, fill: false, yAxisID: 'y1' });
   auxCharts.cycleVitalsTrend = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
@@ -4056,10 +4309,10 @@ function renderCyclePhaseDurations(rows, section) {
     data: {
       labels,
       datasets: [
-        { label: 'Menstrual',  data: rows.map(r => r.menstrual_days),  backgroundColor: '#f87171', stack: 'phases' },
-        { label: 'Follicular', data: rows.map(r => r.follicular_days), backgroundColor: '#34d399', stack: 'phases' },
-        { label: 'Ovulatory',  data: rows.map(r => r.ovulatory_days),  backgroundColor: '#fbbf24', stack: 'phases' },
-        { label: 'Luteal',     data: rows.map(r => r.luteal_days),     backgroundColor: '#a78bfa', stack: 'phases' },
+        { label: 'Menstrual',  data: rows.map(r => r.menstrual_days),  backgroundColor: tc('#f87171'), stack: 'phases' },
+        { label: 'Follicular', data: rows.map(r => r.follicular_days), backgroundColor: tc('#34d399'), stack: 'phases' },
+        { label: 'Ovulatory',  data: rows.map(r => r.ovulatory_days),  backgroundColor: tc('#fbbf24'), stack: 'phases' },
+        { label: 'Luteal',     data: rows.map(r => r.luteal_days),     backgroundColor: tc('#a78bfa'), stack: 'phases' },
       ],
     },
     options: {
@@ -4139,7 +4392,37 @@ function refreshCategoryVisibility() {
     const cnt = panel.querySelector('.chart-group-count');
     if (cnt) cnt.textContent = visible ? String(visible) : '';
   });
+  renderCategoryTiles();
 }
+
+// Jump tiles under the bento: one per non-empty category. A click expands
+// that category (persisting it like the header toggle) and scrolls to it.
+function renderCategoryTiles() {
+  const nav = document.getElementById('category-tiles');
+  if (!nav) return;
+  const panels = [...document.querySelectorAll('#tab-dashboard .chart-group')]
+    .filter(p => !p.classList.contains('group-empty'));
+  nav.innerHTML = panels.map(p => {
+    const name = p.querySelector('.chart-group-title')?.textContent || '';
+    const n = p.querySelector('.chart-group-count')?.textContent || '';
+    return `<button type="button" class="cat-tile" data-group="${escapeHtml(p.dataset.groupId)}">` +
+      `<span><b>${escapeHtml(name)}</b><small>${n} chart${n === '1' ? '' : 's'}</small></span>` +
+      `<span class="orb" aria-hidden="true">↘</span></button>`;
+  }).join('');
+}
+document.getElementById('category-tiles')?.addEventListener('click', e => {
+  const tile = e.target.closest('.cat-tile');
+  if (!tile) return;
+  const panel = document.querySelector(`#tab-dashboard .chart-group[data-group-id="${tile.dataset.group}"]`);
+  if (!panel) return;
+  if (panel.classList.contains('group-collapsed')) {
+    panel.classList.remove('group-collapsed');
+    const updated = loadPrefs();
+    updated[`groupCollapsed:${tile.dataset.group}`] = false;
+    savePrefs(updated);
+  }
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 window.refreshCategoryVisibility = refreshCategoryVisibility;
 
 // Lay a category's blocks into the group grid without leaving holes.
@@ -4471,10 +4754,10 @@ function renderEnvironment(entries) {
       data: {
         labels,
         datasets: [
-          { type: 'line', label: 'Max °C', data: entries.map(e => e.temp_max_c), borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.15)', tension: 0.3, yAxisID: 'y' },
-          { type: 'line', label: 'Min °C', data: entries.map(e => e.temp_min_c), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.15)', tension: 0.3, yAxisID: 'y' },
-          { type: 'line', label: 'Apparent max °C', data: entries.map(e => e.apparent_temp_max_c), borderColor: '#ef4444', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y' },
-          { type: 'bar',  label: 'Precip (mm)', data: entries.map(e => e.precipitation_mm), backgroundColor: 'rgba(56,189,248,0.5)', yAxisID: 'y1' },
+          { type: 'line', label: 'Max °C', data: entries.map(e => e.temp_max_c), borderColor: tc('#f97316'), backgroundColor: tc('rgba(249,115,22,0.15)'), tension: 0.3, yAxisID: 'y' },
+          { type: 'line', label: 'Min °C', data: entries.map(e => e.temp_min_c), borderColor: tc('#3b82f6'), backgroundColor: tc('rgba(59,130,246,0.15)'), tension: 0.3, yAxisID: 'y' },
+          { type: 'line', label: 'Apparent max °C', data: entries.map(e => e.apparent_temp_max_c), borderColor: tc('#ef4444'), borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+          { type: 'bar',  label: 'Precip (mm)', data: entries.map(e => e.precipitation_mm), backgroundColor: tc('rgba(56,189,248,0.5)'), yAxisID: 'y1' },
         ],
       },
       options: {
@@ -4496,9 +4779,9 @@ function renderEnvironment(entries) {
       data: {
         labels,
         datasets: [
-          { type: 'line', label: 'European AQI (max)', data: entries.map(e => e.european_aqi), borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.15)', tension: 0.3, yAxisID: 'y' },
-          { type: 'line', label: 'PM2.5 (µg/m³)',      data: entries.map(e => e.pm25),         borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)', tension: 0.3, yAxisID: 'y1' },
-          { type: 'line', label: 'O₃ (µg/m³)',         data: entries.map(e => e.o3),           borderColor: '#22d3ee', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+          { type: 'line', label: 'European AQI (max)', data: entries.map(e => e.european_aqi), borderColor: tc('#a855f7'), backgroundColor: tc('rgba(168,85,247,0.15)'), tension: 0.3, yAxisID: 'y' },
+          { type: 'line', label: 'PM2.5 (µg/m³)',      data: entries.map(e => e.pm25),         borderColor: tc('#f59e0b'), backgroundColor: tc('rgba(245,158,11,0.15)'), tension: 0.3, yAxisID: 'y1' },
+          { type: 'line', label: 'O₃ (µg/m³)',         data: entries.map(e => e.o3),           borderColor: tc('#22d3ee'), borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
         ],
       },
       options: {
@@ -4561,10 +4844,10 @@ function renderHABedroom(entries) {
       const y1 = y.getPixelForValue(24);
       const y2 = y.getPixelForValue(18);
       c.save();
-      c.fillStyle = 'rgba(34,197,94,0.08)';
+      c.fillStyle = tc('rgba(34,197,94,0.08)');
       c.fillRect(chartArea.left, Math.min(y1, y2), chartArea.width, Math.abs(y2 - y1));
       // label
-      c.fillStyle = 'rgba(34,197,94,0.5)';
+      c.fillStyle = tc('rgba(34,197,94,0.5)');
       c.font = '11px sans-serif';
       c.fillText('Optimal ≈18–24 °C', chartArea.left + 6, Math.min(y1, y2) - 4);
       c.restore();
@@ -4579,8 +4862,8 @@ function renderHABedroom(entries) {
         {
           label: `Daily min (${unit})`,
           data: minVals,
-          borderColor: '#38bdf8',
-          backgroundColor: 'rgba(56,189,248,0.08)',
+          borderColor: tc('#38bdf8'),
+          backgroundColor: tc('rgba(56,189,248,0.08)'),
           borderDash: [3, 3],
           borderWidth: 1.5,
           pointRadius: 0,
@@ -4591,8 +4874,8 @@ function renderHABedroom(entries) {
         {
           label: `Overnight mean (${unit})`,
           data: overnight,
-          borderColor: '#a78bfa',
-          backgroundColor: 'rgba(167,139,250,0.15)',
+          borderColor: tc('#a78bfa'),
+          backgroundColor: tc('rgba(167,139,250,0.15)'),
           borderWidth: 2,
           pointRadius: 3,
           fill: true,
@@ -4602,8 +4885,8 @@ function renderHABedroom(entries) {
         {
           label: `Daily max (${unit})`,
           data: maxVals,
-          borderColor: '#fb923c',
-          backgroundColor: 'rgba(251,146,60,0.08)',
+          borderColor: tc('#fb923c'),
+          backgroundColor: tc('rgba(251,146,60,0.08)'),
           borderDash: [3, 3],
           borderWidth: 1.5,
           pointRadius: 0,
@@ -4618,15 +4901,15 @@ function renderHABedroom(entries) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' } },
+        x: { grid: { color: tc('rgba(255,255,255,0.06)') }, ticks: { color: tc('#8892a4') } },
         y: {
-          title: { display: true, text: unit, color: '#8892a4' },
-          grid: { color: 'rgba(255,255,255,0.06)' },
-          ticks: { color: '#8892a4' },
+          title: { display: true, text: unit, color: tc('#8892a4') },
+          grid: { color: tc('rgba(255,255,255,0.06)') },
+          ticks: { color: tc('#8892a4') },
         },
       },
       plugins: {
-        legend: { display: true, labels: { color: '#8892a4' } },
+        legend: { display: true, labels: { color: tc('#8892a4') } },
         tooltip: { mode: 'index', intersect: false },
       },
     },
@@ -4667,12 +4950,12 @@ function renderPollenChart(entries) {
   const todayIdx = labels.indexOf(todayLabel);
 
   const species = [
-    { key: 'pollen_grass',   label: 'Grass',   color: '#4ade80' },
-    { key: 'pollen_birch',   label: 'Birch',   color: '#38bdf8' },
-    { key: 'pollen_alder',   label: 'Alder',   color: '#fb923c' },
-    { key: 'pollen_olive',   label: 'Olive',   color: '#c084fc' },
-    { key: 'pollen_mugwort', label: 'Mugwort', color: '#fbbf24' },
-    { key: 'pollen_ragweed', label: 'Ragweed', color: '#f43f5e' },
+    { key: 'pollen_grass',   label: 'Grass',   color: tc('#4ade80') },
+    { key: 'pollen_birch',   label: 'Birch',   color: tc('#38bdf8') },
+    { key: 'pollen_alder',   label: 'Alder',   color: tc('#fb923c') },
+    { key: 'pollen_olive',   label: 'Olive',   color: tc('#c084fc') },
+    { key: 'pollen_mugwort', label: 'Mugwort', color: tc('#fbbf24') },
+    { key: 'pollen_ragweed', label: 'Ragweed', color: tc('#f43f5e') },
   ];
 
   // Only render species that have at least one non-zero reading.
@@ -4695,9 +4978,9 @@ function renderPollenChart(entries) {
   // Bands approximate the CAMS grass-pollen risk levels, broadly applicable
   // across species for relative comparison. Low < 10, Moderate 10–50, High > 50 grains/m³.
   const BANDS = [
-    { lo: 50,  hi: Infinity, color: 'rgba(239,68,68,0.10)',   label: 'High',     badge: '#ef4444' },
-    { lo: 10,  hi: 50,       color: 'rgba(234,179,8,0.10)',   label: 'Moderate', badge: '#eab308' },
-    { lo: 0,   hi: 10,       color: 'rgba(34,197,94,0.07)',   label: 'Low',      badge: '#22c55e' },
+    { lo: 50,  hi: Infinity, color: tc('rgba(239,68,68,0.10)'),   label: 'High',     badge: tc('#ef4444') },
+    { lo: 10,  hi: 50,       color: tc('rgba(234,179,8,0.10)'),   label: 'Moderate', badge: tc('#eab308') },
+    { lo: 0,   hi: 10,       color: tc('rgba(34,197,94,0.07)'),   label: 'Low',      badge: tc('#22c55e') },
   ];
   const trafficBands = {
     id: 'pollenBands',
@@ -4737,7 +5020,7 @@ function renderPollenChart(entries) {
       const { ctx: c, scales: { x, y }, chartArea } = chart;
       const xStart = x.getPixelForValue(todayIdx + 0.5);
       c.save();
-      c.fillStyle = 'rgba(255,255,255,0.04)';
+      c.fillStyle = tc('rgba(255,255,255,0.04)');
       c.fillRect(xStart, chartArea.top, chartArea.right - xStart, chartArea.height);
       c.restore();
     },
@@ -4749,14 +5032,14 @@ function renderPollenChart(entries) {
       const { ctx: c, scales: { x, y } } = chart;
       const xPos = x.getPixelForValue(todayIdx);
       c.save();
-      c.strokeStyle = 'rgba(255,255,255,0.4)';
+      c.strokeStyle = tc('rgba(255,255,255,0.4)');
       c.lineWidth = 1.5;
       c.setLineDash([4, 4]);
       c.beginPath();
       c.moveTo(xPos, y.top);
       c.lineTo(xPos, y.bottom);
       c.stroke();
-      c.fillStyle = 'rgba(255,255,255,0.45)';
+      c.fillStyle = tc('rgba(255,255,255,0.45)');
       c.font = '11px sans-serif';
       c.fillText('Today', xPos + 5, y.top + 14);
       c.restore();
@@ -4771,11 +5054,11 @@ function renderPollenChart(entries) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.06)' } },
+        x: { grid: { color: tc('rgba(255,255,255,0.06)') } },
         y: {
           title: { display: true, text: 'grains/m³' },
           beginAtZero: true,
-          grid: { color: 'rgba(255,255,255,0.06)' },
+          grid: { color: tc('rgba(255,255,255,0.06)') },
         },
       },
       plugins: {
@@ -4833,14 +5116,14 @@ function renderEnvironmentRecovery(data) {
       labels,
       datasets: [
         // Physiology (left axis)
-        { type: 'line', label: 'RHR (bpm)',           data: entries.map(e => e.restingHeartRate),         borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.12)',  tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
-        { type: 'line', label: 'Overnight HRV (ms)',  data: entries.map(e => e.avgOvernightHrv),          borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.12)', tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
-        { type: 'line', label: 'Respiration (br/min)', data: entries.map(e => e.averageRespirationValue), borderColor: '#0ea5e9', backgroundColor: 'rgba(14,165,233,0.12)', tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
+        { type: 'line', label: 'RHR (bpm)',           data: entries.map(e => e.restingHeartRate),         borderColor: tc('#ef4444'), backgroundColor: tc('rgba(239,68,68,0.12)'),  tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
+        { type: 'line', label: 'Overnight HRV (ms)',  data: entries.map(e => e.avgOvernightHrv),          borderColor: tc('#10b981'), backgroundColor: tc('rgba(16,185,129,0.12)'), tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
+        { type: 'line', label: 'Respiration (br/min)', data: entries.map(e => e.averageRespirationValue), borderColor: tc('#0ea5e9'), backgroundColor: tc('rgba(14,165,233,0.12)'), tension: 0.3, yAxisID: 'y',  pointRadius: 2 },
         // Environment (right axis), drawn lighter / dashed so the eye groups them
-        { type: 'line', label: 'Apparent T max (°C)',  data: entries.map(e => e.apparent_temp_max_c),     borderColor: '#f97316', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
-        { type: 'line', label: 'European AQI',         data: entries.map(e => e.european_aqi),            borderColor: '#a855f7', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
-        { type: 'line', label: 'PM2.5 (µg/m³)',        data: entries.map(e => e.pm25),                    borderColor: '#f59e0b', borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
-        { type: 'line', label: 'Pollen peak (lag-1, grains/m³)', data: pollenShifted,                     borderColor: '#22c55e', borderDash: [2, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'Apparent T max (°C)',  data: entries.map(e => e.apparent_temp_max_c),     borderColor: tc('#f97316'), borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'European AQI',         data: entries.map(e => e.european_aqi),            borderColor: tc('#a855f7'), borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'PM2.5 (µg/m³)',        data: entries.map(e => e.pm25),                    borderColor: tc('#f59e0b'), borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'line', label: 'Pollen peak (lag-1, grains/m³)', data: pollenShifted,                     borderColor: tc('#22c55e'), borderDash: [2, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
       ],
     },
     options: {
@@ -4949,7 +5232,7 @@ function renderBehaviorEnvironment(key, data, drivers) {
 
   const labels = data.entries.map(e => (e.date || '').slice(5));
   // Stack pollen / AQ drivers as bars; highlight logged days with a dot overlay on RHR
-  const palette = ['#fbbf24','#a78bfa','#f87171','#22d3ee','#34d399','#fb923c','#4f9cf9'];
+  const palette = [tc('#fbbf24'),tc('#a78bfa'),tc('#f87171'),tc('#22d3ee'),tc('#34d399'),tc('#fb923c'),tc('#4f9cf9')];
   const driverSets = drivers.map((d, i) => ({
     label: entityLabel(`env_${d}`) || d,
     data: data.entries.map(e => e[d] ?? null),
@@ -4963,10 +5246,10 @@ function renderBehaviorEnvironment(key, data, drivers) {
   const rhrSet = {
     label: 'RHR (logged day = filled)',
     data: data.entries.map(e => e.restingHeartRate ?? null),
-    borderColor: '#fff',
-    backgroundColor: data.entries.map(e => e.logged ? '#f87171' : 'rgba(255,255,255,0.15)'),
-    pointBackgroundColor: data.entries.map(e => e.logged ? '#f87171' : 'rgba(255,255,255,0.25)'),
-    pointBorderColor: data.entries.map(e => e.logged ? '#f87171' : '#888'),
+    borderColor: tc('#fff'),
+    backgroundColor: data.entries.map(e => e.logged ? tc('#f87171') : tc('rgba(255,255,255,0.15)')),
+    pointBackgroundColor: data.entries.map(e => e.logged ? tc('#f87171') : tc('rgba(255,255,255,0.25)')),
+    pointBorderColor: data.entries.map(e => e.logged ? tc('#f87171') : tc('#888')),
     pointRadius: data.entries.map(e => e.logged ? 5 : 3),
     type: 'line',
     yAxisID: 'y2',
@@ -4983,12 +5266,12 @@ function renderBehaviorEnvironment(key, data, drivers) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { stacked: true, grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' } },
-        y: { stacked: true, position: 'left', grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' }, title: { display: true, text: 'Environment driver', color: '#8892a4' } },
-        y2: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: 'RHR (bpm)', color: '#f87171' } },
+        x: { stacked: true, grid: { color: tc('rgba(255,255,255,0.06)') }, ticks: { color: tc('#8892a4') } },
+        y: { stacked: true, position: 'left', grid: { color: tc('rgba(255,255,255,0.06)') }, ticks: { color: tc('#8892a4') }, title: { display: true, text: 'Environment driver', color: tc('#8892a4') } },
+        y2: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: tc('#f87171') }, title: { display: true, text: 'RHR (bpm)', color: tc('#f87171') } },
       },
       plugins: {
-        legend: { labels: { color: '#8892a4' } },
+        legend: { labels: { color: tc('#8892a4') } },
         tooltip: { mode: 'index', intersect: false },
       },
     },
@@ -5011,8 +5294,8 @@ function renderBehaviorEnvironment(key, data, drivers) {
       const sign = row.delta == null ? '' : (row.delta > 0 ? '↑' : (row.delta < 0 ? '↓' : ''));
       const color = row.delta == null ? '' : (
         (k === 'restingHeartRate' || k === 'averageRespirationValue') ?
-          (row.delta > 0 ? '#f87171' : '#34d399') :
-          (row.delta > 0 ? '#34d399' : '#f87171')
+          (row.delta > 0 ? tc('#f87171') : tc('#34d399')) :
+          (row.delta > 0 ? tc('#34d399') : tc('#f87171'))
       );
       html += `<tr><td>${label}</td><td>${row.on ?? '—'}</td><td>${row.off ?? '—'}</td><td style="color:${color}">${sign} ${row.delta ?? '—'}</td></tr>`;
     }
@@ -5070,8 +5353,8 @@ function renderBedroomSleep(data) {
         {
           label: 'Bedroom overnight (°C)',
           data: data.entries.map(e => e.bedroom_overnight_c ?? null),
-          borderColor: '#a78bfa',
-          backgroundColor: 'rgba(167,139,250,0.12)',
+          borderColor: tc('#a78bfa'),
+          backgroundColor: tc('rgba(167,139,250,0.12)'),
           yAxisID: 'y',
           tension: 0.3,
           spanGaps: true,
@@ -5080,7 +5363,7 @@ function renderBedroomSleep(data) {
         {
           label: 'Sleep score',
           data: data.entries.map(e => e.sleepScore ?? null),
-          borderColor: '#34d399',
+          borderColor: tc('#34d399'),
           yAxisID: 'y2',
           tension: 0.3,
           spanGaps: true,
@@ -5089,7 +5372,7 @@ function renderBedroomSleep(data) {
         {
           label: 'Overnight HRV (ms)',
           data: data.entries.map(e => e.avgOvernightHrv ?? null),
-          borderColor: '#22d3ee',
+          borderColor: tc('#22d3ee'),
           yAxisID: 'y3',
           tension: 0.3,
           spanGaps: true,
@@ -5100,7 +5383,7 @@ function renderBedroomSleep(data) {
         {
           label: 'Awake count',
           data: data.entries.map(e => e.awakeCount ?? null),
-          borderColor: '#fbbf24',
+          borderColor: tc('#fbbf24'),
           yAxisID: 'y4',
           tension: 0.3,
           spanGaps: true,
@@ -5114,14 +5397,14 @@ function renderBedroomSleep(data) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#8892a4' } },
-        y:  { position: 'left',  ticks: { color: '#a78bfa' }, title: { display: true, text: 'Bedroom T (°C)', color: '#a78bfa' }, grid: { color: 'rgba(255,255,255,0.06)' } },
-        y2: { position: 'right', ticks: { color: '#34d399' }, title: { display: true, text: 'Sleep score', color: '#34d399' }, grid: { drawOnChartArea: false } },
+        x: { grid: { color: tc('rgba(255,255,255,0.06)') }, ticks: { color: tc('#8892a4') } },
+        y:  { position: 'left',  ticks: { color: tc('#a78bfa') }, title: { display: true, text: 'Bedroom T (°C)', color: tc('#a78bfa') }, grid: { color: tc('rgba(255,255,255,0.06)') } },
+        y2: { position: 'right', ticks: { color: tc('#34d399') }, title: { display: true, text: 'Sleep score', color: tc('#34d399') }, grid: { drawOnChartArea: false } },
         y3: { display: false },
         y4: { display: false },
       },
       plugins: {
-        legend: { labels: { color: '#8892a4' } },
+        legend: { labels: { color: tc('#8892a4') } },
         tooltip: { mode: 'index', intersect: false },
       },
     },
@@ -5143,7 +5426,7 @@ function renderBedroomSleep(data) {
     let html = '<table class="env-corr-table"><thead><tr><th>Driver</th>';
     for (const m of markers) html += `<th>${labelMap[m]}</th>`;
     html += '<th>n</th></tr></thead><tbody>';
-    const fmtR = v => (v == null) ? '—' : `<span style="color:${Math.abs(v)>0.4?'#fbbf24':(Math.abs(v)>0.2?'#a78bfa':'#8892a4')}">${v.toFixed(2)}</span>`;
+    const fmtR = v => (v == null) ? '—' : `<span style="color:${Math.abs(v)>0.4?tc('#fbbf24'):(Math.abs(v)>0.2?tc('#a78bfa'):tc('#8892a4'))}">${v.toFixed(2)}</span>`;
     for (const d of drivers) {
       const rowCors = (data.correlations || []).filter(c => c.driver === d);
       const nMax = Math.max(0, ...rowCors.map(c => c.n || 0));

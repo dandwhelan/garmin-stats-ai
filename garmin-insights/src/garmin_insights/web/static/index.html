@@ -8,8 +8,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="/static/style.css?v=20260924b" />
+        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Lexend:wght@300;400;500;600;700&display=swap" />
+  <script>
+    // Apply the saved theme before first paint (light by default; "auto"
+    // follows the OS). app.js owns the toggle; this only avoids a flash.
+    (function () {
+      var pref = 'light';
+      try { pref = localStorage.getItem('garmin-theme') || 'light'; } catch (e) {}
+      var dark = pref === 'dark' || (pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document.documentElement.dataset.themePref = pref;
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=20261009d" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -21,7 +32,10 @@
 <body>
   <header>
     <div class="header-inner">
-      <span class="logo">⌚ Garmin Health Insights</span>
+      <span class="logo">
+        <svg class="logo-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#12161c"/><polyline points="6,32 14,32 18,18 22,46 27,24 31,38 36,20 40,44 44,32 58,32" fill="none" stroke="#34d399" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="logo-text">Garmin Health Insights</span>
+      </span>
       <span id="user-badge" class="user-badge" title=""></span>
       <span id="sync-badge" class="sync-badge" title=""></span>
       <nav>
@@ -32,6 +46,7 @@
       <div class="header-right">
         <label for="user-select" class="user-label">User</label>
         <select id="user-select" class="user-select" title="Active user"></select>
+        <button id="theme-btn" class="theme-btn" type="button" title="Theme" aria-label="Theme"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 2.75a7.25 7.25 0 0 1 0 14.5z" fill="currentColor"/></svg></button>
         <span id="status-dot" class="status-dot" title="Checking..."></span>
       </div>
     </div>
@@ -39,6 +54,13 @@
 
   <!-- Dashboard Tab -->
   <main id="tab-dashboard" class="tab-panel active">
+    <section class="today-hero" aria-label="Today">
+      <div class="today-head">
+        <div class="today-eyebrow" id="today-date"></div>
+        <h1 class="today-greeting" id="today-greeting">Hello.</h1>
+      </div>
+      <div class="today-side">
+        <p class="today-lede" id="today-lede"></p>
     <div class="date-range-toolbar">
       <div class="date-presets">
         <button class="preset-btn" data-days="7">7d</button>
@@ -54,6 +76,8 @@
       </div>
       <button id="customize-btn" class="customize-btn" title="Show / hide charts">⚙ Customize</button>
     </div>
+      </div>
+    </section>
 
     <div id="customize-panel" class="customize-panel hidden">
       <div class="customize-header">
@@ -70,38 +94,55 @@
       <div id="customize-list" class="customize-list"></div>
     </div>
 
-    <section class="metrics-grid" id="metrics-grid">
-      <div class="metric-card skeleton" id="card-sleepScore">
+    <section class="metrics-grid bento" id="metrics-grid" aria-label="Today at a glance">
+      <div class="metric-card skeleton bento-sleep" id="card-sleepScore">
         <div class="metric-label">Sleep Score <span class="info-icon" tabindex="0">i<span class="info-tooltip">Garmin's composite sleep quality score (0–100) from sleep stages, restlessness &amp; SpO₂ dips. Most recent complete night.<br><br>≥80 good · 60–79 fair · &lt;60 poor</span></span></div>
         <div class="metric-value" id="val-sleepScore">—</div>
         <div class="metric-sub" id="sub-sleepScore"></div>
+        <div class="metric-extra" id="extra-sleepScore"></div>
       </div>
-      <div class="metric-card skeleton" id="card-restingHeartRate">
+      <div class="metric-card skeleton bento-rhr" id="card-restingHeartRate">
         <div class="metric-label">Resting HR <span class="info-icon" tabindex="0">i<span class="info-tooltip">Heart rate at rest, measured during sleep. Lower is better for cardiovascular fitness. Last night's reading.<br><br>≤58 bpm good · ≤65 fair · &gt;65 elevated</span></span></div>
         <div class="metric-value" id="val-restingHeartRate">—</div>
         <div class="metric-sub" id="sub-restingHeartRate"></div>
+        <div class="metric-extra" id="extra-restingHeartRate"></div>
       </div>
-      <div class="metric-card skeleton" id="card-avgOvernightHrv">
+      <div class="metric-card skeleton bento-hrv" id="card-avgOvernightHrv">
         <div class="metric-label">Overnight HRV <span class="info-icon" tabindex="0">i<span class="info-tooltip">Heart Rate Variability — millisecond variation between heartbeats overnight. Higher = better recovery &amp; nervous system readiness. Last night's reading.<br><br>≥50 ms good · ≥35 ms fair · &lt;35 ms low</span></span></div>
         <div class="metric-value" id="val-avgOvernightHrv">—</div>
         <div class="metric-sub" id="sub-avgOvernightHrv"></div>
+        <div class="metric-extra" id="extra-avgOvernightHrv"></div>
       </div>
-      <div class="metric-card skeleton" id="card-bodyBatteryAtWakeTime">
+      <div class="metric-card skeleton bento-battery" id="card-bodyBatteryAtWakeTime">
         <div class="metric-label">Body Battery (wake) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Garmin's energy reserve score (0–100) at the moment you woke up. Powered by overnight HRV, sleep quality, and stress recovery.<br><br>≥70 well rested · ≥50 moderate · &lt;50 drained</span></span></div>
         <div class="metric-value" id="val-bodyBatteryAtWakeTime">—</div>
         <div class="metric-sub" id="sub-bodyBatteryAtWakeTime"></div>
+        <div class="metric-extra" id="extra-bodyBatteryAtWakeTime"></div>
       </div>
-      <div class="metric-card skeleton" id="card-totalSteps">
+      <div class="metric-card skeleton bento-steps" id="card-totalSteps">
         <div class="metric-label">Steps (yesterday) <span class="info-icon" tabindex="0">i<span class="info-tooltip">Total steps from the last fully completed day. Today's count is excluded — it's still accumulating and would undercount your day.<br><br>≥10,000 good · ≥7,000 fair · &lt;7,000 low</span></span></div>
         <div class="metric-value" id="val-totalSteps">—</div>
         <div class="metric-sub" id="sub-totalSteps"></div>
+        <div class="metric-extra" id="extra-totalSteps"></div>
       </div>
-      <div class="metric-card skeleton" id="card-stressPercentage">
+      <div class="metric-card skeleton bento-stress" id="card-stressPercentage">
         <div class="metric-label">Stress % <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B]</b> Garmin "stress" is HRV-derived <em>physiological / autonomic strain</em>, not validated mental stress. A high score can follow alcohol, illness, heat, pain, caffeine, late exercise or emotional stress — interpret with context.<br><br>≤20% calm · ≤35% moderate · &gt;35% high</span></span></div>
         <div class="metric-value" id="val-stressPercentage">—</div>
         <div class="metric-sub" id="sub-stressPercentage"></div>
+        <div class="metric-extra" id="extra-stressPercentage"></div>
+      </div>
+      <div class="bento-ask">
+        <div class="bento-ask-label">Health Agent</div>
+        <h3>Ask about any of this.</h3>
+        <div class="bento-ask-chips">
+          <button type="button" class="chat-chip" data-prompt="How was last night's sleep compared to my baseline?">Last night's sleep</button>
+          <button type="button" class="chat-chip" data-prompt="Any noteworthy anomalies in the last 7 days?">Anomalies this week</button>
+          <button type="button" class="chat-chip" data-prompt="Summarise my current baselines for RHR, overnight HRV, sleep score and body battery.">My baselines</button>
+        </div>
       </div>
     </section>
+
+    <nav class="category-tiles" id="category-tiles" aria-label="Chart categories"></nav>
 
     <section class="chart-section">
       <div class="chart-header">
@@ -971,6 +1012,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20260924b"></script>
+  <script src="/static/app.js?v=20261009d"></script>
 </body>
 </html>
