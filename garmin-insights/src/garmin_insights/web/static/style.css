@@ -9,6 +9,9 @@
   --border: #2e3350;
   --accent: #4f9cf9;
   --accent2: #7c6af7;
+  /* Text on an --accent fill. White on #4f9cf9 is 2.8:1 (fails WCAG AA);
+     the page background colour is 6.7:1. */
+  --on-accent: #0f1117;
   --green: #34d399;
   --yellow: #fbbf24;
   --red: #f87171;
@@ -24,6 +27,16 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Form controls don't inherit font-family by default, so every button,
+   select and input fell back to the UA font (Arial) instead of Lexend. */
+button, input, select, textarea { font-family: inherit; }
+
+/* Several controls set outline:none on :focus; keep a visible ring for
+   keyboard users without showing it on mouse clicks. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+h2 { text-wrap: balance; }
+
 html, body {
   height: 100%;
   font-family: var(--font-read);
@@ -31,6 +44,8 @@ html, body {
   color: var(--text);
   font-size: 15px;
   line-height: 1.6;
+  /* Digits line up across metric cards, matrices and tables. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Safety net against horizontal scroll on mobile. `clip` (not `hidden`) does
@@ -130,7 +145,7 @@ nav {
 #tab-dashboard {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 24px 20px 40px;
+  padding: 24px 20px 96px;   /* clearance for the fixed chat launcher */
 }
 
 /* Date range toolbar */
@@ -163,7 +178,7 @@ nav {
 }
 
 .preset-btn:hover { color: var(--text); border-color: var(--accent2); }
-.preset-btn.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.preset-btn.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 .date-custom {
   display: flex;
@@ -196,7 +211,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.82rem;
   font-weight: 600;
   padding: 5px 14px;
@@ -263,7 +278,8 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.02em;
+  text-wrap: balance;
   margin-bottom: 8px;
 }
 
@@ -403,7 +419,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 
 .chart-toggle:hover { color: var(--text); border-color: var(--accent2); }
-.chart-toggle.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.chart-toggle.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 .chart-container { position: relative; height: 260px; }
 .chart-container-tall { height: 360px; }
@@ -450,7 +466,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 .heatmap-cell:hover { transform: scale(1.4); z-index: 2; outline: 1px solid var(--text); }
 .heatmap-hour-label, .heatmap-date-label {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--muted);
   text-align: center;
   align-self: center;
@@ -519,7 +535,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 .anomaly-cell:hover { outline: 1px solid var(--text); }
 .anomaly-row-label, .anomaly-col-label {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted);
   align-self: center;
 }
@@ -550,7 +566,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   min-width: 600px;
 }
 .corr-cell {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   text-align: center;
   padding: 8px 4px;
   border-radius: 3px;
@@ -558,7 +574,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   font-variant-numeric: tabular-nums;
 }
 .corr-row-label, .corr-col-label {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted);
   align-self: center;
   padding: 4px;
@@ -590,11 +606,11 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   cursor: pointer;
   transition: all 0.15s;
 }
-.heatmap-toggle:hover, .behavior-toggle:hover { color: var(--text); border-color: var(--accent2); }
+.heatmap-toggle:hover, .behavior-toggle:hover { color: var(--text); border-color: var(--accent); }
 .heatmap-toggle.active, .behavior-toggle.active {
-  background: var(--accent2);
-  border-color: var(--accent2);
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 
 /* ---- Lifestyle insights ---- */
@@ -693,7 +709,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   padding: 16px;
   text-align: center;
 }
-.clock-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.clock-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .clock-time { font-size: 1.6rem; font-weight: 700; margin: 6px 0; color: var(--text); font-variant-numeric: tabular-nums; }
 .clock-sub { font-size: 0.75rem; color: var(--muted); }
 .clock.delta.warn .clock-time { color: var(--red); }
@@ -717,7 +733,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -747,7 +763,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .streak-grid { display: grid; gap: 1px; min-width: 600px; }
 .streak-cell { aspect-ratio: 1/1; min-width: 8px; border-radius: 1px; }
 .streak-row-label { font-size: 0.78rem; color: var(--muted); padding: 4px 8px 4px 0; text-align: right; align-self: center; }
-.streak-col-label { font-size: 0.65rem; color: var(--muted); text-align: center; align-self: center; }
+.streak-col-label { font-size: 0.72rem; color: var(--muted); text-align: center; align-self: center; }
 
 .cycle-calendar { overflow-x: auto; }
 .cycle-grid {
@@ -774,7 +790,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   display: inline-block;
   padding: 2px 10px;
   border-radius: 10px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: #0b0d12;
   font-weight: 600;
 }
@@ -805,7 +821,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   margin-left: 4px;
 }
 .dose-toggle:hover { color: var(--text); border-color: var(--accent2); }
-.dose-toggle.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.dose-toggle.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 @media (max-width: 880px) {
   .dual-clock { grid-template-columns: 1fr; }
@@ -1112,7 +1128,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 .scan-continue-btn {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border: none;
   padding: 8px 14px;
   border-radius: 6px;
@@ -1164,7 +1180,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   border: none;
   border-radius: 24px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -1296,7 +1312,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 
 .message.user .message-bubble {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-bottom-right-radius: 4px;
 }
 
@@ -1441,7 +1457,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.9rem;
   font-weight: 600;
   padding: 10px 20px;
@@ -1895,7 +1911,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 }
 .cal-dow {
   text-align: center;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1940,7 +1956,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   align-items: center;
   gap: 6px;
   margin: 0.7rem 0 0;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .cal-dot-legend {
@@ -2032,7 +2048,7 @@ canvas { max-width: 100%; }
 .scan-row span:first-child { color: var(--muted, #8b93a7); font-size: 0.85rem; }
 .scan-row b { margin-left: auto; font-variant-numeric: tabular-nums; }
 .scan-local-tag {
-  font-size: 0.62rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 1px 5px;
@@ -2058,7 +2074,7 @@ canvas { max-width: 100%; }
 .scan-results-table td:first-child { color: var(--muted, #8b93a7); }
 .scan-results-table small { color: var(--muted, #8b93a7); }
 .scan-rating {
-  font-size: 0.62rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;

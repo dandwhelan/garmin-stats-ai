@@ -313,7 +313,9 @@ function renderCards(summaries, baselines) {
     if (baseline?.avg_7d != null && value != null) {
       const diff = value - baseline.avg_7d;
       const sign = diff >= 0 ? '+' : '';
-      sub += ` · ${sign}${diff.toFixed(1)} vs 7d avg`;
+      // Whole units for counts: a steps delta read "-868.9".
+      const mag = Math.abs(diff) >= 100 ? Math.round(diff).toLocaleString() : diff.toFixed(1);
+      sub += ` · ${sign}${mag} vs 7d avg`;
     }
     subEl.textContent = sub;
   });
