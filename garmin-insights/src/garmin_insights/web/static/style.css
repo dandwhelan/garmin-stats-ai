@@ -30,10 +30,10 @@
   --good-soft: #e3f3eb;
   --warn-soft: #fbf0dc;
   --bad-soft: #fbe6e3;
-  --st-deep: #1f3fae;
-  --st-rem: #3157d5;
+  --st-deep: #1d3a9e;
+  --st-rem: #4a74e8;
   --st-light: #b4c5f6;
-  --st-awake: #e9b45c;
+  --st-awake: #e3a948;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   /* Lexend — dyslexia-friendly sans tuned for reading speed, with a
      system-sans fallback so text stays readable before the webfont loads. */
@@ -64,9 +64,9 @@
   --good-soft: rgba(52, 211, 153, 0.14);
   --warn-soft: rgba(251, 191, 36, 0.14);
   --bad-soft: rgba(248, 113, 113, 0.14);
-  --st-deep: #2f6fd8;
-  --st-rem: #4f9cf9;
-  --st-light: #2c3f66;
+  --st-deep: #9cc0ff;
+  --st-rem: #5b8ff0;
+  --st-light: #34528c;
   --st-awake: #d69a3a;
 }
 

@@ -349,6 +349,18 @@ let activeMetric = 'sleepScore';
 // Date range state — null means "use default" (30d)
 let selectedStart = null;
 let selectedEnd = null;
+// The highlighted preset, in days, or null for a custom range. While a preset
+// is active its window is recomputed from today on every load, so the first
+// load matches the highlighted 30d (the backend's own default is end − 30,
+// i.e. 31 days) and the 5-minute refresh rolls over at midnight.
+let activePresetDays = 30;
+
+function presetRange(days) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - (days - 1));
+  return [localDateStr(start), localDateStr(end)];
+}
 
 const METRIC_CONFIG = {
   sleepScore:            { label: 'Sleep Score',        unit: '',    decimals: 0, dir: 1, good: v => v >= 80, warn: v => v >= 60 },
@@ -444,6 +456,14 @@ function renderCards(summaries, baselines) {
 
 function fmtShortDate(iso) {
   return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+// Sleep-stage fills come from the --st-* tokens so the stage charts match the
+// bento's stage bar in both themes (an ordered ramp: deep strongest, then
+// REM, then light; awake in amber).
+function sleepStageColors() {
+  const v = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  return { deep: v('--st-deep'), rem: v('--st-rem'), light: v('--st-light'), awake: v('--st-awake') };
 }
 
 // Inline SVG sparkline of the last n values, endpoint emphasised.
@@ -685,6 +705,7 @@ function renderSleepArchitecture(summaries) {
   const recent = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const labels = recent.map(s => s.date.slice(5));
   const toHours = secs => secs == null ? null : +(secs / 3600).toFixed(2);
+  const stage = sleepStageColors();
 
   destroyAux('sleep');
   auxCharts.sleep = new Chart(document.getElementById('sleep-architecture-chart'), {
@@ -692,10 +713,10 @@ function renderSleepArchitecture(summaries) {
     data: {
       labels,
       datasets: [
-        { label: 'Deep',  data: recent.map(s => toHours(s.deepSleepSeconds)),  backgroundColor: tc('#4f9cf9') },
-        { label: 'REM',   data: recent.map(s => toHours(s.remSleepSeconds)),   backgroundColor: tc('#7c6af7') },
-        { label: 'Light', data: recent.map(s => toHours(s.lightSleepSeconds)), backgroundColor: tc('#34d399') },
-        { label: 'Awake', data: recent.map(s => toHours(s.awakeSleepSeconds)), backgroundColor: tc('#f87171') },
+        { label: 'Deep',  data: recent.map(s => toHours(s.deepSleepSeconds)),  backgroundColor: stage.deep },
+        { label: 'REM',   data: recent.map(s => toHours(s.remSleepSeconds)),   backgroundColor: stage.rem },
+        { label: 'Light', data: recent.map(s => toHours(s.lightSleepSeconds)), backgroundColor: stage.light },
+        { label: 'Awake', data: recent.map(s => toHours(s.awakeSleepSeconds)), backgroundColor: stage.awake },
       ],
     },
     options: {
@@ -825,8 +846,9 @@ function renderStressChart(summaries) {
 
 function buildDashboardUrl() {
   const params = new URLSearchParams();
-  if (selectedStart) params.set('start', selectedStart);
-  if (selectedEnd) params.set('end', selectedEnd);
+  const [start, end] = activePresetDays ? presetRange(activePresetDays) : [selectedStart, selectedEnd];
+  if (start) params.set('start', start);
+  if (end) params.set('end', end);
   addUserParam(params);
   return `/api/dashboard?${params.toString()}`;
 }
@@ -834,7 +856,7 @@ function buildDashboardUrl() {
 function updateChartTitles(dateRange) {
   const { start, end } = dateRange;
   const days = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
-  const label = selectedStart ? `${start} → ${end}` : `${days}-Day`;
+  const label = activePresetDays ? `${days}-Day` : `${start} → ${end}`;
   const title = document.getElementById('trend-chart-title');
   if (title) title.textContent = `${label} Trend`;
   const sleepTitle = document.getElementById('sleep-chart-title');
@@ -2311,11 +2333,8 @@ function localDateStr(d) {
 }
 
 function applyPreset(days) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - (days - 1));
-  selectedEnd = localDateStr(end);
-  selectedStart = localDateStr(start);
+  activePresetDays = days;
+  [selectedStart, selectedEnd] = presetRange(days);
   dateStartInput.value = selectedStart;
   dateEndInput.value = selectedEnd;
   setActivePreset(days);
@@ -2333,19 +2352,18 @@ document.getElementById('date-apply-btn').addEventListener('click', () => {
   if (s > e) { alert('Start date must be before end date.'); return; }
   selectedStart = s;
   selectedEnd = e;
+  activePresetDays = null;
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
   loadDashboard();
 });
 
 // Initialise date inputs with default 30d range
 (function initDateInputs() {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - 29);
-  dateStartInput.value = localDateStr(start);
-  dateEndInput.value = localDateStr(end);
-  dateStartInput.max = localDateStr(end);
-  dateEndInput.max = localDateStr(end);
+  const [start, end] = presetRange(activePresetDays);
+  dateStartInput.value = start;
+  dateEndInput.value = end;
+  dateStartInput.max = end;
+  dateEndInput.max = end;
 })();
 
 // Note: the initial loadDashboard() + 5-min refresh interval are registered
@@ -4107,15 +4125,16 @@ function renderCycleSleep(rows) {
   }
   section.style.display = '';
   const labels = rows.map(r => `${r.phase} (n=${r.n})`);
+  const stage = sleepStageColors();
   auxCharts.cycleSleep = new Chart(ctx, {
     type: 'bar',
     data: {
       labels,
       datasets: [
-        { label: 'Deep',  data: rows.map(r => r.deep_min),  backgroundColor: tc('#4f9cf9'), stack: 'sleep' },
-        { label: 'REM',   data: rows.map(r => r.rem_min),   backgroundColor: tc('#a78bfa'), stack: 'sleep' },
-        { label: 'Light', data: rows.map(r => r.light_min), backgroundColor: tc('#34d399'), stack: 'sleep' },
-        { label: 'Awake', data: rows.map(r => r.awake_min), backgroundColor: tc('#f87171'), stack: 'sleep' },
+        { label: 'Deep',  data: rows.map(r => r.deep_min),  backgroundColor: stage.deep,  stack: 'sleep' },
+        { label: 'REM',   data: rows.map(r => r.rem_min),   backgroundColor: stage.rem,   stack: 'sleep' },
+        { label: 'Light', data: rows.map(r => r.light_min), backgroundColor: stage.light, stack: 'sleep' },
+        { label: 'Awake', data: rows.map(r => r.awake_min), backgroundColor: stage.awake, stack: 'sleep' },
       ],
     },
     options: {
