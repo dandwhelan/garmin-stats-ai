@@ -908,7 +908,7 @@
               <label>Age <input type="number" id="wi-age" step="1" min="10" max="110" placeholder="35"></label>
               <label>Sex <select id="wi-sex"><option value="male">Male</option><option value="female">Female</option></select></label>
             </div>
-            <p class="journal-hint">These describe what the server's math assumes — the scale itself only reports weight (and impedance, when stable); body composition is computed from height/age/sex against your <code>HEIGHT_CM</code>/<code>BIRTH_DATE</code>/<code>BIOLOGICAL_SEX</code> profile.</p>
+            <p class="journal-hint">The scale needs your height before it will measure. It comes from <code>HEIGHT_CM</code>/<code>BIRTH_DATE</code>/<code>BIOLOGICAL_SEX</code> in your user env when set; otherwise fill these in once — they're remembered for each user.</p>
             <div class="journal-actions">
               <button id="weighin-scan-btn" class="secondary-btn" title="Reads weight + impedance from a Fitdays/Lefu 8-electrode scale over Bluetooth; the server decodes the frames and computes body composition from your height / age / sex">📶 Scan scale</button>
               <label class="weighin-debug-toggle" title="Logs every raw BLE frame so an unmatched firmware layout can be diagnosed">
