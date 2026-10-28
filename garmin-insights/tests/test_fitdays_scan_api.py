@@ -165,3 +165,43 @@ def test_uploader_passes_bmr_through_to_garminconnect(monkeypatch, tmp_path):
     gu.upload_body_composition(str(tmp_path), "someone@example.com",
                                weight_kg=72.0, basal_met_kcal=1780)
     assert round(captured["basal_met"]) == 1780
+
+
+@pytest.fixture()
+def no_env_profile(monkeypatch):
+    """A second user whose env has no HEIGHT_CM / BIRTH_DATE."""
+    real = app_module._resolve_user_identity
+
+    def without_profile(settings):
+        ident = dict(real(settings))
+        ident.update(height_cm="", age=None, biological_sex="", name="Helen")
+        return ident
+
+    monkeypatch.setattr(app_module, "_resolve_user_identity", without_profile)
+    monkeypatch.setattr(app_module, "_scale_sessions", {})
+
+
+def test_no_height_anywhere_explains_why_the_scale_never_starts(api_client, no_env_profile):
+    body = _post(api_client, "s-noh", [HELLO, LIVE_72_4]).json()
+    assert body["writes"] == []
+    assert "Height" in body["note"]
+
+
+def test_form_profile_fills_in_when_env_has_no_height(api_client, no_env_profile):
+    body = api_client.post("/api/scale/frames", json={
+        "user": "default", "session_id": "s-form", "adapter": "fitdays",
+        "frames": [HELLO, LIVE_72_4], "height_cm": 165, "age": 36, "sex": "female",
+    }).json()
+    types = [split_frame(bytes.fromhex(w))[1] for w in body["writes"]]
+    assert types[:2] == [0xB0, 0xC0]
+    # Profile tail starts with gender code (2 = female) then height.
+    c0 = split_frame(bytes.fromhex(body["writes"][1]))[2]
+    assert c0[6] == 2 and c0[7] == 165
+
+
+def test_out_of_range_form_height_is_ignored(api_client, no_env_profile):
+    body = api_client.post("/api/scale/frames", json={
+        "user": "default", "session_id": "s-bad", "adapter": "fitdays",
+        "frames": [HELLO, LIVE_72_4], "height_cm": 5000,
+    }).json()
+    assert body["writes"] == [] and "note" in body

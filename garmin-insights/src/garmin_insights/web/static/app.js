@@ -5884,6 +5884,10 @@ async function _scaleFlushFrames() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: activeUser, session_id: _scaleSessionId, adapter: _scaleAdapterId, frames,
+        // Fallback profile for users without HEIGHT_CM / BIRTH_DATE in their env.
+        height_cm: _wiNum('wi-height'),
+        age: _wiNum('wi-age') != null ? Math.round(_wiNum('wi-age')) : null,
+        sex: document.getElementById('wi-sex')?.value || null,
       }),
     });
     if (!res.ok) return null;
@@ -5915,6 +5919,17 @@ async function scanScale() {
     const d = adapters?.[0];
     if (!d) throw new Error('No scale adapter configured on the server.');
     _scaleAdapterId = d.id;
+    if (d.server_writes && !userProfileHeight && _wiNum('wi-height') == null) {
+      // No HEIGHT_CM for this user: ask for it in the form (saved per user)
+      // rather than connecting to a scale that will never start measuring.
+      await stopScaleScan();
+      const h = document.getElementById('wi-height');
+      h?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      h?.focus();
+      scanSetStatus('Enter your height (and age / sex) in the scan profile below, then press Scan scale again — ' +
+        'the scale needs it to start measuring. It is remembered for this user.', true);
+      return;
+    }
     _scaleSessionId = crypto.randomUUID();
 
     scanSetStatus('Requesting Bluetooth device… pick your scale in the browser prompt.', false);
@@ -5971,7 +5986,7 @@ async function scanScale() {
       if (!result) return;
       if (result.writes?.length && result.state !== 'final') _scaleQueueWrites(result.writes);
       if (result.state === 'waiting') {
-        scanSetStatus('Waiting for the scale…', false);
+        scanSetStatus(result.note ? `Waiting for the scale… ⚠ ${result.note}` : 'Waiting for the scale…', !!result.note);
       } else if (result.state === 'reading') {
         _setWi('wi-weight', result.weight_kg, 2);
         scanSetStatus(`Reading… ${result.weight_kg.toFixed(1)} kg — hold still for the impedance measurement.` +

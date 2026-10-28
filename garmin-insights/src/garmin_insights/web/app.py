@@ -177,6 +177,12 @@ class ScaleFramesRequest(BaseModel):
     session_id: str
     adapter: str
     frames: list[str]
+    # The Journal form's scan profile. Only used when the user's env has no
+    # HEIGHT_CM / BIRTH_DATE / BIOLOGICAL_SEX — without a height the scale is
+    # never sent the handshake and just sits there.
+    height_cm: float | None = None
+    age: int | None = None
+    sex: str | None = None
 
 
 # ------------------------------------------------------------------
@@ -1227,6 +1233,13 @@ async def scale_frames(req: ScaleFramesRequest):
         height_cm = None
     age = identity.get("age")
     sex = identity.get("biological_sex") or ""
+    # Env profile wins; the form fills the gaps (range-checked, untrusted).
+    if height_cm is None and req.height_cm is not None and 80 <= req.height_cm <= 230:
+        height_cm = float(req.height_cm)
+    if age is None and req.age is not None and 10 <= req.age <= 110:
+        age = int(req.age)
+    if not sex and (req.sex or "").strip().lower() in ("male", "female"):
+        sex = req.sex.strip().lower()
 
     # Conversational protocols (Fitdays full BIA): the server decides what the
     # browser writes next, from what the scale has said so far.
@@ -1250,7 +1263,8 @@ async def scale_frames(req: ScaleFramesRequest):
                                    name=identity.get("name") or "",
                                    profile_weight_kg=session["profile_weight"])
         else:
-            profile_note = "Set HEIGHT_CM in this user's env so the scale can run its body-composition sweep."
+            profile_note = ("No height set for this user, so the scale can't start measuring. "
+                            "Enter Height in the scan profile below (or set HEIGHT_CM in this user's env) and scan again.")
         plan_state = session.setdefault("plan", {})
         writes = [f.hex() for f in adapter.plan_writes(session["frames"], plan_state, profile)]
 
