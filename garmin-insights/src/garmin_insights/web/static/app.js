@@ -462,7 +462,7 @@ function renderCards(summaries, baselines) {
 }
 
 function fmtShortDate(iso) {
-  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(document.documentElement.lang, { day: 'numeric', month: 'short' });
 }
 
 // Sleep-stage fills come from the --st-* tokens so the stage charts match the

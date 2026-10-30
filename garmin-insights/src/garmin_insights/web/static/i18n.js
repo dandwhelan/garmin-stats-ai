@@ -19,6 +19,8 @@
     if (trend) return `${trend[1]} 天趋势`;
     const sleep = language === 'zh-CN' && value.match(/^Sleep Architecture \((\d+)-Day\)$/);
     if (sleep) return `睡眠结构（${sleep[1]} 天）`;
+    const sri = language === 'zh-CN' && value.match(/^Current SRI: ([\d.]+) \/ 100$/);
+    if (sri) return `当前睡眠规律性（近似）：${sri[1]} / 100`;
     return value;
   };
   window.healthTranslate = translate;
