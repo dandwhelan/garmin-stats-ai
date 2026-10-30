@@ -241,13 +241,20 @@ function renderUserBadge(user) {
     (email ? `<span class="badge-email">${escapeHtml(email)}</span>` : '');
   userBadge.title = email ? `Logged in as ${email}` : name;
   // Also reflect the user in the document title so multi-tab browsing is clear
-  document.title = `${name} · Garmin Health Insights`;
+  const uiName = name === 'User' && document.documentElement.lang === 'zh-CN' ? '用户' : name;
+  document.title = `${uiName} · ${window.healthTranslate?.('Garmin Health Insights') || 'Garmin Health Insights'}`;
   // The greeting names the user; the dashboard may have rendered first.
   if (typeof dashboardData !== 'undefined' && dashboardData) renderTodayHero(dashboardData.summaries, dashboardData.baselines);
 }
 
 function formatRelativeTime(date) {
   const sec = Math.max(0, (Date.now() - date.getTime()) / 1000);
+  if (document.documentElement.lang === 'zh-CN') {
+    if (sec < 60) return '刚刚';
+    if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
+    return `${Math.floor(sec / 86400)} 天前`;
+  }
   if (sec < 60)      return 'just now';
   if (sec < 3600)    return `${Math.floor(sec / 60)}m ago`;
   if (sec < 86400)   return `${Math.floor(sec / 3600)}h ago`;
@@ -277,9 +284,9 @@ function refreshSyncBadge() {
   if (ageMin < 15)      cls = 'fresh';
   else if (ageMin > 120) cls = 'stale';
   syncBadge.className = `sync-badge ${cls}`.trim();
-  syncBadge.innerHTML =
-    `<span class="sync-dot"></span>Synced ${escapeHtml(formatRelativeTime(lastSyncDate))}`;
-  syncBadge.title = `Last DB write: ${lastSyncDate.toLocaleString()}`;
+  const syncLabel = document.documentElement.lang === 'zh-CN' ? '最近写入：' : 'Synced ';
+  syncBadge.innerHTML = `<span class="sync-dot"></span>${syncLabel}${escapeHtml(formatRelativeTime(lastSyncDate))}`;
+  syncBadge.title = `${document.documentElement.lang === 'zh-CN' ? '数据库最近写入：' : 'Last DB write: '}${lastSyncDate.toLocaleString(document.documentElement.lang)}`;
 }
 
 let userBiologicalSex = ''; // 'male' / 'female' from /api/health, prefills the scan profile
@@ -455,7 +462,7 @@ function renderCards(summaries, baselines) {
 }
 
 function fmtShortDate(iso) {
-  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(document.documentElement.lang, { day: 'numeric', month: 'short' });
 }
 
 // Sleep-stage fills come from the --st-* tokens so the stage charts match the
@@ -541,10 +548,15 @@ function renderTodayHero(summaries, baselines) {
   const ledeEl = document.getElementById('today-lede');
   if (!greetEl || !ledeEl) return;
   const now = new Date();
-  if (dateEl) dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  if (dateEl) dateEl.textContent = now.toLocaleDateString(document.documentElement.lang, { weekday: 'long', day: 'numeric', month: 'long' });
   const hr = now.getHours();
   const name = document.querySelector('#user-badge .badge-name')?.textContent?.trim();
-  greetEl.textContent = `Good ${hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : 'evening'}${name ? `, ${name}` : ''}.`;
+  if (document.documentElement.lang === 'zh-CN') {
+    const displayName = name === 'User' ? '用户' : name;
+    greetEl.textContent = `${hr < 12 ? '早上好' : hr < 18 ? '下午好' : '晚上好'}${displayName ? `，${displayName}` : ''}。`;
+  } else {
+    greetEl.textContent = `Good ${hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : 'evening'}${name ? `, ${name}` : ''}.`;
+  }
 
   const asc = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
   const night = [...asc].reverse().find(s => s.sleepScore != null);

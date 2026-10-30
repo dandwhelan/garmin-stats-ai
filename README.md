@@ -1,5 +1,13 @@
 # Garmin Stats AI
 
+### Display language
+
+The web interface offers English and Simplified Chinese in the language selector.
+The selection is stored in the browser; on first visit the browser language is
+used. Unknown catalog entries fall back to English. User-authored notes and chat
+messages are not translated. AI responses follow the model and prompt language.
+Run the focused frontend checks with `node --test garmin-insights/tests/test_i18n.mjs`.
+
 A privacy-first health analytics platform: fetches data from Garmin Connect, stores it locally in SQLite, and uses Claude AI to provide actionable health insights via a web dashboard and chat interface. The chat interface can require a LLM Token to directly speak within the web interface. Lately a new feature has been added to avoid spending API Tokens so you can click 'Copy' > <img width="33" height="35" alt="image" src="https://github.com/user-attachments/assets/7846f8e4-2e21-4636-9405-b5bb8995fe7e" />
  to paste into a LLM Chat of your choice for 'free'. 
 
