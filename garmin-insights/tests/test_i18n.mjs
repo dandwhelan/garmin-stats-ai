@@ -26,6 +26,8 @@ test('Chinese UI, dynamic labels and chart labels; notes stay untouched',()=>{
   assert.equal(x.document.documentElement.lang,'zh-CN');
   assert.equal(x.text.nodeValue,' 总览 ');assert.equal(x.note.nodeValue,'Dashboard');
   assert.equal(x.window.healthTranslate('2 charts'),'2 个图表');
+  assert.equal(x.window.healthTranslate('90-Day Trend'),'90 天趋势');
+  assert.equal(x.window.healthTranslate('Sleep Architecture (30-Day)'),'睡眠结构（30 天）');
   const chart={data:{datasets:[{label:'Heart Rate'}]},options:{scales:{}}};
   x.getPlugin().beforeInit(chart);assert.equal(chart.data.datasets[0].label,'心率');
   const added={nodeType:3,nodeValue:'Heart Rate',parentElement:{closest:()=>null}};

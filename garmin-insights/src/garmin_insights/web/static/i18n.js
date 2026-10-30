@@ -14,7 +14,12 @@
     if (typeof value !== 'string') return value;
     if (catalog[value]) return catalog[value];
     const count = language === 'zh-CN' && value.match(/^(\d+) charts?$/);
-    return count ? `${count[1]} 个图表` : value;
+    if (count) return `${count[1]} 个图表`;
+    const trend = language === 'zh-CN' && value.match(/^(\d+)-Day Trend$/);
+    if (trend) return `${trend[1]} 天趋势`;
+    const sleep = language === 'zh-CN' && value.match(/^Sleep Architecture \((\d+)-Day\)$/);
+    if (sleep) return `睡眠结构（${sleep[1]} 天）`;
+    return value;
   };
   window.healthTranslate = translate;
 
