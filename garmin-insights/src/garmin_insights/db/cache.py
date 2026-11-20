@@ -279,6 +279,7 @@ class CacheBuilder:
         summaries_7d = [s for s in summaries_30d if s["date"] >= start_7d]
 
         baselines = {}
+        rows: list[tuple] = []
         for metric in _BASELINE_METRICS:
             vals_30d = [s[metric] for s in summaries_30d if metric in s and s[metric] is not None]
             vals_7d = [s[metric] for s in summaries_7d if metric in s and s[metric] is not None]
@@ -293,8 +294,8 @@ class CacheBuilder:
             max_30d = float(np.max(vals_30d)) if vals_30d else None
             latest = vals_7d[-1] if vals_7d else None
 
-            self._memory.upsert_baseline(
-                metric, avg_7d, avg_30d, std_7d, std_30d, min_30d, max_30d, latest
+            rows.append(
+                (metric, avg_7d, avg_30d, std_7d, std_30d, min_30d, max_30d, latest)
             )
             baselines[metric] = {
                 "avg_7d": avg_7d, "avg_30d": avg_30d,
@@ -302,6 +303,7 @@ class CacheBuilder:
                 "latest": latest,
             }
 
+        self._memory.upsert_baselines(rows)
         logger.info("Updated baselines for %d metrics (today excluded).", len(baselines))
         return baselines
 
