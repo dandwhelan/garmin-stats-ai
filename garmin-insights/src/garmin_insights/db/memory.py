@@ -151,29 +151,38 @@ class MemoryStore:
     # ------------------------------------------------------------------
     # Daily Summaries
     # ------------------------------------------------------------------
+    _UPSERT_SUMMARY_SQL = """
+        INSERT INTO daily_summaries (date, metric_json, lifestyle_json, computed_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(date) DO UPDATE SET
+            metric_json = excluded.metric_json,
+            lifestyle_json = excluded.lifestyle_json,
+            computed_at = datetime('now')
+    """
+
+    def upsert_daily_summaries(
+        self, rows: list[tuple[str, dict[str, Any], dict[str, Any] | None]]
+    ) -> None:
+        """Upsert many (date, metrics, lifestyle) rows in one transaction."""
+        if not rows:
+            return
+        params = [
+            (d, json.dumps(m), json.dumps(lj) if lj else None) for d, m, lj in rows
+        ]
+        conn = self._get_conn()
+        try:
+            conn.executemany(self._UPSERT_SUMMARY_SQL, params)
+            conn.commit()
+        finally:
+            conn.close()
+
     def upsert_daily_summary(
         self,
         date: str,
         metrics: dict[str, Any],
         lifestyle: dict[str, Any] | None = None,
     ) -> None:
-        conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO daily_summaries (date, metric_json, lifestyle_json, computed_at)
-                VALUES (?, ?, ?, datetime('now'))
-                ON CONFLICT(date) DO UPDATE SET
-                    metric_json = excluded.metric_json,
-                    lifestyle_json = excluded.lifestyle_json,
-                    computed_at = datetime('now')
-                """,
-                (date, json.dumps(metrics), json.dumps(lifestyle) if lifestyle else None),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        self.upsert_daily_summaries([(date, metrics, lifestyle)])
 
     def get_daily_summary(self, date: str) -> dict[str, Any] | None:
         conn = self._get_conn()

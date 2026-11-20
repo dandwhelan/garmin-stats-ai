@@ -1545,6 +1545,12 @@ async def chat(body: ChatRequest):
         raise HTTPException(status_code=503, detail="Sessions not initialised")
 
     session_id, history, _ = _sessions.get_or_create(body.session_id, user_id=body.user)
+    if not _sessions.try_begin_turn(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A reply is still being generated in this conversation — "
+                   "wait for it to finish (or open a new chat).",
+        )
 
     async def sse_generator() -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id, 'user': body.user})}\n\n"
@@ -1585,6 +1591,8 @@ async def chat(body: ChatRequest):
                 )
             except Exception:
                 logger.warning("Failed to persist chat memory", exc_info=True)
+            finally:
+                _sessions.end_turn(session_id)
 
         try:
             while True:

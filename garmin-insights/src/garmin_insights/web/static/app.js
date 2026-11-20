@@ -2810,7 +2810,13 @@ async function sendMessage() {
       body: JSON.stringify({ message: outgoingText, session_id: sessionId, user: activeUser }),
     });
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // 409 = another tab is mid-reply in this conversation; show the
+      // server's explanation rather than a bare status code.
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) {}
+      throw new Error(detail);
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

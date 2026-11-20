@@ -6,6 +6,8 @@ no LLM cost).  The LLM only ever sees the compact cached summaries.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -74,41 +76,128 @@ class CacheBuilder:
         # Which local calendar day last got its trailing-window force rebuild
         # (see refresh) — in-memory is fine; a restart just rebuilds once more.
         self._last_trailing_rebuild_day: str | None = None
+        # Content fingerprint of the last baseline computation's input — the
+        # dashboard refreshes every 60 s, but the 30 completed days behind the
+        # baselines rarely change, so most refreshes can skip the recompute.
+        self._baseline_fp: str | None = None
+        self._baseline_result: dict[str, dict[str, float | None]] | None = None
 
-    def build_daily_summary(self, date: str, is_complete: bool = True) -> dict[str, Any]:
-        """Compute and cache a full daily metric snapshot for one date.
+    # ------------------------------------------------------------------
+    # Raw-data loading — one query per table for a whole date range
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _first_per_day(df: pd.DataFrame, last: bool = False) -> dict[str, pd.Series]:
+        """Map stored calendar date → first (or last) row, for a time-indexed frame.
 
-        Args:
-            date: Date in YYYY-MM-DD format.
-            is_complete: False if this is today (data still accumulating).
+        Mirrors the per-day path, which filtered ``time`` by the stored date's
+        string prefix and took ``iloc[0]`` of the time-sorted result.
         """
+        if df is None or df.empty:
+            return {}
+        days = df.index.strftime("%Y-%m-%d")
+        out: dict[str, pd.Series] = {}
+        for pos, day in enumerate(days):
+            if last or day not in out:
+                out[day] = df.iloc[pos]
+        return out
+
+    @staticmethod
+    def _by_date_col(df: pd.DataFrame) -> dict[str, pd.Series]:
+        if df is None or df.empty or "date" not in df.columns:
+            return {}
+        return {str(row["date"]): row for _, row in df.iterrows()}
+
+    def _load_range(self, start: str, end: str) -> dict[str, Any]:
+        """Read every raw table the summary needs for [start, end] in one pass.
+
+        The old per-day build opened ~8 connections per date (≈720 for the
+        90-day startup refresh on the Pi); this is 8 per range.
+        """
+        next_day = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        repo = self._repo
+
+        daily = repo.query_daily_stats(
+            start, next_day, ["date", *_DAILY_STATS_COLUMN_MAP.values()]
+        )
+        sleep = repo.query_sleep_summary(
+            start, next_day, ["date", *_SLEEP_COLUMN_MAP.values()]
+        )
+        try:
+            bc = repo.query_body_composition(start, end)
+        except Exception as e:
+            logger.debug("Body composition fetch failed for %s..%s: %s", start, end, e)
+            bc = pd.DataFrame()
+        bc_by_day: dict[str, pd.Series] = {}
+        if not bc.empty:
+            bc = bc.reset_index() if bc.index.name is not None else bc
+            if "time" in bc.columns:
+                bc = bc.sort_values("time", kind="stable")
+            for _, row in bc.iterrows():
+                bc_by_day[str(row["date"])] = row  # later rows win → latest reading
+
+        try:
+            scale_rows = self._memory.get_scale_readings(start, end)
+        except Exception as e:
+            logger.debug("Scale reading fetch failed for %s..%s: %s", start, end, e)
+            scale_rows = []
+        scale_by_day: dict[str, dict] = {}
+        for r in scale_rows:  # ordered by taken_at → last wins
+            scale_by_day[str(r.get("date"))] = r
+
+        lj = repo.query_lifestyle_journal(start, end)
+        lj_by_day: dict[str, list[pd.Series]] = {}
+        if not lj.empty and "date" in lj.columns:
+            for _, row in lj.iterrows():
+                d = row["date"]
+                if isinstance(d, pd.Series):
+                    d = d.iloc[0]
+                lj_by_day.setdefault(str(d), []).append(row)
+
+        return {
+            "daily": self._by_date_col(daily),
+            "sleep": self._by_date_col(sleep),
+            "tr": self._first_per_day(repo.query_training_readiness(start, end)),
+            "ts": self._first_per_day(repo.query_training_status(start, end)),
+            "bc": bc_by_day,
+            "scale": scale_by_day,
+            "lj": lj_by_day,
+        }
+
+    @staticmethod
+    def _num(val: Any) -> Any:
+        return float(val) if isinstance(val, (int, float, np.number)) else val
+
+    @staticmethod
+    def _missing(val: Any) -> bool:
+        if val is None:
+            return True
+        try:
+            return bool(pd.isna(val))
+        except (TypeError, ValueError):
+            return False
+
+    def _compose(
+        self, date: str, is_complete: bool, data: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build one day's (summary, lifestyle) from pre-loaded range data."""
         summary: dict[str, Any] = {"date": date, "is_complete": is_complete}
-        
-        # Calculate next day for query ranges [start, end)
-        from datetime import datetime, timedelta
-        date_obj = datetime.strptime(date, "%Y-%m-%d")
-        next_day_str = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
 
         # -- DailyStats --
-        db_cols = list(_DAILY_STATS_COLUMN_MAP.values())
-        df_daily = self._repo.query_daily_stats(date, next_day_str, db_cols)
-        if not df_daily.empty:
-            row = df_daily.iloc[0]
+        row = data["daily"].get(date)
+        if row is not None:
             for logical, db_col in _DAILY_STATS_COLUMN_MAP.items():
                 val = row.get(db_col)
-                if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                    summary[logical] = float(val) if isinstance(val, (int, float, np.number)) else val
+                if not self._missing(val):
+                    summary[logical] = self._num(val)
 
-        # -- SleepSummary --
-        sleep_db_cols = list(_SLEEP_COLUMN_MAP.values())
-        df_sleep = self._repo.query_sleep_summary(date, next_day_str, sleep_db_cols)
-        if not df_sleep.empty:
-            row = df_sleep.iloc[0]
+        # -- SleepSummary (keyed to the wake date) --
+        row = data["sleep"].get(date)
+        if row is not None:
             for logical, db_col in _SLEEP_COLUMN_MAP.items():
                 val = row.get(db_col)
-                if val is not None and not (isinstance(val, float) and np.isnan(val)):
+                if not self._missing(val):
                     key = logical if logical not in summary else f"sleep_{logical}"
-                    summary[key] = float(val) if isinstance(val, (int, float, np.number)) else val
+                    summary[key] = self._num(val)
 
         # A night the watch didn't record (off the wrist / charging) leaves
         # sleepingSeconds ~0 and Garmin books the whole night as sedentary —
@@ -121,9 +210,8 @@ class CacheBuilder:
             summary.pop("sedentarySeconds", None)
 
         # -- TrainingReadiness --
-        df_tr = self._repo.query_training_readiness(date, date)
-        if not df_tr.empty:
-            row = df_tr.iloc[0]
+        row = data["tr"].get(date)
+        if row is not None:
             _tr_map = {
                 "score": "score",
                 "level": "level",
@@ -133,13 +221,12 @@ class CacheBuilder:
             }
             for logical, db_col in _tr_map.items():
                 val = row.get(db_col)
-                if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                    summary[f"training_{logical}"] = float(val) if isinstance(val, (int, float, np.number)) else val
+                if not self._missing(val):
+                    summary[f"training_{logical}"] = self._num(val)
 
         # -- Heat / Altitude Acclimation (rides in the training_status table) --
-        df_ts = self._repo.query_training_status(date, date)
-        if not df_ts.empty:
-            row = df_ts.iloc[0]
+        row = data["ts"].get(date)
+        if row is not None:
             _acc_map = {
                 "heatAcclimationPercentage": "heat_acclimation_percentage",
                 "altitudeAcclimationPercentage": "altitude_acclimation_percentage",
@@ -148,28 +235,17 @@ class CacheBuilder:
             }
             for logical, db_col in _acc_map.items():
                 val = row.get(db_col)
-                if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                    summary[logical] = float(val) if isinstance(val, (int, float, np.number)) else val
+                if not self._missing(val):
+                    summary[logical] = self._num(val)
 
         # -- BodyComposition (smart-scale / manual weigh-ins) --
         # Latest reading of the day wins; without this merge, weight and body
-        # fat never reach the daily summaries the agent queries first, so
-        # trend/anomaly/correlation tools (and the Entities picker) were blind
-        # to data sitting in body_composition.
-        try:
-            # Inclusive time bounds — (date, date) covers 00:00:00–23:59:59
-            df_bc = self._repo.query_body_composition(date, date)
-        except Exception as e:
-            logger.debug("Body composition fetch failed for %s: %s", date, e)
-            df_bc = pd.DataFrame()
-        if not df_bc.empty:
-            df_bc = df_bc.reset_index() if df_bc.index.name is not None else df_bc
-            if "time" in df_bc.columns:
-                df_bc = df_bc.sort_values("time")
-            row = df_bc.iloc[-1]
+        # fat never reach the daily summaries the agent queries first.
+        row = data["bc"].get(date)
+        if row is not None:
             for db_col, key in _BODY_COMP_MAP.items():
                 val = row.get(db_col)
-                if val is None or (isinstance(val, float) and np.isnan(val)):
+                if self._missing(val):
                     continue
                 val = float(val)
                 if db_col in _BODY_COMP_MASS_COLS:
@@ -182,16 +258,9 @@ class CacheBuilder:
         # -- Scale readings fallback (local-first Fitdays/scale storage) --
         # Garmin's own synced body_composition value wins once it lands; this
         # only closes the gap between stepping off the scale and the next
-        # fetch cycle, and preserves the reading if the Garmin upload fails
-        # outright. scale_readings already stores kg/years, so — unlike the
-        # body_composition branch above — no to_kg / metabolic_age_years
-        # conversion is applied here.
+        # fetch. scale_readings already stores kg/years — no conversion.
         if not any(k in summary for k in _BODY_COMP_MAP.values()):
-            try:
-                scale_reading = self._memory.get_latest_scale_reading(date)
-            except Exception as e:
-                logger.debug("Scale reading fallback fetch failed for %s: %s", date, e)
-                scale_reading = None
+            scale_reading = data["scale"].get(date)
             if scale_reading:
                 for key in _BODY_COMP_MAP.values():
                     val = scale_reading.get(key)
@@ -199,47 +268,56 @@ class CacheBuilder:
                         summary[key] = val
 
         # -- LifestyleJournal --
-        df_lj = self._repo.query_lifestyle_journal(date, date)
         lifestyle: dict[str, Any] = {}
-        if not df_lj.empty:
-            # Iterate rows directly to avoid index alignment issues with combine_first
-            for _, row in df_lj.iterrows():
-                # Handle both 'behavior' and 'Behavior' columns
-                # Use robust checking incase of duplicate columns (returns Series)
-                b1 = row.get("behavior") 
-                b2 = row.get("Behavior")
+        for row in data["lj"].get(date, []):
+            # Handle both 'behavior' and 'Behavior' columns; duplicate columns
+            # come back as a Series — take the first value.
+            b1 = row.get("behavior")
+            b2 = row.get("Behavior")
+            if isinstance(b1, pd.Series): b1 = b1.iloc[0]
+            if isinstance(b2, pd.Series): b2 = b2.iloc[0]
+            behavior = b1 if pd.notna(b1) else b2
+            if pd.isna(behavior) or behavior == "unknown":
+                continue
+            status = row.get("status", 0)
+            if isinstance(status, pd.Series): status = status.iloc[0]
+            value = row.get("value", 0)
+            if isinstance(value, pd.Series): value = value.iloc[0]
+            lifestyle[behavior] = {"status": int(status), "value": float(value)}
 
-                # If returns Series (duplicate cols), take first valid value
-                if isinstance(b1, pd.Series): b1 = b1.iloc[0]
-                if isinstance(b2, pd.Series): b2 = b2.iloc[0]
+        return summary, lifestyle
 
-                behavior = b1 if pd.notna(b1) else b2
-                
-                # Check for explicit unknown/None values
-                if pd.isna(behavior) or behavior == "unknown":
-                    continue
+    def _build_dates(self, dates: list[tuple[str, bool]]) -> list[dict[str, Any]]:
+        """Build + persist summaries for (date, is_complete) pairs in one pass."""
+        if not dates:
+            return []
+        data = self._load_range(min(d for d, _ in dates), max(d for d, _ in dates))
+        rows, summaries = [], []
+        for date, is_complete in dates:
+            try:
+                summary, lifestyle = self._compose(date, is_complete, data)
+            except Exception as e:
+                logger.warning("Failed to build summary for %s: %s", date, e)
+                continue
+            rows.append((date, summary, lifestyle or None))
+            summaries.append(summary)
+        self._memory.upsert_daily_summaries(rows)
+        logger.info("Cached %d daily summaries (%s..%s)", len(rows), dates[0][0], dates[-1][0])
+        return summaries
 
-                status = row.get("status", 0)
-                if isinstance(status, pd.Series): status = status.iloc[0]
-                
-                value = row.get("value", 0)
-                if isinstance(value, pd.Series): value = value.iloc[0]
+    def build_daily_summary(self, date: str, is_complete: bool = True) -> dict[str, Any]:
+        """Compute and cache a full daily metric snapshot for one date.
 
-                lifestyle[behavior] = {"status": int(status), "value": float(value)}
-
-        # -- Save to the daily_summaries cache --
-        self._memory.upsert_daily_summary(date, summary, lifestyle if lifestyle else None)
-
-        status_label = "incomplete" if not is_complete else "complete"
-        logger.info("Cached daily summary for %s [%s] (%d metrics, %d behaviors)",
-                     date, status_label, len(summary), len(lifestyle))
-        return summary
+        Args:
+            date: Date in YYYY-MM-DD format.
+            is_complete: False if this is today (data still accumulating).
+        """
+        built = self._build_dates([(date, is_complete)])
+        return built[0] if built else {"date": date, "is_complete": is_complete}
 
     def build_range(self, start: str, end: str, force: bool = False) -> int:
         """Build summaries for all uncached dates in the range. Returns count built."""
         if force:
-            # Build all dates
-            from datetime import date as dt_date
             d = datetime.strptime(start, "%Y-%m-%d").date()
             d_end = datetime.strptime(end, "%Y-%m-%d").date()
             dates = []
@@ -254,11 +332,7 @@ class CacheBuilder:
             return 0
 
         logger.info("Building daily summaries for %d uncached dates...", len(dates))
-        for date in dates:
-            try:
-                self.build_daily_summary(date)
-            except Exception as e:
-                logger.warning("Failed to build summary for %s: %s", date, e)
+        self._build_dates([(d, True) for d in dates])
         return len(dates)
 
     def update_baselines(self) -> dict[str, dict[str, float | None]]:
@@ -277,6 +351,13 @@ class CacheBuilder:
         summaries_30d = self._memory.get_daily_summaries_range(start_30d, yesterday)
         summaries_30d = [s for s in summaries_30d if s.get("is_complete", True)]
         summaries_7d = [s for s in summaries_30d if s["date"] >= start_7d]
+
+        fp = hashlib.sha1(
+            json.dumps([yesterday, summaries_30d], sort_keys=True, default=str).encode()
+        ).hexdigest()
+        if fp == self._baseline_fp and self._baseline_result is not None:
+            logger.debug("Baselines unchanged since last refresh; skipping recompute.")
+            return self._baseline_result
 
         baselines = {}
         rows: list[tuple] = []
@@ -304,6 +385,7 @@ class CacheBuilder:
             }
 
         self._memory.upsert_baselines(rows)
+        self._baseline_fp, self._baseline_result = fp, baselines
         logger.info("Updated baselines for %d metrics (today excluded).", len(baselines))
         return baselines
 
@@ -319,9 +401,12 @@ class CacheBuilder:
         # is_complete=False; without this, that partial snapshot (e.g. 107 steps
         # logged by 09:43) is never replaced with the day's final totals once the
         # day ends, because build_range skips dates that already have a row.
-        for entry in self._memory.get_daily_summaries_range(start, yesterday):
-            if not entry.get("is_complete", True):
-                self.build_daily_summary(entry["date"], is_complete=True)
+        stale = [
+            (entry["date"], True)
+            for entry in self._memory.get_daily_summaries_range(start, yesterday)
+            if not entry.get("is_complete", True)
+        ]
+        self._build_dates(stale)
         # Build any other missing days (these are complete)
         self.build_range(start, yesterday)
         # Raw data lands AFTER a day is cached complete all the time: the
