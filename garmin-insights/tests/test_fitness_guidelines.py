@@ -139,7 +139,68 @@ def test_scanner_fitness_pass_on_real_data(sample_settings):
     scanner = InsightScanner(memory, AnalysisEngine(memory))
     findings = scanner.scan_fitness_guidelines()
     json.dumps(findings)  # must be serialisable into the scan prompt
-    assert {f["kind"] for f in findings} >= {"steps", "weekly_mvpa", "hrv_readiness"}
+    assert {f["kind"] for f in findings} >= {"steps", "weekly_mvpa", "hrv_readiness", "rhr_trend"}
     for f in findings:
         assert f["source"] == "fitness_guidelines"
         assert f["evidence_tier"] in {"A", "B", "C"}
+
+
+# ---------------------------------------------------------------- cadence
+def _samples(day: str, bursts: dict[int, int], step_min: int = 15):
+    """15-min buckets for a UTC day; ``bursts`` maps bucket index → steps."""
+    from datetime import datetime as dt
+
+    base = dt.fromisoformat(f"{day}T00:00:00+00:00")
+    return [((base + timedelta(minutes=i * step_min)).isoformat(), bursts.get(i, 0))
+            for i in range(24 * 60 // step_min)]
+
+
+@pytest.fixture
+def utc_tz():
+    """Pin the process zone to UTC (local-day keying) and restore it after."""
+    import os
+    import time
+
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
+def test_best_30min_cadence_finds_brisk_bout(utc_tz):
+    out = fitness.best_30min_cadence(_samples("2026-11-10", {40: 1650, 41: 1650, 60: 900}))
+    assert out["2026-11-10"] == pytest.approx(110.0)
+
+
+def test_cadence_needs_contiguous_buckets(utc_tz):
+    samples = [s for s in _samples("2026-11-10", {40: 1650, 42: 1650}) if not s[0].endswith("10:15:00+00:00")]
+    out = fitness.best_30min_cadence(samples)
+    assert out["2026-11-10"] < 100
+
+
+def test_cadence_refuses_coarse_buckets():
+    assert fitness.best_30min_cadence(_samples("2026-11-10", {10: 6000}, step_min=60)) is None
+
+
+def test_cadence_summary_counts_moderate_days():
+    per_day = {f"2026-11-{d:02d}": v for d, v in zip(range(1, 9), [80, 95, 101, 120, 60, 105, 99, 100])}
+    out = fitness.cadence_summary(per_day)
+    assert out["days_ge_100_spm"] == 4 and out["days"] == 8
+
+
+# ---------------------------------------------------------------- RHR trend
+def test_rhr_trend_falling():
+    rows = [_day(i, restingHeartRate=52) for i in range(1, 31)]
+    rows += [_day(i, restingHeartRate=56) for i in range(61, 91)]
+    out = fitness.rhr_trend(rows, TODAY)
+    assert out["change_bpm"] == -4 and out["direction"] == "falling"
+
+
+def test_rhr_trend_needs_both_windows():
+    rows = [_day(i, restingHeartRate=52) for i in range(1, 31)]
+    assert fitness.rhr_trend(rows, TODAY) is None

@@ -2487,3 +2487,39 @@ input[type="date"] { border-radius: 999px; border-color: var(--hair); background
 @media (prefers-reduced-motion: reduce) {
   .metrics-grid.bento > .metric-card, .chart-section, .cat-tile, .orb, .scan-btn::after { transition: none; }
 }
+
+/* ---- Activity vs current evidence tiles ---- */
+.fg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  padding-top: 4px;
+}
+.fg-tile {
+  position: relative;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  min-width: 0;
+}
+.fg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fg-title { font-size: 0.82rem; font-weight: 600; color: var(--muted); }
+.fg-tier {
+  font-size: 0.7rem; font-weight: 600; border-radius: 999px; padding: 1px 7px;
+  background: var(--shell); color: var(--muted); cursor: help; white-space: nowrap;
+}
+.fg-value {
+  font: 600 1.7rem/1.1 var(--font-display); color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.fg-value small { font: 500 0.78rem var(--font-read); color: var(--muted); margin-left: 6px; }
+.fg-sub { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+.fg-status {
+  align-self: flex-start; margin-top: auto;
+  font-size: 0.74rem; font-weight: 600; border-radius: 999px; padding: 2px 9px;
+  background: var(--shell); color: var(--muted);
+}
+.fg-good .fg-status { background: var(--good-soft); color: var(--green); }
+.fg-warn .fg-status { background: var(--warn-soft); color: var(--yellow); }

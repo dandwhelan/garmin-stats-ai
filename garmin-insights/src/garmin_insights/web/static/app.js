@@ -907,6 +907,7 @@ async function loadDashboard() {
     loadActivityMap(date_range.start, date_range.end);
     loadScaleDetail(date_range.start, date_range.end);
     loadOvernight(date_range.start, date_range.end);
+    loadFitnessGuidelines();
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1779,6 +1780,94 @@ function renderOvernightScreening(signals) {
     div.appendChild(body);
     host.appendChild(div);
   });
+}
+
+// ---- Activity vs current evidence (fitness guideline tiles) ----
+
+async function loadFitnessGuidelines() {
+  const epoch = loadEpoch;
+  try {
+    const res = await fetch(withUser('/api/fitness'));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    safeRender('fitnessGuidelines', () => renderFitnessGuidelines(data));
+  } catch (e) {
+    console.error('Fitness guidelines load failed:', e);
+  }
+}
+
+const _MVPA_PATTERN_TEXT = {
+  regular: 'Spread across the week',
+  weekend_warrior: 'Mostly in 1–2 days. Counts the same',
+  below_guideline: 'Below the WHO 150-minute target',
+};
+
+function _fgTile(f) {
+  const n = (v, d = 0) => (v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d }));
+  switch (f.kind) {
+    case 'steps': return {
+      title: 'Daily steps', value: n(f.median_steps), unit: 'median/day',
+      sub: `${f.pct_days_ge_7000}% of days ≥7,000 · last ${f.days} days`,
+      status: f.status === 'meets' ? 'good' : 'warn',
+      label: f.status === 'meets' ? 'At ~7k' : `${n(f.steps_to_target)} short`,
+    };
+    case 'weekly_mvpa': return {
+      title: 'Weekly activity', value: n(f.mvpa_equiv), unit: 'min (vigorous ×2)',
+      sub: `${_MVPA_PATTERN_TEXT[f.pattern] || f.pattern} · ${f.active_days} active days`,
+      status: f.pattern === 'below_guideline' ? 'warn' : 'good',
+      label: f.pattern === 'below_guideline' ? `of ${f.who_target}` : 'Meets WHO',
+    };
+    case 'vigorous_bursts': return {
+      title: 'Vigorous bursts', value: `${f.vigorous_days}/${f.days}`, unit: 'days',
+      sub: 'Try about 3 bursts of 1–2 min a day: fast stairs, a brisk uphill walk',
+      status: 'neutral', label: 'Idea',
+    };
+    case 'strength': return {
+      title: 'Strength training', value: n(f.days_per_week, 1), unit: 'days/week',
+      sub: `${n(f.minutes_per_week)} min/week · target ≥2 days, 30–60 min. Recorded sessions only`,
+      status: f.status === 'meets' ? 'good' : 'warn',
+      label: f.status === 'meets' ? 'Meets WHO' : 'Below 2 days',
+    };
+    case 'hrv_readiness': return {
+      title: 'HRV readiness', value: n(f.rolling_7d_ms, 1), unit: 'ms, 7-day',
+      sub: f.guidance.charAt(0).toUpperCase() + f.guidance.slice(1) + (f.baseline_low_confidence ? ' · sparse baseline' : ''),
+      status: f.status === 'below_normal' ? 'warn' : f.status === 'within_normal' ? 'good' : 'neutral',
+      label: { below_normal: 'Below range', within_normal: 'In range', above_normal: 'Above range' }[f.status] || f.status,
+    };
+    case 'cadence': return {
+      title: 'Walking cadence', value: n(f.median_best_30min_spm), unit: 'steps/min, best 30 min',
+      sub: `${f.days_ge_100_spm} of ${f.days} days had a brisk 30-min bout (≥100 steps/min)`,
+      status: f.days_ge_100_spm >= f.days / 7 ? 'good' : 'neutral',
+      label: f.days_ge_100_spm >= f.days / 7 ? '≥1 a week' : 'Rare',
+    };
+    case 'rhr_trend': return {
+      title: 'Resting HR trend', value: `${f.change_bpm > 0 ? '+' : ''}${n(f.change_bpm, 1)}`, unit: 'bpm',
+      sub: `${n(f.recent_median_rhr, 1)} now vs ${n(f.earlier_median_rhr, 1)} two months ago (medians)`,
+      status: f.direction === 'falling' ? 'good' : f.direction === 'rising' ? 'warn' : 'neutral',
+      label: { falling: 'Falling', rising: 'Rising', stable: 'Stable' }[f.direction] || f.direction,
+    };
+    default: return null;
+  }
+}
+
+function renderFitnessGuidelines(data) {
+  const section = document.getElementById('fitness-guidelines-section');
+  const grid = document.getElementById('fitness-guidelines-grid');
+  if (!section || !grid) return;
+  const tiles = (data?.findings || []).map(f => [f, _fgTile(f)]).filter(([, t]) => t);
+  section.style.display = tiles.length ? '' : 'none';
+  if (typeof refreshCategoryVisibility === 'function') refreshCategoryVisibility();
+  grid.innerHTML = tiles.map(([f, t]) => `
+    <div class="fg-tile fg-${t.status}">
+      <div class="fg-head">
+        <span class="fg-title">${escapeHtml(t.title)}</span>
+        <span class="fg-tier" title="${escapeHtml(f.citation || '')}">Tier ${escapeHtml(f.evidence_tier || '?')}</span>
+      </div>
+      <div class="fg-value">${escapeHtml(String(t.value))}<small>${escapeHtml(t.unit)}</small></div>
+      <div class="fg-sub">${escapeHtml(t.sub)}</div>
+      <span class="fg-status">${escapeHtml(t.label)}</span>
+    </div>`).join('');
 }
 
 async function loadScaleDetail(start, end) {
@@ -4358,7 +4447,7 @@ const CHART_CATEGORIES = [
   { id: 'overview',    name: 'Overview',              match: ['trend-chart', 'research-scorecard'] },
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag', 'overnight-quality-section'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart', 'overnight-hr-section'] },
-  { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
+  { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart', 'fitness-guidelines-section'] },
   { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },

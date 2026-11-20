@@ -997,6 +997,36 @@ async def ha_sensors(
         raise HTTPException(status_code=500, detail=str(ex))
 
 
+def _fitness_findings(bundle) -> list[dict]:
+    from garmin_insights.insights.proactive import InsightScanner
+
+    # The fitness pass reads only the memory store; analysis is unused here.
+    scanner = InsightScanner(
+        bundle.agent._memory, getattr(bundle.agent, "_analysis", None),
+        getattr(bundle.agent._settings, "biological_sex", None),
+    )
+    drop = {"medical_context", "confounders"}
+    return [
+        {k: v for k, v in f.items() if k not in drop}
+        for f in scanner.scan_fitness_guidelines()
+    ]
+
+
+@app.get("/api/fitness")
+async def fitness_guidelines(user: str = Query(default="default")):
+    """Evidence-based activity findings (steps, weekly MVPA, strength, HRV
+    readiness, walking cadence, RHR trend) — the same pass the AI scans get.
+    Always anchored to today: each finding uses its own fixed look-back."""
+    bundle = await _require_user(user)
+    loop = asyncio.get_running_loop()
+    try:
+        findings = await loop.run_in_executor(None, _fitness_findings, bundle)
+    except Exception as e:
+        logger.exception("Fitness findings failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    return _scrub_nan({"user": user, "available": bool(findings), "findings": findings})
+
+
 @app.get("/api/overnight")
 async def overnight(
     user: str = Query(default="default"),

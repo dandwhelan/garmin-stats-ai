@@ -1673,6 +1673,60 @@ INSIGHT_RULES: list[InsightRule] = [
         measurement_confidence="medium",
         confounders=["alcohol", "illness", "luteal_phase", "travel", "poor_sleep", "heat"],
     ),
+    InsightRule(
+        name="walking_cadence_intensity",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="best_30min_cadence",
+        comparison_metric="totalSteps",
+        direction="lower_is_worse",
+        description_template=(
+            "Best continuous 30-min step rate: median {median_best_30min_spm:.0f} steps/min; "
+            "{days_ge_100_spm} of {days} days had a 30-min bout at ≥100 steps/min."
+        ),
+        research_citation=(
+            "Tudor-Locke et al., 2018, BJSM (cadence ≈ intensity); "
+            "del Pozo Cruz et al., 2022, JAMA Internal Medicine (peak-30 cadence, n=78,500)"
+        ),
+        research_summary=(
+            "Walking at ≥100 steps/min corresponds to moderate intensity for most adults, so a "
+            "sustained 30-min bout at that rate is a brisk-walk session. Higher peak-30 "
+            "cadence was associated with lower mortality, CVD and cancer independent of total "
+            "steps. Garmin stores steps in 15-min buckets, so this is the best CONTINUOUS "
+            "30-min rate — a conservative proxy that reads lower than the research's peak-30 "
+            "(the 30 highest minutes); compare against your own trend, not study cut-offs."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="low",
+        confounders=["non_step_exercise", "device_wear_time"],
+    ),
+    InsightRule(
+        name="rhr_fitness_trend",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate_90d_change",
+        comparison_metric="restingHeartRate",
+        direction="higher_is_worse",
+        description_template=(
+            "Resting HR median {recent_median_rhr:.0f} bpm (last 30 d) vs "
+            "{earlier_median_rhr:.0f} bpm (61-90 d ago): {change_bpm:+.1f} bpm."
+        ),
+        research_citation=(
+            "Reimers et al., 2018, J Clin Med (meta-analysis of exercise interventions); "
+            "Zhang et al., 2016, CMAJ (dose-response meta-analysis)"
+        ),
+        research_summary=(
+            "A resting heart rate that falls over months is consistent with improving aerobic "
+            "fitness — endurance training lowers RHR in interventional trials. In population "
+            "cohorts each 10 bpm higher RHR is associated with ~9% higher all-cause "
+            "mortality. Compare medians months apart, not single days; short-term rises have "
+            "many causes (see cardio_reserve_drift and the strain rules)."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        confounders=["illness", "medication", "heat", "chronic_stress", "alcohol", "detraining"],
+    ),
 ]
 
 

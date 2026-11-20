@@ -20,7 +20,7 @@
       document.documentElement.dataset.themePref = pref;
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20261009d" />
+  <link rel="stylesheet" href="/static/style.css?v=20261120a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -671,6 +671,14 @@
           <canvas id="who-target-chart"></canvas>
         </div>
       </section>
+
+      <section class="chart-section" id="fitness-guidelines-section" style="display:none;">
+        <div class="chart-header">
+          <h2>Activity vs Current Evidence <span class="info-icon" tabindex="0">i<span class="info-tooltip">Each tile compares your recent data with a recent study or guideline; the chip shows its evidence tier. Always measured back from today, whatever date range is selected.<br><br><b>Steps</b> [Tier A] — ~7,000/day captures most of the mortality benefit (Ding 2025, Lancet Public Health).<br><b>Weekly activity</b> [Tier B] — 150 min moderate-equivalent; fitting it into 1–2 days counts the same (Khurshid 2023, JAMA).<br><b>Vigorous bursts</b> [Tier B] — short daily bursts help non-exercisers (Stamatakis 2022, Nat Med).<br><b>Strength</b> [Tier A] — ≥2 days and 30–60 min/week (Momma 2022, BJSM; WHO 2020). Recorded sessions only.<br><b>HRV readiness</b> [Tier B] — 7-day HRV vs your own normal range (Plews 2013; Manresa-Rocamora 2021).<br><b>Walking cadence</b> [Tier B, low-confidence measurement] — ≥100 steps/min ≈ moderate intensity (Tudor-Locke 2018; del Pozo Cruz 2022). Garmin stores 15-min buckets, so this reads lower than the research measure.<br><b>Resting HR trend</b> [Tier B] — falls as aerobic fitness improves (Reimers 2018; Zhang 2016).</span></span></h2>
+          <span class="chart-sub">Your recent data against the research behind each target</span>
+        </div>
+        <div id="fitness-guidelines-grid" class="fg-grid"></div>
+      </section>
     </div>
 
     <section class="chart-section">
@@ -1012,6 +1020,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20261009d"></script>
+  <script src="/static/app.js?v=20261120a"></script>
 </body>
 </html>

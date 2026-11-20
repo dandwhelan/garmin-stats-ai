@@ -18,6 +18,11 @@ Evidence behind the thresholds:
 * strength — 30-60 min/week, ≥2 days/week (Momma 2022 BJSM; WHO 2020).
 * HRV-guided intensity — 7-day rolling ln-HRV vs the person's own baseline
   ± 0.5 SD (Plews 2013; Manresa-Rocamora 2021 meta-analysis).
+* walking cadence — ≥100 steps/min ≈ moderate intensity (Tudor-Locke 2018);
+  peak-30 cadence tracks outcomes beyond total steps (del Pozo Cruz 2022).
+  Garmin's 15-min buckets only allow a best CONTINUOUS 30-min rate.
+* RHR fitness trend — RHR falls with aerobic training (Reimers 2018); higher
+  RHR tracks with mortality (Zhang 2016). Medians months apart, not days.
 """
 
 from __future__ import annotations
@@ -38,6 +43,12 @@ HRV_BASELINE_RELIABLE_DAYS = 21  # mirrors baseline_reliability_guard
 
 # Garmin activity typeKeys that count as muscle-strengthening.
 STRENGTH_ACTIVITY_TYPES = frozenset({"strength_training"})
+
+CADENCE_MODERATE_SPM = 100       # Tudor-Locke 2018
+CADENCE_WINDOW_MIN = 30
+CADENCE_MAX_BUCKET_MIN = 15      # coarser buckets can't resolve a 30-min bout
+RHR_TREND_MIN_DAYS = 10          # per comparison window
+RHR_MEANINGFUL_BPM = 2.0
 
 
 def _num(v: Any) -> float | None:
@@ -177,3 +188,90 @@ def hrv_readiness(summaries: list[dict], today: date) -> dict | None:
     if len(baseline) < HRV_BASELINE_RELIABLE_DAYS:
         out["baseline_low_confidence"] = True
     return out
+
+
+def best_30min_cadence(samples: list[tuple[Any, float]]) -> dict[str, float] | None:
+    """Per-local-day best continuous 30-min step rate (steps/min).
+
+    ``samples`` are (timestamp, steps) pairs; timestamps are UTC (naive =
+    UTC) and are keyed to the LOCAL calendar day. Returns None when the
+    bucket size is coarser than 15 min — a 30-min bout can't be resolved.
+    """
+    import pandas as pd
+
+    if not samples:
+        return None
+    df = pd.DataFrame(samples, columns=["time", "steps"])
+    df["time"] = pd.to_datetime(df["time"], utc=True, format="ISO8601")
+    df = df.dropna().sort_values("time").drop_duplicates("time")
+    if len(df) < 3:
+        return None
+    step = df["time"].diff().dt.total_seconds().div(60).median()
+    if not step or step > CADENCE_MAX_BUCKET_MIN:
+        return None
+    window = max(1, round(CADENCE_WINDOW_MIN / step))
+    # Local calendar day, applying the zone's DST rule per timestamp.
+    df["day"] = [t.to_pydatetime().astimezone().strftime("%Y-%m-%d") for t in df["time"]]
+    out: dict[str, float] = {}
+    for day, g in df.groupby("day"):
+        times = g["time"].tolist()
+        steps = g["steps"].astype(float).tolist()
+        best = 0.0
+        for i in range(len(steps) - window + 1):
+            # Only count truly contiguous buckets (no gap inside the window).
+            span = (times[i + window - 1] - times[i]).total_seconds() / 60
+            if span > (window - 1) * step + 1:
+                continue
+            best = max(best, sum(steps[i:i + window]) / (window * step))
+        out[day] = round(best, 1)
+    return out
+
+
+def cadence_summary(per_day: dict[str, float] | None, min_days: int = 7) -> dict | None:
+    """Summarise per-day best 30-min rates (complete days only — caller filters)."""
+    if not per_day or len(per_day) < min_days:
+        return None
+    vals = list(per_day.values())
+    return {
+        "days": len(vals),
+        "median_best_30min_spm": round(statistics.median(vals)),
+        "days_ge_100_spm": sum(v >= CADENCE_MODERATE_SPM for v in vals),
+        "moderate_threshold_spm": CADENCE_MODERATE_SPM,
+        "note": "Best continuous 30-min rate from 15-min buckets — reads lower than research peak-30.",
+    }
+
+
+def rhr_trend(summaries: list[dict], today: date) -> dict | None:
+    """Median RHR, last 30 complete days vs 61-90 days ago."""
+    recent_start = (today - timedelta(days=30)).isoformat()
+    early_start = (today - timedelta(days=90)).isoformat()
+    early_end = (today - timedelta(days=60)).isoformat()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    recent, early = [], []
+    for s in summaries:
+        d = s.get("date", "")
+        v = _num(s.get("restingHeartRate"))
+        if not v or v <= 0 or d > yesterday:
+            continue
+        if d >= recent_start:
+            recent.append(v)
+        elif early_start <= d < early_end:
+            early.append(v)
+    if len(recent) < RHR_TREND_MIN_DAYS or len(early) < RHR_TREND_MIN_DAYS:
+        return None
+    r_med, e_med = statistics.median(recent), statistics.median(early)
+    change = r_med - e_med
+    if change <= -RHR_MEANINGFUL_BPM:
+        direction = "falling"
+    elif change >= RHR_MEANINGFUL_BPM:
+        direction = "rising"
+    else:
+        direction = "stable"
+    return {
+        "recent_median_rhr": round(r_med, 1),
+        "earlier_median_rhr": round(e_med, 1),
+        "change_bpm": round(change, 1),
+        "direction": direction,
+        "recent_days": len(recent),
+        "earlier_days": len(early),
+    }
