@@ -411,8 +411,10 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .info-icon:focus { color: var(--accent); outline: none; }
 
 .info-tooltip {
-  visibility: hidden;
-  opacity: 0;
+  /* display:none (not visibility:hidden) while closed: a hidden tooltip still
+     counts toward the page's scroll width, and one centred on an icon near
+     the right edge pushed phones into sideways scrolling. */
+  display: none;
   position: absolute;
   z-index: 600;
   background: var(--surface2);
@@ -423,13 +425,14 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   font-weight: 400;
   line-height: 1.55;
   padding: 10px 13px;
-  width: min(270px, 92vw);   /* never wider than the viewport on small screens */
+  width: min(270px, calc(100vw - 24px));   /* never wider than the viewport */
   bottom: calc(100% + 8px);
   left: 50%;
-  transform: translateX(-50%);
+  /* --tt-dx is set by positionInfoTooltip() (app.js) to pull the box back
+     inside the viewport; the arrow counter-shifts so it still points at the icon. */
+  transform: translateX(calc(-50% + var(--tt-dx, 0px)));
   box-shadow: var(--shadow);
   pointer-events: none;
-  transition: opacity 0.15s;
   text-align: left;
   white-space: normal;
 }
@@ -439,14 +442,20 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   content: '';
   position: absolute;
   top: 100%;
-  left: 50%;
+  left: calc(50% - var(--tt-dx, 0px));
   transform: translateX(-50%);
   border: 5px solid transparent;
   border-top-color: var(--border);
 }
 
+/* Flipped below the icon when there's no room above. */
+.info-tooltip.tt-below { bottom: auto; top: calc(100% + 8px); }
+.info-tooltip.tt-below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: var(--border); }
+
 .info-icon:hover .info-tooltip,
-.info-icon:focus .info-tooltip { visibility: visible; opacity: 1; }
+.info-icon:focus .info-tooltip { display: block; animation: tt-fade 0.15s var(--ease); }
+
+@keyframes tt-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* Ensure tooltip doesn't get clipped inside metric cards */
 .metric-card { overflow: visible; }
@@ -2487,3 +2496,39 @@ input[type="date"] { border-radius: 999px; border-color: var(--hair); background
 @media (prefers-reduced-motion: reduce) {
   .metrics-grid.bento > .metric-card, .chart-section, .cat-tile, .orb, .scan-btn::after { transition: none; }
 }
+
+/* ---- Activity vs current evidence tiles ---- */
+.fg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  padding-top: 4px;
+}
+.fg-tile {
+  position: relative;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  min-width: 0;
+}
+.fg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fg-title { font-size: 0.82rem; font-weight: 600; color: var(--muted); }
+.fg-tier {
+  font-size: 0.7rem; font-weight: 600; border-radius: 999px; padding: 1px 7px;
+  background: var(--shell); color: var(--muted); cursor: help; white-space: nowrap;
+}
+.fg-value {
+  font: 600 1.7rem/1.1 var(--font-display); color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.fg-value small { font: 500 0.78rem var(--font-read); color: var(--muted); margin-left: 6px; }
+.fg-sub { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+.fg-status {
+  align-self: flex-start; margin-top: auto;
+  font-size: 0.74rem; font-weight: 600; border-radius: 999px; padding: 2px 9px;
+  background: var(--shell); color: var(--muted);
+}
+.fg-good .fg-status { background: var(--good-soft); color: var(--green); }
+.fg-warn .fg-status { background: var(--warn-soft); color: var(--yellow); }

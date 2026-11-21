@@ -295,3 +295,28 @@ def test_responses_never_contain_bare_nan(api_client, sample_dates):
                                            "end": end}).text
         assert "NaN" not in raw, f"{path} leaked a NaN token"
         assert "Infinity" not in raw, f"{path} leaked an Infinity token"
+
+
+# ==================================================================
+# /api/fitness
+# ==================================================================
+def test_fitness_endpoint_returns_tiered_findings(api_client):
+    r = api_client.get("/api/fitness", params={"user": "default"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    kinds = {f["kind"] for f in body["findings"]}
+    assert {"steps", "weekly_mvpa", "hrv_readiness"} <= kinds
+    for f in body["findings"]:
+        assert f["evidence_tier"] in {"A", "B", "C"}
+        assert "medical_context" not in f
+
+
+def test_second_chat_turn_on_a_busy_session_gets_409(api_client):
+    from garmin_insights.web import app as app_module
+
+    sid, _, _ = app_module._sessions.get_or_create(None, user_id="default")
+    assert app_module._sessions.try_begin_turn(sid)
+    r = api_client.post("/api/chat", json={"message": "hi", "session_id": sid, "user": "default"})
+    assert r.status_code == 409
+    app_module._sessions.end_turn(sid)

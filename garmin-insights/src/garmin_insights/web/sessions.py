@@ -51,6 +51,33 @@ class SessionManager:
             }
             return new_id, self._sessions[new_id]["history"], user_id
 
+    # A turn that never released (client vanished before the stream started,
+    # so no cleanup ran) stops blocking the session after this long.
+    TURN_STALE_SECONDS = 300
+
+    def try_begin_turn(self, session_id: str) -> bool:
+        """Claim the session for one chat turn; False if one is in flight.
+
+        Two tabs sharing a session would otherwise run two agent loops that
+        append to the same history list concurrently — interleaving
+        tool_use / tool_result blocks and 400-ing every later request.
+        """
+        with self._lock:
+            entry = self._sessions.get(session_id)
+            if entry is None:
+                return False
+            busy = entry.get("busy_since")
+            if busy is not None and time.time() - busy < self.TURN_STALE_SECONDS:
+                return False
+            entry["busy_since"] = time.time()
+            return True
+
+    def end_turn(self, session_id: str) -> None:
+        with self._lock:
+            entry = self._sessions.get(session_id)
+            if entry is not None:
+                entry["busy_since"] = None
+
     def reset(self, session_id: str) -> None:
         with self._lock:
             if session_id in self._sessions:

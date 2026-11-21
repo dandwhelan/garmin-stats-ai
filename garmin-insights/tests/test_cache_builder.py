@@ -348,3 +348,40 @@ def test_refresh_forces_the_trailing_window_once_per_day(builder, monkeypatch):
     calls.clear()
     cache.refresh(days=3)
     assert calls.count(True) == 0, "same day again should not re-force"
+
+
+# ==================================================================
+# Batched range build ≡ per-day build
+# ==================================================================
+def test_batched_range_build_matches_single_day_builds(builder, sample_rows):
+    """build_range loads each raw table once for the whole span; every day it
+    writes must be identical to building that day on its own."""
+    cache, memory = builder
+    start, end = sample_rows[0]["date"], sample_rows[-1]["date"]
+    cache.build_range(start, end, force=True)
+    batched = {s["date"]: s for s in memory.get_daily_summaries_range(start, end)}
+
+    for row in sample_rows:
+        cache.build_daily_summary(row["date"])
+    single = {s["date"]: s for s in memory.get_daily_summaries_range(start, end)}
+
+    assert batched.keys() == single.keys()
+    for date in single:
+        assert batched[date] == single[date], date
+
+
+def test_baselines_skip_recompute_when_inputs_unchanged(builder, sample_rows, monkeypatch):
+    cache, memory = builder
+    cache.build_range(sample_rows[0]["date"], sample_rows[-1]["date"], force=True)
+    first = cache.update_baselines()
+
+    writes = []
+    monkeypatch.setattr(memory, "upsert_baselines", lambda rows: writes.append(rows))
+    assert cache.update_baselines() == first
+    assert writes == [], "unchanged inputs must not rewrite the baselines table"
+
+    # A changed day invalidates the fingerprint.
+    date = sample_rows[-3]["date"]
+    memory.upsert_daily_summary(date, {"date": date, "is_complete": True, "restingHeartRate": 99.0})
+    cache.update_baselines()
+    assert len(writes) == 1

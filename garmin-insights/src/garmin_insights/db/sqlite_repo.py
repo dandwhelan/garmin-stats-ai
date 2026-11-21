@@ -76,6 +76,35 @@ _SLEEP_COLS: dict[str, str] = {
 }
 
 
+# Altitude must move this far from the last counted point before it counts
+# as climb/descent. Summing every sample-to-sample diff turns sensor jitter
+# (±1-2 m barometric, worse on GPS altitude) into phantom ascent — a flat
+# hour-long run could export 100+ m "gain". 3 m matches the hysteresis band
+# commonly used by fitness platforms for barometric tracks.
+ELEVATION_HYSTERESIS_M = 3.0
+
+
+def elevation_gain_loss(altitudes, threshold: float = ELEVATION_HYSTERESIS_M) -> tuple[float, float]:
+    """Cumulative (gain, loss) with a hysteresis band; loss is returned ≤ 0."""
+    gain = loss = 0.0
+    ref = None
+    for alt in altitudes:
+        if alt is None or alt != alt:  # skip None / NaN
+            continue
+        alt = float(alt)
+        if ref is None:
+            ref = alt
+            continue
+        delta = alt - ref
+        if delta >= threshold:
+            gain += delta
+            ref = alt
+        elif delta <= -threshold:
+            loss += delta
+            ref = alt
+    return gain, loss
+
+
 class SqliteRepo:
     """Wrapper around SQLite for Garmin data queries, replacing InfluxRepo."""
 
@@ -303,10 +332,9 @@ class SqliteRepo:
         if not gps_df.empty:
             alt = gps_df["altitude"].dropna()
             if not alt.empty:
-                gains = alt.diff().clip(lower=0).sum()
-                losses = alt.diff().clip(upper=0).sum()
-                gps["elevation_gain_m"] = round(float(gains), 1)
-                gps["elevation_loss_m"] = round(float(losses), 1)
+                gains, losses = elevation_gain_loss(alt.tolist())
+                gps["elevation_gain_m"] = round(gains, 1)
+                gps["elevation_loss_m"] = round(losses, 1)
             for col, label in [("cadence", "cadence_spm"), ("power", "power_w"), ("temperature", "temp_c")]:
                 series = gps_df[col].dropna() if col in gps_df.columns else pd.Series([], dtype=float)
                 if not series.empty and series.max() > 0:

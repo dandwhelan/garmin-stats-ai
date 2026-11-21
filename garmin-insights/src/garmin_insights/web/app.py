@@ -16,7 +16,7 @@ import re
 import time
 from typing import Any
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -189,7 +189,7 @@ class ScaleFramesRequest(BaseModel):
 # Helpers
 # ------------------------------------------------------------------
 
-def _require_user(user: str) -> UserBundle:
+async def _require_user(user: str) -> UserBundle:
     if _users is None:
         raise HTTPException(status_code=503, detail="Server not initialised")
     if not _users.has_user(user):
@@ -198,7 +198,9 @@ def _require_user(user: str) -> UserBundle:
             detail=f"Unknown user '{user}'. Configured users: {_users.user_ids}",
         )
     try:
-        return _users.get(user)
+        # A cold bundle runs a 90-day cache rebuild; off the event loop so it
+        # can't stall every other request (incl. other users) meanwhile.
+        return await asyncio.get_running_loop().run_in_executor(None, _users.get, user)
     except Exception as e:
         logger.exception("Failed to load user bundle")
         raise HTTPException(status_code=500, detail=f"Failed to load user: {e}")
@@ -552,7 +554,7 @@ def _last_sync_iso(db_path: str) -> str | None:
             sidecar = Path(db_path + suffix)
             if sidecar.exists():
                 mtimes.append(sidecar.stat().st_mtime)
-        return datetime.utcfromtimestamp(max(mtimes)).isoformat() + "Z"
+        return datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat().replace("+00:00", "Z")
     except Exception:
         return None
 
@@ -564,8 +566,11 @@ async def health_check(user: str = Query(default="default")):
     if not _users.has_user(user):
         raise HTTPException(status_code=404, detail=f"Unknown user '{user}'")
     try:
-        bundle = _users.get(user)
-        repo_health = bundle.agent._repo.health_check()
+        loop = asyncio.get_running_loop()
+        bundle = await loop.run_in_executor(None, _users.get, user)
+        # Polled every 30 s per open tab; the SQLite reads can wait up to the
+        # 10 s busy timeout behind a fetcher write — keep them off the loop.
+        repo_health = await loop.run_in_executor(None, bundle.agent._repo.health_check)
         return {
             "status": "ok",
             "user": _resolve_user_identity(bundle.agent._settings),
@@ -573,7 +578,7 @@ async def health_check(user: str = Query(default="default")):
             "last_sync": _last_sync_iso(bundle.agent._settings.sqlite_db_path),
             "model": bundle.agent._settings.claude_model,
             "sessions": _sessions.stats() if _sessions else {},
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "error", "detail": str(e)})
@@ -591,11 +596,14 @@ async def dashboard(
     once every 60 s so that new fetcher writes appear on the dashboard
     automatically without requiring a web-server restart.
     """
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
 
     now = datetime.now()
     last = _last_cache_refresh.get(user)
     if last is None or (now - last) >= _CACHE_REFRESH_INTERVAL:
+        # Claim the slot before awaiting so concurrent dashboard loads (several
+        # tabs, or a fast range change) don't each start a parallel rebuild.
+        _last_cache_refresh[user] = now
         try:
             loop = asyncio.get_event_loop()
             # Rebuild last 7 days only (fast; full history rebuilt on startup)
@@ -622,8 +630,13 @@ async def dashboard(
             None, bundle.agent._memory.get_daily_summaries_range, start, end
         )
         baselines = await loop.run_in_executor(None, bundle.agent._memory.get_baselines)
-        _enrich_summaries_with_cycle(bundle, summaries, start, end)
-        _enrich_summaries_with_environment(bundle, summaries, start, end)
+        # Both enrichers query SQLite — run them in the executor too.
+        await loop.run_in_executor(
+            None, _enrich_summaries_with_cycle, bundle, summaries, start, end
+        )
+        await loop.run_in_executor(
+            None, _enrich_summaries_with_environment, bundle, summaries, start, end
+        )
         return {
             "user": user,
             "summaries": summaries,
@@ -641,7 +654,7 @@ async def visualizations(
     start: str | None = Query(default=None),
     end: str | None = Query(default=None),
 ):
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     start, end = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
     viz = bundle.viz
@@ -679,7 +692,7 @@ async def lifestyle(
     start: str | None = Query(default=None),
     end: str | None = Query(default=None),
 ):
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     start, end = _resolve_range(start, end, default_days=90)
     loop = asyncio.get_event_loop()
     svc = bundle.lifestyle
@@ -741,7 +754,7 @@ async def intraday_heatmap(
     metric: str = Query(default="stress", description="stress | body_battery | heart_rate"),
     days: int = Query(default=14, ge=1, le=90),
 ):
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(None, bundle.viz.intraday_heatmap, metric, days)
@@ -758,7 +771,7 @@ async def activities_with_gps(
     end: str | None = Query(default=None),
 ):
     """List activities with stored GPS tracks in the requested window."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
     try:
@@ -781,7 +794,7 @@ async def activity_track(
     user: str = Query(default="default"),
 ):
     """Return the GPS track for a single activity as ordered points."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     loop = asyncio.get_event_loop()
     try:
         df = await loop.run_in_executor(
@@ -808,7 +821,7 @@ async def activity_export(
     user: str = Query(default="default"),
 ):
     """Return a plain-text stats block for one activity — suitable for pasting into AI."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     loop = asyncio.get_event_loop()
     try:
         data = await loop.run_in_executor(
@@ -947,7 +960,7 @@ async def environment(
     (i.e. HOME_LAT/HOME_LON not configured) so the frontend can hide the
     section gracefully.
     """
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
     try:
@@ -970,7 +983,7 @@ async def ha_sensors(
     end: str | None = Query(default=None),
 ):
     """Home Assistant sensor daily aggregates from ha_sensor_daily."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
     try:
@@ -982,6 +995,36 @@ async def ha_sensors(
     except Exception as ex:
         logger.exception("HA sensors query failed")
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+def _fitness_findings(bundle) -> list[dict]:
+    from garmin_insights.insights.proactive import InsightScanner
+
+    # The fitness pass reads only the memory store; analysis is unused here.
+    scanner = InsightScanner(
+        bundle.agent._memory, getattr(bundle.agent, "_analysis", None),
+        getattr(bundle.agent._settings, "biological_sex", None),
+    )
+    drop = {"medical_context", "confounders"}
+    return [
+        {k: v for k, v in f.items() if k not in drop}
+        for f in scanner.scan_fitness_guidelines()
+    ]
+
+
+@app.get("/api/fitness")
+async def fitness_guidelines(user: str = Query(default="default")):
+    """Evidence-based activity findings (steps, weekly MVPA, strength, HRV
+    readiness, walking cadence, RHR trend) — the same pass the AI scans get.
+    Always anchored to today: each finding uses its own fixed look-back."""
+    bundle = await _require_user(user)
+    loop = asyncio.get_running_loop()
+    try:
+        findings = await loop.run_in_executor(None, _fitness_findings, bundle)
+    except Exception as e:
+        logger.exception("Fitness findings failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    return _scrub_nan({"user": user, "available": bool(findings), "findings": findings})
 
 
 @app.get("/api/overnight")
@@ -999,7 +1042,7 @@ async def overnight(
     `available: false` for databases written before the fetcher started
     recording the overnight series, so the frontend can hide the section.
     """
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s_, e_ = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
     try:
@@ -1024,7 +1067,7 @@ async def environment_recovery(
     correlation strength. Returns `available: false` when the user has no
     environment_daily rows so the frontend can hide the section.
     """
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=60)
     loop = asyncio.get_event_loop()
     try:
@@ -1052,7 +1095,7 @@ async def behavior_environment(
 
     Returns the on/off-day means, deltas, and Pearson r per driver pair.
     """
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=90)
     env_cols = [c.strip() for c in drivers.split(",") if c.strip()]
     # The columns are interpolated into a SELECT list downstream — allowlist
@@ -1083,7 +1126,7 @@ async def bedroom_temp_sleep(
     end: str | None = Query(default=None),
 ):
     """Overnight Home Assistant bedroom temperature vs sleep / HRV / awakenings."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=60)
     loop = asyncio.get_event_loop()
     try:
@@ -1104,7 +1147,7 @@ async def behavior_root_cause(
     end: str | None = Query(default=None),
 ):
     """Per-event 24-48h confounder scan for a logged behavior (e.g. Migraines)."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=180)
     loop = asyncio.get_event_loop()
     try:
@@ -1125,7 +1168,7 @@ async def menstrual(
     end: str | None = Query(default=None),
 ):
     """Menstrual cycle data for the requested window. Empty result if user doesn't track."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=90)
     if not _tracks_cycle(bundle.agent._settings):
         return {"start": s, "end": e, "tracked": False, "entries": []}
@@ -1152,7 +1195,7 @@ async def get_notes(
     end: str | None = Query(default=None),
 ):
     """Return the user's free-text daily notes for the window as {date: note}."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=30)
     loop = asyncio.get_event_loop()
     entries = await loop.run_in_executor(
@@ -1164,7 +1207,7 @@ async def get_notes(
 @app.post("/api/notes")
 async def save_note(req: NoteRequest):
     """Create, update, or (with an empty body) delete a day's free-text note."""
-    bundle = _require_user(req.user)
+    bundle = await _require_user(req.user)
     # daily_notes is keyed by date string; an unvalidated value becomes a junk
     # primary key that's invisible to every range query.
     try:
@@ -1198,7 +1241,7 @@ async def scale_frames(req: ScaleFramesRequest):
     untrusted (an unknown-firmware scale, a flaky connection), so nothing
     below trusts frame content, and every buffer is bounded.
     """
-    bundle = _require_user(req.user)
+    bundle = await _require_user(req.user)
     adapter = get_scale_adapter(req.adapter)
     if adapter is None:
         raise HTTPException(status_code=400, detail=f"Unknown scale adapter '{req.adapter}'")
@@ -1384,7 +1427,7 @@ async def scale_readings(
     end: str | None = Query(default=None),
 ):
     """Locally-persisted scale readings for the window (never includes raw frames)."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     s, e = _resolve_range(start, end, default_days=90)
     loop = asyncio.get_event_loop()
     readings = await loop.run_in_executor(
@@ -1418,7 +1461,7 @@ async def upload_weigh_in(req: WeighInRequest):
     """
     from garmin_insights.garmin_upload import GarminUploadError, upload_body_composition
 
-    bundle = _require_user(req.user)
+    bundle = await _require_user(req.user)
     if not (20 <= req.weight_kg <= 400):
         raise HTTPException(status_code=400, detail="weight_kg must be between 20 and 400")
     # Bounds mirror the form's min/max. Beyond plausibility: out-of-range
@@ -1527,11 +1570,17 @@ async def upload_weigh_in(req: WeighInRequest):
 @app.post("/api/chat")
 async def chat(body: ChatRequest):
     """Stream a chat response via Server-Sent Events with per-session history."""
-    bundle = _require_user(body.user)
+    bundle = await _require_user(body.user)
     if _sessions is None:
         raise HTTPException(status_code=503, detail="Sessions not initialised")
 
     session_id, history, _ = _sessions.get_or_create(body.session_id, user_id=body.user)
+    if not _sessions.try_begin_turn(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A reply is still being generated in this conversation — "
+                   "wait for it to finish (or open a new chat).",
+        )
 
     async def sse_generator() -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id, 'user': body.user})}\n\n"
@@ -1572,6 +1621,8 @@ async def chat(body: ChatRequest):
                 )
             except Exception:
                 logger.warning("Failed to persist chat memory", exc_info=True)
+            finally:
+                _sessions.end_turn(session_id)
 
         try:
             while True:
@@ -1619,7 +1670,7 @@ async def chat_history(
     user: str = Query(default="default"),
     limit: int = Query(default=25, ge=1, le=100),
 ):
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     loop = asyncio.get_event_loop()
     items = await loop.run_in_executor(None, bundle.agent._memory.get_recent_chat_memory, user, limit)
     return {"user": user, "count": len(items), "items": items}
@@ -1627,7 +1678,7 @@ async def chat_history(
 
 @app.post("/api/scan")
 async def scan(body: ScanRequest):
-    bundle = _require_user(body.user)
+    bundle = await _require_user(body.user)
 
     from garmin_insights.agent import ALL_SCAN_FOCUSES
 
@@ -1660,7 +1711,7 @@ async def list_scan_reports(
     focus: str | None = Query(default=None),
 ):
     """Persisted AI scan reports for this user, newest first."""
-    bundle = _require_user(user)
+    bundle = await _require_user(user)
     loop = asyncio.get_event_loop()
     try:
         reports = await loop.run_in_executor(
@@ -1680,7 +1731,7 @@ async def generate_prompt(body: PromptRequest):
     receiving chat (Claude.ai, ChatGPT, Gemini, ...) has the same picture our
     tool-calling agent would build for itself — no API tokens needed.
     """
-    bundle = _require_user(body.user)
+    bundle = await _require_user(body.user)
     if not body.message and not body.focus:
         raise HTTPException(status_code=400, detail="Provide either 'message' or 'focus'")
     if body.focus:

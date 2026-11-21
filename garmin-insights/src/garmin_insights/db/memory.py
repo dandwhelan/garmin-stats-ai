@@ -151,29 +151,38 @@ class MemoryStore:
     # ------------------------------------------------------------------
     # Daily Summaries
     # ------------------------------------------------------------------
+    _UPSERT_SUMMARY_SQL = """
+        INSERT INTO daily_summaries (date, metric_json, lifestyle_json, computed_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(date) DO UPDATE SET
+            metric_json = excluded.metric_json,
+            lifestyle_json = excluded.lifestyle_json,
+            computed_at = datetime('now')
+    """
+
+    def upsert_daily_summaries(
+        self, rows: list[tuple[str, dict[str, Any], dict[str, Any] | None]]
+    ) -> None:
+        """Upsert many (date, metrics, lifestyle) rows in one transaction."""
+        if not rows:
+            return
+        params = [
+            (d, json.dumps(m), json.dumps(lj) if lj else None) for d, m, lj in rows
+        ]
+        conn = self._get_conn()
+        try:
+            conn.executemany(self._UPSERT_SUMMARY_SQL, params)
+            conn.commit()
+        finally:
+            conn.close()
+
     def upsert_daily_summary(
         self,
         date: str,
         metrics: dict[str, Any],
         lifestyle: dict[str, Any] | None = None,
     ) -> None:
-        conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO daily_summaries (date, metric_json, lifestyle_json, computed_at)
-                VALUES (?, ?, ?, datetime('now'))
-                ON CONFLICT(date) DO UPDATE SET
-                    metric_json = excluded.metric_json,
-                    lifestyle_json = excluded.lifestyle_json,
-                    computed_at = datetime('now')
-                """,
-                (date, json.dumps(metrics), json.dumps(lifestyle) if lifestyle else None),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        self.upsert_daily_summaries([(date, metrics, lifestyle)])
 
     def get_daily_summary(self, date: str) -> dict[str, Any] | None:
         conn = self._get_conn()
@@ -252,6 +261,11 @@ class MemoryStore:
                     json_extract(metric_json, '$.restingHeartRate') IS NOT NULL
                     OR json_extract(metric_json, '$.sleepScore') IS NOT NULL
                     OR json_extract(metric_json, '$.totalSteps') IS NOT NULL
+                    -- A day with genuinely no data (watch off, before the
+                    -- first sync) builds an empty summary. Without this, every
+                    -- dashboard load / 60 s refresh rebuilt each such day
+                    -- (~8 queries + a write apiece). Retry them hourly instead.
+                    OR computed_at >= datetime('now', '-1 hour')
                   )
                 """,
                 (start, end),
@@ -409,32 +423,44 @@ class MemoryStore:
     # ------------------------------------------------------------------
     # Baselines
     # ------------------------------------------------------------------
+    _UPSERT_BASELINE_SQL = """
+        INSERT INTO baselines (metric_name, avg_7d, avg_30d, std_7d, std_30d,
+                               min_30d, max_30d, latest_value, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(metric_name) DO UPDATE SET
+            avg_7d = excluded.avg_7d, avg_30d = excluded.avg_30d,
+            std_7d = excluded.std_7d, std_30d = excluded.std_30d,
+            min_30d = excluded.min_30d, max_30d = excluded.max_30d,
+            latest_value = excluded.latest_value,
+            updated_at = datetime('now')
+    """
+
+    def upsert_baselines(self, rows: list[tuple]) -> None:
+        """Upsert many baselines in ONE transaction.
+
+        Each row is (metric, avg_7d, avg_30d, std_7d, std_30d, min_30d,
+        max_30d, latest). The cache refresh writes ~21 metrics every 60 s
+        while a dashboard is open; one commit instead of 21 cuts fsyncs and
+        write-lock windows the concurrent fetcher has to wait out.
+        """
+        if not rows:
+            return
+        conn = self._get_conn()
+        try:
+            conn.executemany(self._UPSERT_BASELINE_SQL, rows)
+            conn.commit()
+        finally:
+            conn.close()
+
     def upsert_baseline(
         self, metric: str, avg_7d: float | None, avg_30d: float | None,
         std_7d: float | None, std_30d: float | None,
         min_30d: float | None, max_30d: float | None,
         latest: float | None,
     ) -> None:
-        conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO baselines (metric_name, avg_7d, avg_30d, std_7d, std_30d,
-                                       min_30d, max_30d, latest_value, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                ON CONFLICT(metric_name) DO UPDATE SET
-                    avg_7d = excluded.avg_7d, avg_30d = excluded.avg_30d,
-                    std_7d = excluded.std_7d, std_30d = excluded.std_30d,
-                    min_30d = excluded.min_30d, max_30d = excluded.max_30d,
-                    latest_value = excluded.latest_value,
-                    updated_at = datetime('now')
-                """,
-                (metric, avg_7d, avg_30d, std_7d, std_30d, min_30d, max_30d, latest),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        self.upsert_baselines(
+            [(metric, avg_7d, avg_30d, std_7d, std_30d, min_30d, max_30d, latest)]
+        )
 
     def get_baselines(self) -> dict[str, dict[str, float | None]]:
         conn = self._get_conn()

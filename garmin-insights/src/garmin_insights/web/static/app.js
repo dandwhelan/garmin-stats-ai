@@ -907,6 +907,7 @@ async function loadDashboard() {
     loadActivityMap(date_range.start, date_range.end);
     loadScaleDetail(date_range.start, date_range.end);
     loadOvernight(date_range.start, date_range.end);
+    loadFitnessGuidelines();
   } catch (e) {
     console.error('Dashboard load failed:', e);
   }
@@ -1146,6 +1147,28 @@ document.querySelector('.tab-btn[data-tab="entities"]')?.addEventListener('click
 document.querySelector('.tab-btn[data-tab="journal"]')?.addEventListener('click', ensureJournalTab);
 
 // ---- AI Scan ----
+
+// Keep an open info tooltip inside the viewport: nudge it sideways (via the
+// --tt-dx custom property) and flip it below its icon when there's no room
+// above. Delegated, so tooltips added by later renders are covered too.
+function positionInfoTooltip(icon) {
+  const tip = icon.querySelector('.info-tooltip');
+  if (!tip) return;
+  tip.style.setProperty('--tt-dx', '0px');
+  tip.classList.remove('tt-below');
+  const margin = 8;
+  const r = tip.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  let dx = 0;
+  if (r.left < margin) dx = margin - r.left;
+  else if (r.right > vw - margin) dx = (vw - margin) - r.right;
+  if (dx) tip.style.setProperty('--tt-dx', `${Math.round(dx)}px`);
+  if (r.top < margin) tip.classList.add('tt-below');
+}
+['mouseover', 'focusin'].forEach(evt => document.addEventListener(evt, e => {
+  const icon = e.target.closest?.('.info-icon');
+  if (icon) positionInfoTooltip(icon);
+}));
 
 function safeRender(name, fn) {
   try { fn(); }
@@ -1779,6 +1802,160 @@ function renderOvernightScreening(signals) {
     div.appendChild(body);
     host.appendChild(div);
   });
+}
+
+// ---- Activity vs current evidence (fitness guideline tiles) ----
+
+async function loadFitnessGuidelines() {
+  const epoch = loadEpoch;
+  try {
+    const res = await fetch(withUser('/api/fitness'));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (epoch !== loadEpoch) return; // stale — a newer load owns the UI
+    safeRender('fitnessGuidelines', () => renderFitnessGuidelines(data));
+  } catch (e) {
+    console.error('Fitness guidelines load failed:', e);
+  }
+}
+
+// Tile copy, per UI language. The page language is "en" unless the zh-CN
+// localization (i18n.js) set <html lang="zh-CN">; tile text is built from
+// numbers, so the exact-string DOM catalog can't translate it — it lives here.
+// zh-CN wording is machine-assisted; native review welcome.
+const _FG_TEXT = {
+  en: {
+    header: 'Activity vs Current Evidence',
+    sub: 'Your recent data against the research behind each target',
+    tier: t => `Tier ${t}`,
+    steps: { title: 'Daily steps', unit: 'median/day',
+      sub: f => `${f.pct_days_ge_7000}% of days ≥7,000 · last ${f.days} days`,
+      meets: 'At ~7k', short: n => `${n} short` },
+    mvpa: { title: 'Weekly activity', unit: 'min (vigorous ×2)',
+      pattern: { regular: 'Spread across the week', weekend_warrior: 'Mostly in 1–2 days. Counts the same', below_guideline: 'Below the WHO 150-minute target' },
+      active: d => `${d} active days`, meets: 'Meets WHO', of: t => `of ${t}` },
+    vig: { title: 'Vigorous bursts', unit: 'days', sub: 'Try about 3 bursts of 1–2 min a day: fast stairs, a brisk uphill walk', label: 'Idea' },
+    strength: { title: 'Strength training', unit: 'days/week',
+      sub: m => `${m} min/week · target ≥2 days, 30–60 min. Recorded sessions only`,
+      meets: 'Meets WHO', below: 'Below 2 days' },
+    hrv: { title: 'HRV readiness', unit: 'ms, 7-day',
+      guidance: { below_normal: 'Favour low intensity / recovery until it returns to range', within_normal: 'Train as planned', above_normal: 'Above range. Train as planned; not by itself a reason to push harder' },
+      sparse: ' · sparse baseline',
+      label: { below_normal: 'Below range', within_normal: 'In range', above_normal: 'Above range' } },
+    cadence: { title: 'Walking cadence', unit: 'steps/min, best 30 min',
+      sub: f => `${f.days_ge_100_spm} of ${f.days} days had a brisk 30-min bout (≥100 steps/min)`,
+      good: '≥1 a week', rare: 'Rare' },
+    rhr: { title: 'Resting HR trend', unit: 'bpm',
+      sub: (now, then) => `${now} now vs ${then} two months ago (medians)`,
+      label: { falling: 'Falling', rising: 'Rising', stable: 'Stable' } },
+  },
+  'zh-CN': {
+    header: '活动数据与最新研究对照',
+    sub: '将你近期的数据与每项目标背后的研究进行对照',
+    tier: t => `${t} 级证据`,
+    steps: { title: '每日步数', unit: '中位数/天',
+      sub: f => `${f.pct_days_ge_7000}% 的天数 ≥7,000 步 · 近 ${f.days} 天`,
+      meets: '已达约 7 千步', short: n => `还差 ${n} 步` },
+    mvpa: { title: '每周活动量', unit: '分钟（高强度 ×2）',
+      pattern: { regular: '分散在一周各天', weekend_warrior: '集中在 1–2 天完成，效果相同', below_guideline: '低于 WHO 每周 150 分钟目标' },
+      active: d => `${d} 个活跃日`, meets: '达到 WHO 标准', of: t => `目标 ${t}` },
+    vig: { title: '短时高强度活动', unit: '天', sub: '每天尝试约 3 次、每次 1–2 分钟的快速活动：快速爬楼梯、快步上坡', label: '建议' },
+    strength: { title: '力量训练', unit: '天/周',
+      sub: m => `${m} 分钟/周 · 目标 ≥2 天、30–60 分钟。仅统计手表记录的训练`,
+      meets: '达到 WHO 标准', below: '少于 2 天' },
+    hrv: { title: 'HRV 准备度', unit: '毫秒，7 天',
+      guidance: { below_normal: '以低强度或恢复为主，直到回到正常范围', within_normal: '按计划训练', above_normal: '高于正常范围。按计划训练；这本身不是加量的理由' },
+      sparse: ' · 基线数据较少',
+      label: { below_normal: '低于范围', within_normal: '在范围内', above_normal: '高于范围' } },
+    cadence: { title: '步行步频', unit: '步/分钟，最佳 30 分钟',
+      sub: f => `${f.days} 天中有 ${f.days_ge_100_spm} 天出现 30 分钟快走（≥100 步/分钟）`,
+      good: '每周 ≥1 次', rare: '较少' },
+    rhr: { title: '静息心率趋势', unit: '次/分',
+      sub: (now, then) => `当前 ${now}，两个月前 ${then}（中位数）`,
+      label: { falling: '下降', rising: '上升', stable: '稳定' } },
+  },
+};
+
+function _fgLang() {
+  return document.documentElement.lang === 'zh-CN' ? 'zh-CN' : 'en';
+}
+
+function _fgTile(f) {
+  const L = _FG_TEXT[_fgLang()];
+  const n = (v, d = 0) => (v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d }));
+  switch (f.kind) {
+    case 'steps': return {
+      title: L.steps.title, value: n(f.median_steps), unit: L.steps.unit,
+      sub: L.steps.sub(f),
+      status: f.status === 'meets' ? 'good' : 'warn',
+      label: f.status === 'meets' ? L.steps.meets : L.steps.short(n(f.steps_to_target)),
+    };
+    case 'weekly_mvpa': return {
+      title: L.mvpa.title, value: n(f.mvpa_equiv), unit: L.mvpa.unit,
+      sub: `${L.mvpa.pattern[f.pattern] || f.pattern} · ${L.mvpa.active(f.active_days)}`,
+      status: f.pattern === 'below_guideline' ? 'warn' : 'good',
+      label: f.pattern === 'below_guideline' ? L.mvpa.of(f.who_target) : L.mvpa.meets,
+    };
+    case 'vigorous_bursts': return {
+      title: L.vig.title, value: `${f.vigorous_days}/${f.days}`, unit: L.vig.unit,
+      sub: L.vig.sub, status: 'neutral', label: L.vig.label,
+    };
+    case 'strength': return {
+      title: L.strength.title, value: n(f.days_per_week, 1), unit: L.strength.unit,
+      sub: L.strength.sub(n(f.minutes_per_week)),
+      status: f.status === 'meets' ? 'good' : 'warn',
+      label: f.status === 'meets' ? L.strength.meets : L.strength.below,
+    };
+    case 'hrv_readiness': return {
+      title: L.hrv.title, value: n(f.rolling_7d_ms, 1), unit: L.hrv.unit,
+      sub: (L.hrv.guidance[f.status] || f.guidance || '') + (f.baseline_low_confidence ? L.hrv.sparse : ''),
+      status: f.status === 'below_normal' ? 'warn' : f.status === 'within_normal' ? 'good' : 'neutral',
+      label: L.hrv.label[f.status] || f.status,
+    };
+    case 'cadence': {
+      const good = f.days_ge_100_spm >= f.days / 7;
+      return {
+        title: L.cadence.title, value: n(f.median_best_30min_spm), unit: L.cadence.unit,
+        sub: L.cadence.sub(f), status: good ? 'good' : 'neutral',
+        label: good ? L.cadence.good : L.cadence.rare,
+      };
+    }
+    case 'rhr_trend': return {
+      title: L.rhr.title, value: `${f.change_bpm > 0 ? '+' : ''}${n(f.change_bpm, 1)}`, unit: L.rhr.unit,
+      sub: L.rhr.sub(n(f.recent_median_rhr, 1), n(f.earlier_median_rhr, 1)),
+      status: f.direction === 'falling' ? 'good' : f.direction === 'rising' ? 'warn' : 'neutral',
+      label: L.rhr.label[f.direction] || f.direction,
+    };
+    default: return null;
+  }
+}
+
+function renderFitnessGuidelines(data) {
+  const section = document.getElementById('fitness-guidelines-section');
+  const grid = document.getElementById('fitness-guidelines-grid');
+  if (!section || !grid) return;
+  const L = _FG_TEXT[_fgLang()];
+  if (_fgLang() !== 'en') {
+    // Header text is static HTML with an info icon inside the <h2>; swap only
+    // the leading text node so the icon + tooltip survive.
+    const h2 = section.querySelector('.chart-header h2');
+    if (h2 && h2.firstChild && h2.firstChild.nodeType === Node.TEXT_NODE) h2.firstChild.nodeValue = `${L.header} `;
+    const sub = section.querySelector('.chart-header .chart-sub');
+    if (sub) sub.textContent = L.sub;
+  }
+  const tiles = (data?.findings || []).map(f => [f, _fgTile(f)]).filter(([, t]) => t);
+  section.style.display = tiles.length ? '' : 'none';
+  if (typeof refreshCategoryVisibility === 'function') refreshCategoryVisibility();
+  grid.innerHTML = tiles.map(([f, t]) => `
+    <div class="fg-tile fg-${t.status}">
+      <div class="fg-head">
+        <span class="fg-title">${escapeHtml(t.title)}</span>
+        <span class="fg-tier" title="${escapeHtml(f.citation || '')}">${escapeHtml(L.tier(f.evidence_tier || '?'))}</span>
+      </div>
+      <div class="fg-value">${escapeHtml(String(t.value))}<small>${escapeHtml(t.unit)}</small></div>
+      <div class="fg-sub">${escapeHtml(t.sub)}</div>
+      <span class="fg-status">${escapeHtml(t.label)}</span>
+    </div>`).join('');
 }
 
 async function loadScaleDetail(start, end) {
@@ -2810,7 +2987,16 @@ async function sendMessage() {
       body: JSON.stringify({ message: outgoingText, session_id: sessionId, user: activeUser }),
     });
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // 409 = another tab is mid-reply in this conversation; show the
+      // server's explanation rather than a bare status code.
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) {}
+      if (res.status === 409 && document.documentElement.lang === 'zh-CN') {
+        detail = '此对话仍在生成回复，请等待完成（或开始新对话）。';
+      }
+      throw new Error(detail);
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -4352,7 +4538,7 @@ const CHART_CATEGORIES = [
   { id: 'overview',    name: 'Overview',              match: ['trend-chart', 'research-scorecard'] },
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag', 'overnight-quality-section'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart', 'overnight-hr-section'] },
-  { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart'] },
+  { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart', 'fitness-guidelines-section'] },
   { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },

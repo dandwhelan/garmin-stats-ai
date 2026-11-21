@@ -487,6 +487,127 @@ class InsightScanner:
 
         return findings
 
+    def _recent_activities(self, days: int) -> list[dict[str, Any]]:
+        """activity_summary rows for the last ``days`` days ([] if unavailable)."""
+        import sqlite3
+
+        db_path = getattr(self._memory, "db_path", None)
+        if not db_path:
+            return []
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00")
+        try:
+            conn = sqlite3.connect(db_path, timeout=10)
+            try:
+                rows = conn.execute(
+                    "SELECT time, activity_type, elapsed_duration FROM activity_summary "
+                    "WHERE time >= ? AND COALESCE(activity_type, '') != 'No Activity' "
+                    "AND COALESCE(activity_name, '') != 'END'",
+                    (start,),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            logger.debug("activity_summary unavailable: %s", exc)
+            return []
+        return [
+            {"time": t, "activity_type": at, "elapsed_duration": d} for t, at, d in rows
+        ]
+
+    def _recent_step_samples(self, days: int) -> list[tuple[str, float]]:
+        """steps_intraday (time, steps) for the last ``days`` days ([] if absent)."""
+        import sqlite3
+
+        db_path = getattr(self._memory, "db_path", None)
+        if not db_path:
+            return []
+        # Widen a day so the earliest local day isn't cut by the UTC offset.
+        start = (datetime.now() - timedelta(days=days + 1)).strftime("%Y-%m-%dT00:00:00")
+        try:
+            conn = sqlite3.connect(db_path, timeout=10)
+            try:
+                return conn.execute(
+                    "SELECT time, steps_count FROM steps_intraday "
+                    "WHERE time >= ? AND steps_count IS NOT NULL ORDER BY time",
+                    (start,),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            logger.debug("steps_intraday unavailable: %s", exc)
+            return []
+
+    def scan_fitness_guidelines(self) -> list[dict[str, Any]]:
+        """Activity dose + training guidance vs current evidence.
+
+        Steps vs the ~7k knee, weekly MVPA volume and its distribution, a
+        vigorous-burst suggestion when volume is short, recorded strength
+        volume, and HRV-guided intensity. See insights/fitness.py.
+        """
+        from garmin_insights.insights import fitness
+
+        get_range = getattr(self._memory, "get_daily_summaries_range", None)
+        if get_range is None:
+            return []
+        today = datetime.now().date()
+        try:
+            summaries = get_range(
+                (today - timedelta(days=90)).isoformat(), today.isoformat()
+            )
+        except Exception as exc:
+            logger.debug("fitness scan: summaries unavailable: %s", exc)
+            return []
+
+        yesterday = (today - timedelta(days=1)).isoformat()
+        complete = [
+            s for s in summaries
+            if s.get("date", "") <= yesterday and s.get("is_complete", True)
+        ]
+        last_28 = [s for s in complete if s["date"] >= (today - timedelta(days=28)).isoformat()]
+        last_7 = [s for s in complete if s["date"] >= (today - timedelta(days=7)).isoformat()]
+
+        rules = {r.name: r for r in INSIGHT_RULES}
+        findings: list[dict[str, Any]] = []
+
+        def _emit(rule_name: str, kind: str, payload: dict[str, Any] | None) -> None:
+            if not payload:
+                return
+            finding = {"source": "fitness_guidelines", "kind": kind,
+                       "rule_name": rule_name, **payload}
+            rule = rules.get(rule_name)
+            if rule is not None:
+                _attach_rule_metadata(finding, rule, self._biological_sex)
+            findings.append(finding)
+
+        _emit("daily_steps_dose_response", "steps", fitness.steps_dose(last_28))
+
+        mvpa = fitness.weekly_mvpa(last_7)
+        if mvpa:
+            below = mvpa["pattern"] == "below_guideline"
+            _emit("who_exercise_guidelines" if below else "weekend_warrior_mvpa",
+                  "weekly_mvpa", mvpa)
+            if below:
+                _emit("vigorous_intermittent_activity", "vigorous_bursts", {
+                    "days": mvpa["days"],
+                    "vigorous_days": mvpa["vigorous_days"],
+                    "vigorous_per_day": mvpa["vigorous_per_day"],
+                })
+
+        _emit("muscle_strengthening_weekly", "strength",
+              fitness.strength_volume(self._recent_activities(28), today))
+        _emit("hrv_guided_training", "hrv_readiness",
+              fitness.hrv_readiness(
+                  [x for x in summaries if x.get("date", "") >= (today - timedelta(days=60)).isoformat()],
+                  today,
+              ))
+
+        per_day = fitness.best_30min_cadence(self._recent_step_samples(28)) or {}
+        window_start = (today - timedelta(days=28)).isoformat()
+        per_day = {d: v for d, v in per_day.items() if window_start <= d <= yesterday}
+        _emit("walking_cadence_intensity", "cadence", fitness.cadence_summary(per_day))
+
+        _emit("rhr_fitness_trend", "rhr_trend", fitness.rhr_trend(complete, today))
+        return findings
+
     def run_full_scan(self) -> dict[str, list[dict[str, Any]]]:
         """Run all detection passes and return categorized findings."""
         return {
@@ -495,4 +616,5 @@ class InsightScanner:
             "overnight": self.scan_overnight(),
             "behavior_impacts": self.scan_behavior_impacts(),
             "trends": self.scan_trends(),
+            "fitness": self.scan_fitness_guidelines(),
         }

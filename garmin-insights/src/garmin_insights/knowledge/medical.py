@@ -1532,6 +1532,201 @@ INSIGHT_RULES: list[InsightRule] = [
         requires_user_context=True,
         confounders=["illness", "training_load", "alcohol", "stress"],
     ),
+
+    # ===== ACTIVITY DOSE & TRAINING GUIDANCE (2022-2025 evidence) =====
+    # Computed deterministically by InsightScanner.scan_fitness_guidelines(),
+    # which names the rule on each finding so the evidence rides with it.
+    InsightRule(
+        name="daily_steps_dose_response",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="totalSteps",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "Median {median_steps:.0f} steps/day over {days} complete days "
+            "({pct_days_ge_7000:.0f}% of days at ≥7,000)."
+        ),
+        research_citation=(
+            "Ding et al., 2025, Lancet Public Health (dose-response meta-analysis, 57 studies); "
+            "Paluch et al., 2022, Lancet Public Health"
+        ),
+        research_summary=(
+            "About 7,000 steps/day is associated with ~47% lower all-cause mortality than "
+            "2,000/day, with most of the benefit accrued by 7,000 and smaller gains beyond. "
+            "The 2025 meta-analysis also links ~7,000 steps to lower CVD incidence, dementia "
+            "and depressive symptoms; gains are steepest from a low base, so each extra "
+            "1,000 steps matters most below ~5,000. Use complete days only — today's running "
+            "total is not comparable."
+        ),
+        evidence_tier="A",
+        claim_strength="strong_association",
+        confounders=["illness", "injury", "travel", "non_step_exercise"],
+    ),
+    InsightRule(
+        name="weekend_warrior_mvpa",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="moderateIntensityMinutes",
+        comparison_metric="vigorousIntensityMinutes",
+        direction="correlation",
+        description_template=(
+            "{mvpa_equiv:.0f} MVPA-equivalent minutes this week across {active_days} "
+            "days — pattern: {pattern}."
+        ),
+        research_citation=(
+            "Khurshid et al., 2023, JAMA (UK Biobank accelerometry, n=89,573)"
+        ),
+        research_summary=(
+            "Reaching ~150 min/week of MVPA mostly in 1-2 days ('weekend warrior') is "
+            "associated with similarly lower cardiovascular risk as spreading it across the "
+            "week. Frame concentrated activity as meeting the guideline, not as a deficit; "
+            "the total volume is what tracks with outcomes. Observational and "
+            "accelerometer-based — not proof that the two patterns are equivalent for every "
+            "outcome (e.g. recovery load from one long session)."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        confounders=["device_wear_time", "non_wrist_exercise"],
+    ),
+    InsightRule(
+        name="vigorous_intermittent_activity",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="vigorousIntensityMinutes",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "Vigorous minutes on {vigorous_days} of the last {days} days "
+            "(avg {vigorous_per_day:.1f} min/day)."
+        ),
+        research_citation=(
+            "Stamatakis et al., 2022, Nature Medicine (VILPA, n=25,241 non-exercisers)"
+        ),
+        research_summary=(
+            "~3 daily 1-2 min bursts of vigorous incidental activity are associated with "
+            "~40% lower all-cause mortality in adults who do no structured exercise. "
+            "Examples: fast stair climbing, brisk uphill walking, carrying loads; the "
+            "Nature Medicine cohort found ~38-40% lower all-cause and cancer mortality and "
+            "~48-49% lower CVD mortality. A low-barrier suggestion when weekly "
+            "MVPA is short; Garmin's vigorous minutes are a proxy and don't resolve "
+            "individual 1-minute bouts."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["device_wear_time", "heart_rate_zone_calibration"],
+    ),
+    InsightRule(
+        name="muscle_strengthening_weekly",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="strength_sessions_per_week",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "{sessions_per_week:.1f} recorded strength sessions/week "
+            "({minutes_per_week:.0f} min/week) over the last {weeks} weeks."
+        ),
+        research_citation=(
+            "Momma et al., 2022, BJSM (meta-analysis of cohort studies); "
+            "WHO Guidelines, 2020; Bull et al., 2020, BJSM"
+        ),
+        research_summary=(
+            "30-60 min/week of muscle-strengthening activity is associated with 10-20% lower "
+            "all-cause mortality, CVD, cancer and diabetes; WHO advises ≥2 days/week. "
+            "The curve is L-shaped — no clear extra benefit beyond ~60 min/week except "
+            "for diabetes. Combined with aerobic activity the association is strongest. Only sessions recorded on the watch are counted — "
+            "unrecorded gym work makes this an undercount, so ask before concluding."
+        ),
+        evidence_tier="A",
+        claim_strength="strong_association",
+        measurement_confidence="medium",
+        confounders=["unrecorded_sessions"],
+    ),
+    InsightRule(
+        name="hrv_guided_training",
+        category="recovery",
+        trigger_behavior=None,
+        trigger_metric="avgOvernightHrv",
+        comparison_metric=None,
+        direction="lower_is_worse",
+        description_template=(
+            "7-day rolling ln-HRV {ln_rolling_7d:.2f} vs normal range "
+            "{ln_band_low:.2f}-{ln_band_high:.2f} → {status}."
+        ),
+        research_citation=(
+            "Plews et al., 2013, Sports Medicine; "
+            "Manresa-Rocamora et al., 2021, IJERPH (meta-analysis of HRV-guided training)"
+        ),
+        research_summary=(
+            "A 7-day rolling mean of log-transformed overnight HRV, compared with the "
+            "person's own normal range (baseline mean ± 0.5 SD, the smallest worthwhile "
+            "change), is a more reliable readiness signal than any single night. Training "
+            "prescribed from it — keep intensity when inside the range, ease off when below "
+            "— produced small advantages in vagal recovery and aerobic performance vs "
+            "pre-planned training in the 2021 meta-analysis. A guide for intensity, not a "
+            "diagnosis; one low reading means little."
+        ),
+        evidence_tier="B",
+        claim_strength="weak_association",
+        measurement_confidence="medium",
+        confounders=["alcohol", "illness", "luteal_phase", "travel", "poor_sleep", "heat"],
+    ),
+    InsightRule(
+        name="walking_cadence_intensity",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="best_30min_cadence",
+        comparison_metric="totalSteps",
+        direction="lower_is_worse",
+        description_template=(
+            "Best continuous 30-min step rate: median {median_best_30min_spm:.0f} steps/min; "
+            "{days_ge_100_spm} of {days} days had a 30-min bout at ≥100 steps/min."
+        ),
+        research_citation=(
+            "Tudor-Locke et al., 2018, BJSM (cadence ≈ intensity); "
+            "del Pozo Cruz et al., 2022, JAMA Internal Medicine (peak-30 cadence, n=78,500)"
+        ),
+        research_summary=(
+            "Walking at ≥100 steps/min corresponds to moderate intensity for most adults, so a "
+            "sustained 30-min bout at that rate is a brisk-walk session. Higher peak-30 "
+            "cadence was associated with lower mortality, CVD and cancer independent of total "
+            "steps. Garmin stores steps in 15-min buckets, so this is the best CONTINUOUS "
+            "30-min rate — a conservative proxy that reads lower than the research's peak-30 "
+            "(the 30 highest minutes); compare against your own trend, not study cut-offs."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        measurement_confidence="low",
+        confounders=["non_step_exercise", "device_wear_time"],
+    ),
+    InsightRule(
+        name="rhr_fitness_trend",
+        category="exercise",
+        trigger_behavior=None,
+        trigger_metric="restingHeartRate_90d_change",
+        comparison_metric="restingHeartRate",
+        direction="higher_is_worse",
+        description_template=(
+            "Resting HR median {recent_median_rhr:.0f} bpm (last 30 d) vs "
+            "{earlier_median_rhr:.0f} bpm (61-90 d ago): {change_bpm:+.1f} bpm."
+        ),
+        research_citation=(
+            "Reimers et al., 2018, J Clin Med (meta-analysis of exercise interventions); "
+            "Zhang et al., 2016, CMAJ (dose-response meta-analysis)"
+        ),
+        research_summary=(
+            "A resting heart rate that falls over months is consistent with improving aerobic "
+            "fitness — endurance training lowers RHR in interventional trials. In population "
+            "cohorts each 10 bpm higher RHR is associated with ~9% higher all-cause "
+            "mortality. Compare medians months apart, not single days; short-term rises have "
+            "many causes (see cardio_reserve_drift and the strain rules)."
+        ),
+        evidence_tier="B",
+        claim_strength="strong_association",
+        confounders=["illness", "medication", "heat", "chronic_stress", "alcohol", "detraining"],
+    ),
 ]
 
 
@@ -1576,7 +1771,7 @@ def select_relevant_rule_names(
 
     Used to subset the knowledge base for the portable prompt so the receiving
     model sees only the evidence tied to what shows up in the data (rather than
-    all 52 rules every time). Errs toward inclusion — a rule is kept when:
+    the whole KB every time). Errs toward inclusion — a rule is kept when:
 
     * it is an always-keep meta-rule (:data:`_ALWAYS_KEEP_RULES`), or
     * its ``name`` appears in ``rule_names`` (a rule that actually fired), or
