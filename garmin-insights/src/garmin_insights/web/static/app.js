@@ -1148,6 +1148,28 @@ document.querySelector('.tab-btn[data-tab="journal"]')?.addEventListener('click'
 
 // ---- AI Scan ----
 
+// Keep an open info tooltip inside the viewport: nudge it sideways (via the
+// --tt-dx custom property) and flip it below its icon when there's no room
+// above. Delegated, so tooltips added by later renders are covered too.
+function positionInfoTooltip(icon) {
+  const tip = icon.querySelector('.info-tooltip');
+  if (!tip) return;
+  tip.style.setProperty('--tt-dx', '0px');
+  tip.classList.remove('tt-below');
+  const margin = 8;
+  const r = tip.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  let dx = 0;
+  if (r.left < margin) dx = margin - r.left;
+  else if (r.right > vw - margin) dx = (vw - margin) - r.right;
+  if (dx) tip.style.setProperty('--tt-dx', `${Math.round(dx)}px`);
+  if (r.top < margin) tip.classList.add('tt-below');
+}
+['mouseover', 'focusin'].forEach(evt => document.addEventListener(evt, e => {
+  const icon = e.target.closest?.('.info-icon');
+  if (icon) positionInfoTooltip(icon);
+}));
+
 function safeRender(name, fn) {
   try { fn(); }
   catch (e) { console.error(`Renderer "${name}" failed:`, e); }

@@ -411,8 +411,10 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
 .info-icon:focus { color: var(--accent); outline: none; }
 
 .info-tooltip {
-  visibility: hidden;
-  opacity: 0;
+  /* display:none (not visibility:hidden) while closed: a hidden tooltip still
+     counts toward the page's scroll width, and one centred on an icon near
+     the right edge pushed phones into sideways scrolling. */
+  display: none;
   position: absolute;
   z-index: 600;
   background: var(--surface2);
@@ -423,13 +425,14 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   font-weight: 400;
   line-height: 1.55;
   padding: 10px 13px;
-  width: min(270px, 92vw);   /* never wider than the viewport on small screens */
+  width: min(270px, calc(100vw - 24px));   /* never wider than the viewport */
   bottom: calc(100% + 8px);
   left: 50%;
-  transform: translateX(-50%);
+  /* --tt-dx is set by positionInfoTooltip() (app.js) to pull the box back
+     inside the viewport; the arrow counter-shifts so it still points at the icon. */
+  transform: translateX(calc(-50% + var(--tt-dx, 0px)));
   box-shadow: var(--shadow);
   pointer-events: none;
-  transition: opacity 0.15s;
   text-align: left;
   white-space: normal;
 }
@@ -439,14 +442,20 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cur
   content: '';
   position: absolute;
   top: 100%;
-  left: 50%;
+  left: calc(50% - var(--tt-dx, 0px));
   transform: translateX(-50%);
   border: 5px solid transparent;
   border-top-color: var(--border);
 }
 
+/* Flipped below the icon when there's no room above. */
+.info-tooltip.tt-below { bottom: auto; top: calc(100% + 8px); }
+.info-tooltip.tt-below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: var(--border); }
+
 .info-icon:hover .info-tooltip,
-.info-icon:focus .info-tooltip { visibility: visible; opacity: 1; }
+.info-icon:focus .info-tooltip { display: block; animation: tt-fade 0.15s var(--ease); }
+
+@keyframes tt-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* Ensure tooltip doesn't get clipped inside metric cards */
 .metric-card { overflow: visible; }
