@@ -293,6 +293,16 @@
       </div>
     </section>
 
+    <section class="chart-section" id="glucose-section" style="display:none">
+      <div class="chart-header">
+        <h2>Glucose (CGM) <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Personal trend, not diagnostic]</b> FreeStyle Libre readings in mmol/L, from Juggluco / xDrip+ (Nightscout feed) or a LibreView CSV import. The shaded band is the non-diabetic &ldquo;tight range&rdquo; 3.9&ndash;7.8. The sensor reads tissue fluid ~5&ndash;15 min behind blood, roughly &plusmn;10% (worse when low). Two artefacts are greyed and left out of the daily figures: the <b>first 24 h of each sensor</b> (least accurate) and overnight <b>compression lows</b> &mdash; sudden short dips from lying on the sensor arm.</span></span></h2>
+      </div>
+      <div id="glucose-stats" class="glucose-stats"></div>
+      <div class="chart-container">
+        <canvas id="glucose-chart"></canvas>
+      </div>
+    </section>
+
     <section class="chart-section" id="scale-detail-section" style="display:none">
       <div class="chart-header">
         <h2>Scale Detail <span class="info-icon" tabindex="0">i<span class="info-tooltip"><b>[Tier B, medium-confidence measurement]</b> Fat mass, fat-free mass and estimated BMR from Bluetooth scans of your 8-electrode scale, decoded server-side from the raw impedance frames. These are <b>bio-impedance estimates</b>, not lab measurements — hydration, meals and exercise timing shift them day to day, so read the trend against your own baseline rather than any single reading. Only shown once a Bluetooth scan has produced a reading.</span></span></h2>
@@ -905,6 +915,15 @@
           <button id="journal-save" class="primary-btn">Save note</button>
           <button id="journal-delete" class="secondary-btn">Clear note</button>
           <span id="journal-status" class="journal-status"></span>
+        </div>
+
+        <div class="glucose-import" id="glucose-import">
+          <h2>Import Glucose <span class="info-icon" tabindex="0">i<span class="info-tooltip">For FreeStyle Libre sensors read with the LibreLink app: in LibreView (libreview.com) open <b>Glucose History &rarr; Download glucose data</b> and choose the CSV here. Re-importing an overlapping file is safe. With Juggluco or xDrip+ on the phone and <code>NIGHTSCOUT_URL</code> set, readings arrive automatically instead.</span></span></h2>
+          <div class="journal-actions">
+            <input type="file" id="glucose-file" accept=".csv,text/csv">
+            <button id="glucose-import-btn" class="secondary-btn">Import CSV</button>
+            <span id="glucose-import-status" class="journal-status"></span>
+          </div>
         </div>
 
         <div class="weighin-form" id="weighin-form">

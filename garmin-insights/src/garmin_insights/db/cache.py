@@ -22,6 +22,8 @@ from garmin_insights.db.sqlite_repo import (
     _SLEEP_COLS as _SLEEP_COLUMN_MAP,
 )
 from garmin_insights.db.memory import MemoryStore
+from garmin_insights.insights.glucose import SUMMARY_KEYS as GLUCOSE_SUMMARY_KEYS
+from garmin_insights.insights.glucose import daily_metrics as glucose_daily_metrics
 from garmin_insights.stats_utils import metabolic_age_years, to_kg
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,8 @@ _BASELINE_METRICS = [
     # sedentary_stress_coupling needs sedentary time. Neither rule could fire
     # while these lived only in the raw tables.
     "lowestSpo2Value", "sedentarySeconds",
+    # CGM (FreeStyle Libre) — only present while a sensor is worn.
+    "glucose_mean_mmol", "glucose_cv_pct", "glucose_overnight_mmol",
 ]
 
 # body_composition db column → summary key. Masses are normalised to kg via
@@ -144,6 +148,12 @@ class CacheBuilder:
         for r in scale_rows:  # ordered by taken_at → last wins
             scale_by_day[str(r.get("date"))] = r
 
+        try:
+            glucose_by_day = glucose_daily_metrics(repo.db_path, start, end)
+        except Exception as e:
+            logger.debug("Glucose metrics failed for %s..%s: %s", start, end, e)
+            glucose_by_day = {}
+
         lj = repo.query_lifestyle_journal(start, end)
         lj_by_day: dict[str, list[pd.Series]] = {}
         if not lj.empty and "date" in lj.columns:
@@ -160,6 +170,7 @@ class CacheBuilder:
             "ts": self._first_per_day(repo.query_training_status(start, end)),
             "bc": bc_by_day,
             "scale": scale_by_day,
+            "glucose": glucose_by_day,
             "lj": lj_by_day,
         }
 
@@ -266,6 +277,11 @@ class CacheBuilder:
                     val = scale_reading.get(key)
                     if val is not None:
                         summary[key] = val
+
+        # -- CGM glucose (quality-filtered; coverage-gated in the glucose module) --
+        for key, val in (data.get("glucose", {}).get(date) or {}).items():
+            if key in GLUCOSE_SUMMARY_KEYS:
+                summary[key] = val
 
         # -- LifestyleJournal --
         lifestyle: dict[str, Any] = {}

@@ -142,6 +142,15 @@ class PromptRequest(BaseModel):
     end_date: str | None = None
 
 
+class GlucoseImportRequest(BaseModel):
+    user: str = "default"
+    csv: str
+
+
+# A LibreView export is ~100 KB per sensor; this allows years of history.
+_GLUCOSE_IMPORT_MAX_CHARS = 20_000_000
+
+
 class NoteRequest(BaseModel):
     user: str = "default"
     date: str
@@ -974,6 +983,75 @@ async def environment(
     except Exception as ex:
         logger.exception("Environment query failed")
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/glucose")
+async def glucose_data(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """CGM glucose for the window: per-day metrics, window stats and a chart series.
+
+    Early-sensor and compression-low readings are flagged in the series and
+    excluded from the metrics. `available: false` when there are no readings.
+    """
+    from garmin_insights.insights import glucose
+
+    bundle = await _require_user(user)
+    s, e = _resolve_range(start, end, default_days=14)
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, glucose.summary, bundle.agent._repo.db_path, s, e)
+    except Exception as ex:
+        logger.exception("Glucose query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.post("/api/glucose/import")
+async def glucose_import(req: GlucoseImportRequest):
+    """Import a LibreView glucose CSV export into glucose_readings.
+
+    Idempotent (keyed on timestamp + source), so re-importing an overlapping
+    export is safe. Rebuilds the daily-summary cache for the imported days so
+    the glucose metrics reach the dashboard and the agent immediately.
+    """
+    from garmin_insights.insights import glucose
+
+    bundle = await _require_user(req.user)
+    if len(req.csv) > _GLUCOSE_IMPORT_MAX_CHARS:
+        raise HTTPException(status_code=413, detail="File too large")
+    try:
+        rows = glucose.parse_libreview_csv(req.csv)
+    except glucose.GlucoseImportError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    db_path = bundle.agent._repo.db_path
+    loop = asyncio.get_event_loop()
+    written = await loop.run_in_executor(None, glucose.upsert_readings, db_path, rows)
+
+    first = datetime.strptime(min(r["time"] for r in rows), "%Y-%m-%dT%H:%M:%SZ")
+    last = datetime.strptime(max(r["time"] for r in rows), "%Y-%m-%dT%H:%M:%SZ")
+    # Local-day keys can sit a day either side of the UTC stamp.
+    today = datetime.now()
+    start_d = max(first - timedelta(days=1), last - timedelta(days=MAX_RANGE_DAYS))
+    end_d = min(last + timedelta(days=1), today)
+    rebuilt = 0
+    if start_d <= end_d:
+        try:
+            rebuilt = await loop.run_in_executor(
+                None,
+                lambda: bundle.agent._cache.build_range(
+                    start_d.strftime("%Y-%m-%d"), end_d.strftime("%Y-%m-%d"), force=True
+                ),
+            )
+        except Exception:
+            logger.exception("Cache rebuild after glucose import failed")
+    return {
+        "imported": written,
+        "first": first.strftime("%Y-%m-%d"),
+        "last": last.strftime("%Y-%m-%d"),
+        "days_rebuilt": rebuilt,
+    }
 
 
 @app.get("/api/ha_sensors")

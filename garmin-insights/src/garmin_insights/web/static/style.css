@@ -2532,3 +2532,13 @@ input[type="date"] { border-radius: 999px; border-color: var(--hair); background
 }
 .fg-good .fg-status { background: var(--good-soft); color: var(--green); }
 .fg-warn .fg-status { background: var(--warn-soft); color: var(--yellow); }
+
+/* ---- Glucose (CGM) ---- */
+.glucose-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 10px; }
+.glucose-stat { display: flex; flex-direction: column; line-height: 1.2; }
+.glucose-stat small { color: var(--muted); font-size: 0.72rem; }
+.glucose-stat b { font-size: 0.95rem; color: var(--text); }
+.glucose-stat.muted b { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+.glucose-import { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.glucose-import h2 { font-size: 1rem; margin-bottom: 8px; }
+.glucose-import input[type="file"] { max-width: 100%; color: var(--muted); font-size: 0.85rem; }

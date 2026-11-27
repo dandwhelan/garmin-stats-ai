@@ -906,6 +906,7 @@ async function loadDashboard() {
     loadBehaviorRootCause('migraine', 'Migraines', 48, date_range.start, date_range.end);
     loadActivityMap(date_range.start, date_range.end);
     loadScaleDetail(date_range.start, date_range.end);
+    loadGlucose(date_range.start, date_range.end);
     loadOvernight(date_range.start, date_range.end);
     loadFitnessGuidelines();
   } catch (e) {
@@ -1977,6 +1978,143 @@ async function loadScaleDetail(start, end) {
     section.style.display = 'none';
   }
 }
+
+// ---- Glucose (CGM) ----
+// Readings come pre-flagged from /api/glucose: early-sensor and compression-low
+// points are drawn grey and are already excluded from the stats server-side.
+async function loadGlucose(start, end) {
+  const epoch = loadEpoch;
+  const section = document.getElementById('glucose-section');
+  if (!section) return;
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    addUserParam(params);
+    const res = await fetch(`/api/glucose?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (epoch !== loadEpoch) return;
+    renderGlucose(data);
+  } catch (e) {
+    console.error('Glucose load failed:', e);
+    section.style.display = 'none';
+  }
+}
+
+function renderGlucose(data) {
+  const section = document.getElementById('glucose-section');
+  destroyAux('glucose');
+  if (!data || !data.available || !(data.series || []).length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  const [lo, hi] = data.tight_range_mmol || [3.9, 7.8];
+  const pts = data.series;
+  const labels = pts.map(p => p.t.slice(5, 16).replace('T', ' '));
+  const clean = pts.map(p => (p.f ? null : p.v));
+  const flagged = pts.map(p => (p.f ? p.v : null));
+
+  const stats = document.getElementById('glucose-stats');
+  if (stats) {
+    const w = data.window || {};
+    const ex = data.excluded || {};
+    const chip = (label, val, unit = '') =>
+      val == null ? '' : `<span class="glucose-stat"><small>${label}</small><b>${val}${unit}</b></span>`;
+    stats.innerHTML =
+      chip('Mean', w.mean_mmol, ' mmol/L') +
+      chip('In 3.9–7.8', w.tir_pct, '%') +
+      chip('Variability (CV)', w.cv_pct, '%') +
+      chip('Sensors', data.sensors) +
+      ((ex.early_sensor || ex.compression_low)
+        ? `<span class="glucose-stat muted"><small>Excluded</small><b>${ex.early_sensor || 0} early · ${ex.compression_low || 0} compression</b></span>`
+        : '');
+  }
+
+  const ctx = document.getElementById('glucose-chart');
+  if (!ctx) return;
+  auxCharts.glucose = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Glucose (mmol/L)',
+          data: clean,
+          borderColor: tc('#22d3ee'),
+          backgroundColor: 'transparent',
+          borderWidth: 1.5, pointRadius: 0, tension: 0.2, spanGaps: false,
+        },
+        {
+          label: 'Excluded (early sensor / compression)',
+          data: flagged,
+          borderColor: tc('#8892a4'),
+          backgroundColor: tc('#8892a4'),
+          borderWidth: 1, borderDash: [3, 3], pointRadius: 2, pointHoverRadius: 4, tension: 0.2, spanGaps: false,
+        },
+        {
+          label: `Tight range ${lo}–${hi}`,
+          data: labels.map(() => hi),
+          borderColor: 'transparent',
+          backgroundColor: tc('#10b981') + '22',
+          pointRadius: 0, fill: '+1',
+        },
+        {
+          label: '_low',
+          data: labels.map(() => lo),
+          borderColor: 'transparent',
+          pointRadius: 0, fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: commonScales().x,
+        y: { ...commonScales('mmol/L').y, suggestedMin: 3, suggestedMax: 10 },
+      },
+      plugins: commonPlugins({
+        legend: {
+          labels: {
+            color: tc('#8892a4'), boxWidth: 12, padding: 10,
+            filter: item => !item.text.startsWith('_'),
+          },
+        },
+        tooltip: {
+          ...commonPlugins().tooltip,
+          filter: item => item.datasetIndex < 2 && item.raw != null,
+        },
+      }),
+    },
+  });
+}
+
+async function importGlucoseCsv() {
+  const input = document.getElementById('glucose-file');
+  const status = document.getElementById('glucose-import-status');
+  const file = input?.files?.[0];
+  if (!file) { status.textContent = 'Choose a LibreView CSV first.'; return; }
+  status.textContent = 'Importing…';
+  try {
+    const csv = await file.text();
+    const res = await fetch('/api/glucose/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: activeUser, csv }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+    status.textContent = `Imported ${body.imported} readings (${body.first} → ${body.last}).`;
+    input.value = '';
+    loadDashboard();
+  } catch (e) {
+    status.textContent = `Import failed: ${e.message}`;
+  }
+}
+document.getElementById('glucose-import-btn')?.addEventListener('click', importGlucoseCsv);
 
 // Per-limb muscle / fat history. Garmin Connect has no fields for these, so
 // they exist only in the local scale_readings extras.
@@ -4539,7 +4677,7 @@ const CHART_CATEGORIES = [
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag', 'overnight-quality-section'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart', 'overnight-hr-section'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart', 'fitness-guidelines-section'] },
-  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section', 'glucose-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
   { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },
