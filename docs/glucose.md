@@ -33,7 +33,7 @@ with Juggluco stops LibreLink connecting to it — pick one app per sensor.
 - **Coverage gate** — a day's metrics are reported only with ≥50 % sensor coverage.
 - **Source dedupe** — a CSV point within 5 min of a 1-min Nightscout reading is dropped.
 
-Pi setup and internals: [`handover-glucose.md`](handover-glucose.md).
+Pi setup and internals: [`handover-glucose.md`](handover-glucose.md). Agent/LLM handover + full to-do list: [`handover-glucose-llm.md`](handover-glucose-llm.md).
 
 ## Roadmap
 

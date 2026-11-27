@@ -2,7 +2,7 @@
 
 Covers **what was built**, **how to set it up on the Pi**, **how it works
 inside**, and **what to check / tune** once real sensor data arrives.
-Roadmap and background: [`glucose.md`](glucose.md).
+Roadmap and background: [`glucose.md`](glucose.md). For an AI agent taking over, with the full to-do list: [`handover-glucose-llm.md`](handover-glucose-llm.md).
 
 ---
 
