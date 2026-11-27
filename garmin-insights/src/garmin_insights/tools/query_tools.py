@@ -569,6 +569,26 @@ class QueryToolHandler:
                 result["intraday"] = {"date": intraday_date, "mmol_by_time": digest}
         return json.dumps(_round_floats(result), default=str)
 
+    def get_meal_responses(self, start_date: str | None = None, end_date: str | None = None) -> str:
+        """Logged meals with their CGM glucose responses + per-food medians."""
+        from garmin_insights.insights import meals
+
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
+        try:
+            result = meals.analyse(self._repo.db_path, start_date, end_date)
+        except Exception as e:
+            logger.error("meal analysis failed: %s", e)
+            return json.dumps({"error": f"meal analysis failed: {e}"})
+        if not result["meals"]:
+            return json.dumps({"message": "No meals logged in this range."})
+        for m in result["meals"]:
+            for k in ("id", "date", "source", "created_at"):
+                m.pop(k, None)
+        return json.dumps(_round_floats(result), default=str)
+
     def get_training_readiness(self, start_date: str, end_date: str) -> str:
         df = self._repo.query_training_readiness(start_date, end_date)
         if df.empty:
@@ -1972,6 +1992,30 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                     "start_date": {**_DATE_PROP, "description": "Start date YYYY-MM-DD. Defaults to 14 days before end_date."},
                     "end_date": {**_DATE_PROP, "description": "End date YYYY-MM-DD. Defaults to today."},
                     "intraday_date": {**_DATE_PROP, "description": "Optional local day (YYYY-MM-DD) to include the 15-min glucose curve for."},
+                },
+            },
+        },
+        {
+            "name": "get_meal_responses",
+            "description": (
+                "Meals the user logged (local time, description, macros, food-type "
+                "tags) with each meal's CGM glucose response: baseline (30 min "
+                "before), rise_mmol and time_to_peak_min within 2 h, iauc_mmol_h "
+                "(area above baseline 0-2 h), and dip_mmol — how far glucose fell "
+                "BELOW baseline 2-4 h later (post-meal dips predict hunger and "
+                "energy slumps, Wyatt 2021). flags: overlap (another meal within "
+                "2 h), exercise (activity during the rise), partial (sensor gaps) "
+                "— treat flagged responses as confounded. 'foods' gives per-"
+                "description medians; only reliable=true (3+ clean servings) "
+                "supports a food-level conclusion, because the same meal varies a "
+                "lot day to day. 'unlogged_rises' are daytime glucose rises with no "
+                "meal logged (possible missed log). Defaults to the last 14 days."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date YYYY-MM-DD. Defaults to 14 days before end_date."},
+                    "end_date": {**_DATE_PROP, "description": "End date YYYY-MM-DD. Defaults to today."},
                 },
             },
         },

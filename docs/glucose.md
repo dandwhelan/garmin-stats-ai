@@ -33,12 +33,14 @@ with Juggluco stops LibreLink connecting to it — pick one app per sensor.
 - **Coverage gate** — a day's metrics are reported only with ≥50 % sensor coverage.
 - **Source dedupe** — a CSV point within 5 min of a 1-min Nightscout reading is dropped.
 
+Pi setup and internals: [`handover-glucose.md`](handover-glucose.md).
+
 ## Roadmap
 
 1. **Glucose ingestion** ✅ — `glucose_readings`, Nightscout pull, CSV import,
    quality flags, daily metrics in `daily_summaries`, dashboard chart,
    `get_glucose_data` agent tool.
-2. **Meal log** — photo → Claude vision macro estimate, Open Food Facts barcode
+2. **Meal log** ✅ — photo → Claude vision macro estimate, Open Food Facts barcode
    lookup, one-tap staple meals. Per-meal response: peak rise, 2 h iAUC,
    time-to-peak, and the 2–4 h **post-meal dip** (Wyatt 2021, *Nat Metab* —
    predicts hunger / energy slumps). Unlogged-rise detection ("meal at 15:40?")

@@ -151,6 +151,29 @@ class GlucoseImportRequest(BaseModel):
 _GLUCOSE_IMPORT_MAX_CHARS = 20_000_000
 
 
+class MealRequest(BaseModel):
+    user: str = "default"
+    id: int | None = None
+    eaten_at: str
+    description: str
+    carbs_g: float | None = None
+    sugar_g: float | None = None
+    protein_g: float | None = None
+    fat_g: float | None = None
+    fibre_g: float | None = None
+    kcal: float | None = None
+    tags: list[str] | None = None
+    source: str = "manual"
+    estimate: dict | None = None
+
+
+class MealEstimateRequest(BaseModel):
+    user: str = "default"
+    image_b64: str
+    media_type: str = "image/jpeg"
+    note: str = ""
+
+
 class NoteRequest(BaseModel):
     user: str = "default"
     date: str
@@ -1052,6 +1075,130 @@ async def glucose_import(req: GlucoseImportRequest):
         "last": last.strftime("%Y-%m-%d"),
         "days_rebuilt": rebuilt,
     }
+
+
+def _rebuild_days(bundle, *dates: str) -> None:
+    """Force-rebuild the daily-summary cache for the given local dates."""
+    days = sorted({d for d in dates if d})
+    if not days:
+        return
+    try:
+        bundle.agent._cache.build_range(days[0], days[-1], force=True)
+    except Exception:
+        logger.exception("Cache rebuild for %s failed", days)
+
+
+@app.get("/api/meals")
+async def meals_list(
+    user: str = Query(default="default"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+):
+    """Logged meals with their glucose responses, per-food medians, unlogged
+    glucose rises (possible missed logs) and one-tap staple suggestions."""
+    from garmin_insights.insights import meals
+
+    bundle = await _require_user(user)
+    s, e = _resolve_range(start, end, default_days=14)
+    db = bundle.agent._repo.db_path
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, meals.analyse, db, s, e)
+        result["staples"] = await loop.run_in_executor(None, meals.recent_staples, db)
+        return result
+    except Exception as ex:
+        logger.exception("Meals query failed")
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.post("/api/meals")
+async def meals_save(req: MealRequest):
+    """Create (no id) or update a meal; rebuilds the affected day's summary."""
+    from garmin_insights.insights import meals
+
+    bundle = await _require_user(req.user)
+    db = bundle.agent._repo.db_path
+    payload = req.model_dump(exclude={"user", "id"})
+    loop = asyncio.get_event_loop()
+    old_date = None
+    if req.id is not None:
+        existing = await loop.run_in_executor(None, meals.get_meal, db, req.id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Meal not found")
+        old_date = existing["date"]
+    try:
+        meal_id = await loop.run_in_executor(None, meals.save_meal, db, payload, req.id)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    saved = await loop.run_in_executor(None, meals.get_meal, db, meal_id)
+    await loop.run_in_executor(None, _rebuild_days, bundle, saved["date"], old_date)
+    return {"id": meal_id, "meal": saved}
+
+
+@app.delete("/api/meals/{meal_id}")
+async def meals_delete(meal_id: int, user: str = Query(default="default")):
+    from garmin_insights.insights import meals
+
+    bundle = await _require_user(user)
+    db = bundle.agent._repo.db_path
+    loop = asyncio.get_event_loop()
+    existing = await loop.run_in_executor(None, meals.get_meal, db, meal_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    await loop.run_in_executor(None, meals.delete_meal, db, meal_id)
+    await loop.run_in_executor(None, _rebuild_days, bundle, existing["date"])
+    return {"deleted": True, "id": meal_id}
+
+
+@app.post("/api/meals/estimate")
+async def meals_estimate(req: MealEstimateRequest):
+    """Claude vision estimate of a meal photo (items, macros, tags).
+
+    Nothing is saved — the browser fills the meal form with the estimate for
+    the user to correct, then saves it with source="photo".
+    """
+    from garmin_insights.insights import meals
+
+    bundle = await _require_user(req.user)
+    settings = bundle.agent._settings
+    client = getattr(bundle.agent, "_client", None)
+    if client is None:
+        if not getattr(settings, "anthropic_api_key", ""):
+            raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not set")
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    if len(req.image_b64) > meals.MAX_IMAGE_BYTES * 4 // 3 + 8:
+        raise HTTPException(status_code=413, detail="Image larger than 5 MB")
+    loop = asyncio.get_event_loop()
+    try:
+        est = await loop.run_in_executor(
+            None, meals.estimate_from_photo, client, settings.claude_model,
+            req.image_b64, req.media_type, req.note,
+        )
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    except Exception as ex:
+        logger.exception("Meal photo estimate failed")
+        raise HTTPException(status_code=502, detail=f"Estimate failed: {ex}")
+    return {"estimate": est}
+
+
+@app.get("/api/meals/barcode/{code}")
+async def meals_barcode(code: str):
+    """Open Food Facts lookup: per-100 g macros + serving size for a barcode."""
+    from garmin_insights.insights import meals
+
+    loop = asyncio.get_event_loop()
+    try:
+        product = await loop.run_in_executor(None, meals.lookup_barcode, code)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    except Exception as ex:
+        logger.warning("Open Food Facts lookup failed: %s", ex)
+        raise HTTPException(status_code=502, detail="Open Food Facts lookup failed")
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found on Open Food Facts")
+    return product
 
 
 @app.get("/api/ha_sensors")

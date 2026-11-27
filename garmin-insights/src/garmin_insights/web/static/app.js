@@ -907,6 +907,7 @@ async function loadDashboard() {
     loadActivityMap(date_range.start, date_range.end);
     loadScaleDetail(date_range.start, date_range.end);
     loadGlucose(date_range.start, date_range.end);
+    loadMealLog();
     loadOvernight(date_range.start, date_range.end);
     loadFitnessGuidelines();
   } catch (e) {
@@ -1991,18 +1992,23 @@ async function loadGlucose(start, end) {
     if (start) params.set('start', start);
     if (end) params.set('end', end);
     addUserParam(params);
-    const res = await fetch(`/api/glucose?${params.toString()}`);
+    const [res, mres] = await Promise.all([
+      fetch(`/api/glucose?${params.toString()}`),
+      fetch(`/api/meals?${params.toString()}`),
+    ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    const mealData = mres.ok ? await mres.json() : null;
     if (epoch !== loadEpoch) return;
-    renderGlucose(data);
+    renderGlucose(data, mealData?.meals || []);
+    renderMealResponses(mealData);
   } catch (e) {
     console.error('Glucose load failed:', e);
     section.style.display = 'none';
   }
 }
 
-function renderGlucose(data) {
+function renderGlucose(data, meals = []) {
   const section = document.getElementById('glucose-section');
   destroyAux('glucose');
   if (!data || !data.available || !(data.series || []).length) {
@@ -2015,6 +2021,14 @@ function renderGlucose(data) {
   const labels = pts.map(p => p.t.slice(5, 16).replace('T', ' '));
   const clean = pts.map(p => (p.f ? null : p.v));
   const flagged = pts.map(p => (p.f ? p.v : null));
+  // Meal markers: each meal sits on the first chart point at/after it.
+  const mealAt = labels.map(() => null);
+  const mealName = labels.map(() => '');
+  for (const m of meals) {
+    const key = (m.eaten_at || '').slice(0, 16);
+    const i = pts.findIndex(p => p.t >= key);
+    if (i >= 0) { mealAt[i] = Math.max(hi, ...clean.filter(v => v != null)) + 0.6; mealName[i] = m.description; }
+  }
 
   const stats = document.getElementById('glucose-stats');
   if (stats) {
@@ -2054,6 +2068,14 @@ function renderGlucose(data) {
           borderWidth: 1, borderDash: [3, 3], pointRadius: 2, pointHoverRadius: 4, tension: 0.2, spanGaps: false,
         },
         {
+          label: 'Meals',
+          data: mealAt,
+          showLine: false,
+          pointStyle: 'triangle', rotation: 180,
+          pointRadius: 6, pointHoverRadius: 8,
+          borderColor: tc('#f59e0b'), backgroundColor: tc('#f59e0b'),
+        },
+        {
           label: `Tight range ${lo}–${hi}`,
           data: labels.map(() => hi),
           borderColor: 'transparent',
@@ -2085,12 +2107,259 @@ function renderGlucose(data) {
         },
         tooltip: {
           ...commonPlugins().tooltip,
-          filter: item => item.datasetIndex < 2 && item.raw != null,
+          filter: item => item.datasetIndex < 3 && item.raw != null,
+          callbacks: {
+            label: item => item.datasetIndex === 2
+              ? `Meal: ${mealName[item.dataIndex]}`
+              : `${item.dataset.label}: ${item.formattedValue}`,
+          },
         },
       }),
     },
   });
 }
+
+// ---- Meal responses (dashboard) ----
+function _respChip(r) {
+  if (!r) return '<span class="resp-chip">no sensor data</span>';
+  const cls = r.rise_mmol >= 3 ? 'bad' : r.rise_mmol >= 2 ? 'warn' : 'good';
+  let txt = `+${r.rise_mmol} mmol/L @ ${r.time_to_peak_min} min`;
+  if (r.dip_mmol > 0) txt += ` · dip −${r.dip_mmol}`;
+  if ((r.flags || []).length) txt += ` · ${r.flags.join(', ')}`;
+  return `<span class="resp-chip ${cls}">${escapeHtml(txt)}</span>`;
+}
+
+function renderMealResponses(data) {
+  const section = document.getElementById('meal-response-section');
+  if (!section) return;
+  const withResp = (data?.meals || []).filter(m => m.response);
+  if (!data || !data.glucose_available || !withResp.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  const foods = document.getElementById('meal-foods');
+  foods.innerHTML = (data.foods || []).slice(0, 12).map(f =>
+    `<div class="meal-food"><b>${escapeHtml(f.description)}</b>` +
+    `<small>rise +${f.median_rise_mmol} (${f.rise_range_mmol[0]}–${f.rise_range_mmol[1]})` +
+    (f.median_dip_mmol ? ` · dip −${f.median_dip_mmol}` : '') +
+    ` · ${f.servings}× ${f.reliable ? '✓ reliable' : '(needs 3)'}</small></div>`).join('');
+  const rows = withResp.slice().reverse().map(m => {
+    const r = m.response;
+    return `<tr><td>${escapeHtml(m.eaten_at.slice(5, 16).replace('T', ' '))}</td>` +
+      `<td class="meal-name">${escapeHtml(m.description)}</td>` +
+      `<td>${m.carbs_g ?? '–'}</td><td>+${r.rise_mmol}</td><td>${r.time_to_peak_min}′</td>` +
+      `<td>${r.iauc_mmol_h}</td><td>${r.dip_mmol != null ? (r.dip_mmol > 0 ? '−' + r.dip_mmol : '0') : '–'}</td>` +
+      `<td>${escapeHtml((r.flags || []).join(', '))}</td></tr>`;
+  }).join('');
+  document.getElementById('meal-table').innerHTML =
+    `<table class="meal-table"><thead><tr><th>When</th><th>Meal</th><th>Carbs g</th><th>Rise</th>` +
+    `<th>Peak</th><th>Area</th><th>Dip</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const un = data.unlogged_rises || [];
+  document.getElementById('meal-unlogged').innerHTML = un.length
+    ? `Unlogged rises (did you eat?): ` + un.slice(-6).map(u =>
+        `${escapeHtml(u.start.slice(5, 16).replace('T', ' '))} (+${u.rise_mmol})`).join(' · ')
+    : '';
+}
+
+// ---- Meal log (Journal tab) ----
+const MEAL_MACROS = ['carbs_g', 'sugar_g', 'protein_g', 'fat_g', 'fibre_g', 'kcal'];
+let _mealEditId = null;
+let _mealSource = 'manual';
+let _mealEstimate = null;
+
+function _localNowInput() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+function _mealStatus(msg) { const el = document.getElementById('meal-status'); if (el) el.textContent = msg; }
+
+function _fillMealForm(m, source) {
+  if (m.description != null) document.getElementById('meal-desc').value = m.description;
+  for (const k of MEAL_MACROS) {
+    const el = document.getElementById(`meal-${k}`);
+    if (el && k in m) el.value = m[k] ?? '';
+  }
+  if (m.tags) document.getElementById('meal-tags').value = (Array.isArray(m.tags) ? m.tags : String(m.tags).split(',')).join(', ');
+  if (source) _mealSource = source;
+}
+
+function _resetMealForm() {
+  _mealEditId = null; _mealSource = 'manual'; _mealEstimate = null;
+  document.getElementById('meal-time').value = _localNowInput();
+  for (const id of ['meal-desc', 'meal-tags', 'meal-barcode', 'meal-grams', ...MEAL_MACROS.map(k => `meal-${k}`)]) {
+    const el = document.getElementById(id); if (el) el.value = '';
+  }
+  document.getElementById('meal-cancel').hidden = true;
+}
+
+async function loadMealLog() {
+  const list = document.getElementById('meal-list');
+  if (!list) return;
+  const timeEl = document.getElementById('meal-time');
+  if (!timeEl.value) timeEl.value = _localNowInput();
+  const day = timeEl.value.slice(0, 10);
+  try {
+    const res = await fetch(withUser(`/api/meals?start=${day}&end=${day}`), { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const staples = document.getElementById('meal-staples');
+    staples.innerHTML = (data.staples || []).map((s, i) =>
+      `<button type="button" class="meal-chip" data-i="${i}">${escapeHtml(s.description)}<small>${s.n}×</small></button>`).join('');
+    staples.querySelectorAll('.meal-chip').forEach(btn => btn.addEventListener('click', () => {
+      _fillMealForm(data.staples[+btn.dataset.i], 'repeat');
+      _mealStatus('Filled from a recent meal — check the time and save.');
+    }));
+    list.innerHTML = (data.meals || []).length
+      ? data.meals.map(m => `<div class="meal-item" data-id="${m.id}">` +
+          `<span class="meal-when">${escapeHtml(m.eaten_at.slice(11, 16))}</span>` +
+          `<span class="meal-name">${escapeHtml(m.description)}${m.carbs_g != null ? ` · ${m.carbs_g} g carbs` : ''}</span>` +
+          `${data.glucose_available ? _respChip(m.response) : ''}` +
+          `<button type="button" data-act="edit">Edit</button><button type="button" data-act="del">Delete</button></div>`).join('')
+      : `<small class="journal-hint">No meals logged on ${escapeHtml(day)}.</small>`;
+    list.querySelectorAll('.meal-item').forEach(row => {
+      const meal = data.meals.find(m => String(m.id) === row.dataset.id);
+      row.querySelector('[data-act="edit"]').addEventListener('click', () => {
+        _resetMealForm();
+        _mealEditId = meal.id;
+        document.getElementById('meal-time').value = meal.eaten_at.slice(0, 16);
+        _fillMealForm(meal, meal.source);
+        document.getElementById('meal-cancel').hidden = false;
+        _mealStatus('Editing — save to update.');
+      });
+      row.querySelector('[data-act="del"]').addEventListener('click', async () => {
+        if (!confirm(`Delete "${meal.description}"?`)) return;
+        const r = await fetch(withUser(`/api/meals/${meal.id}`), { method: 'DELETE' });
+        _mealStatus(r.ok ? 'Deleted.' : 'Delete failed.');
+        loadMealLog();
+      });
+    });
+  } catch (e) {
+    console.error('Meal log load failed:', e);
+  }
+}
+
+async function saveMeal() {
+  const eaten_at = document.getElementById('meal-time').value;
+  const description = document.getElementById('meal-desc').value.trim();
+  if (!eaten_at || !description) { _mealStatus('Add a time and a description.'); return; }
+  const body = { user: activeUser, eaten_at, description, source: _mealSource };
+  if (_mealEditId != null) body.id = _mealEditId;
+  if (_mealEstimate) body.estimate = _mealEstimate;
+  for (const k of MEAL_MACROS) {
+    const v = document.getElementById(`meal-${k}`).value;
+    body[k] = v === '' ? null : Number(v);
+  }
+  const tags = document.getElementById('meal-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+  if (tags.length) body.tags = tags;
+  _mealStatus('Saving…');
+  try {
+    const res = await fetch('/api/meals', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.detail || `HTTP ${res.status}`);
+    _mealStatus('Saved.');
+    const keepTime = eaten_at;
+    _resetMealForm();
+    document.getElementById('meal-time').value = keepTime;
+    loadMealLog();
+  } catch (e) {
+    _mealStatus(`Save failed: ${e.message}`);
+  }
+}
+
+// Downscale to ≤1280 px JPEG: smaller upload, fewer image tokens, same estimate.
+function _shrinkImage(file, maxSide = 1280) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    };
+    img.onerror = () => reject(new Error('Could not read image'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function estimateMealPhoto(file) {
+  _mealStatus('Estimating from photo…');
+  try {
+    const image_b64 = await _shrinkImage(file);
+    const note = document.getElementById('meal-desc').value.trim();
+    const res = await fetch('/api/meals/estimate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: activeUser, image_b64, media_type: 'image/jpeg', note }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.detail || `HTTP ${res.status}`);
+    const est = out.estimate;
+    _mealEstimate = est;
+    _fillMealForm(est, 'photo');
+    const items = (est.items || []).map(i => i.grams ? `${i.name} ${Math.round(i.grams)} g` : i.name).join(', ');
+    _mealStatus(`Estimate (${est.confidence} confidence)${items ? ': ' + items : ''}. ${est.notes || ''} Check, then save.`);
+  } catch (e) {
+    _mealStatus(`Photo estimate failed: ${e.message}`);
+  }
+}
+
+async function lookupMealBarcode() {
+  const code = document.getElementById('meal-barcode').value.trim();
+  const grams = Number(document.getElementById('meal-grams').value) || null;
+  if (!code) { _mealStatus('Enter or scan a barcode.'); return; }
+  _mealStatus('Looking up…');
+  try {
+    const res = await fetch(`/api/meals/barcode/${encodeURIComponent(code)}`);
+    const p = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(p.detail || `HTTP ${res.status}`);
+    const g = grams || p.serving_g || 100;
+    const scaled = {};
+    for (const k of MEAL_MACROS) {
+      const v = p.per_100g?.[k];
+      scaled[k] = v == null ? '' : Math.round(v * g / 10) / 10;
+    }
+    const desc = document.getElementById('meal-desc');
+    _fillMealForm({ ...scaled, description: desc.value.trim() ? `${desc.value.trim()} + ${p.name}` : p.name }, 'barcode');
+    if (!grams) document.getElementById('meal-grams').value = g;
+    _mealStatus(`${p.name}: macros for ${g} g${grams ? '' : (p.serving_g ? ' (one serving)' : ' (per 100 g — set your grams)')}.`);
+  } catch (e) {
+    _mealStatus(`Barcode lookup failed: ${e.message}`);
+  }
+}
+
+async function scanBarcodePhoto(file) {
+  try {
+    const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+    const codes = await detector.detect(await createImageBitmap(file));
+    if (!codes.length) { _mealStatus('No barcode found in that photo.'); return; }
+    document.getElementById('meal-barcode').value = codes[0].rawValue;
+    lookupMealBarcode();
+  } catch (e) {
+    _mealStatus(`Barcode scan failed: ${e.message}`);
+  }
+}
+
+(function initMealForm() {
+  if (!document.getElementById('meal-form')) return;
+  document.getElementById('meal-time').value = _localNowInput();
+  document.getElementById('meal-time').addEventListener('change', loadMealLog);
+  document.getElementById('meal-save').addEventListener('click', saveMeal);
+  document.getElementById('meal-cancel').addEventListener('click', () => { _resetMealForm(); _mealStatus(''); });
+  const photo = document.getElementById('meal-photo');
+  document.getElementById('meal-photo-btn').addEventListener('click', () => photo.click());
+  photo.addEventListener('change', () => { if (photo.files[0]) estimateMealPhoto(photo.files[0]); photo.value = ''; });
+  document.getElementById('meal-barcode-btn').addEventListener('click', lookupMealBarcode);
+  if ('BarcodeDetector' in window) {
+    const scan = document.getElementById('meal-barcode-scan');
+    const bphoto = document.getElementById('meal-barcode-photo');
+    scan.hidden = false;
+    scan.addEventListener('click', () => bphoto.click());
+    bphoto.addEventListener('change', () => { if (bphoto.files[0]) scanBarcodePhoto(bphoto.files[0]); bphoto.value = ''; });
+  }
+})();
 
 async function importGlucoseCsv() {
   const input = document.getElementById('glucose-file');
@@ -4677,7 +4946,7 @@ const CHART_CATEGORIES = [
   { id: 'sleep',       name: 'Sleep',                 match: ['sleep-architecture-chart', 'sleep-window-chart', 'sleep-timeline-chart', 'sri-chart', 'social-jetlag', 'overnight-quality-section'] },
   { id: 'recovery',    name: 'Recovery & Stress',     match: ['recovery-chart', 'stress-chart', 'intraday-heatmap', 'anomaly-calendar', 'correlation-matrix', 'illness-radar-chart', 'recovery-debt-chart', 'inflammation-chart', 'resilience-chart', 'bb-decay-chart', 'stress-fingerprint-chart', 'overnight-hr-section'] },
   { id: 'activity',    name: 'Activity & Training',   match: ['activity-chart', 'acwr-chart', 'readiness-chart', 'heat-acclimation-section', 'hr-zones-chart', 'activity-map-section', 'step-cdf-chart', 'who-target-chart', 'fitness-guidelines-section'] },
-  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section', 'glucose-section'] },
+  { id: 'fitness',     name: 'Fitness & Body',        match: ['fitness-age-chart', 'fitness-trajectory-section', 'vo2-trajectory-chart', 'body-comp-chart', 'body-comp-detail-chart', 'scale-detail-section', 'scale-seg-muscle-section', 'scale-seg-fat-section', 'glucose-section', 'meal-response-section'] },
   { id: 'lifestyle',   name: 'Lifestyle & Behaviors', match: ['behavior-impact-chart', 'recovery-cost-chart', 'dose-container', 'caffeine-cutoff', 'habit-half-life', 'streak-calendar', 'cooccurrence-matrix', 'stress-triggers', 'migraine-root-cause'] },
   { id: 'environment', name: 'Environment',           match: ['environment-section', 'environment-aqi-chart', 'environment-pollen-chart', 'env-recovery-section', 'allergy-pollen-section', 'asthma-aq-section', 'ha-bedroom-section', 'bedroom-sleep-section'] },
   { id: 'cycle',       name: 'Menstrual Cycle',       match: ['menstrual-section', 'cycle-phase-section', 'cycle-day-section', 'cycle-calendar-section', 'cycle-sleep-section', 'cycle-stress-section', 'cycle-length-history-section', 'cycle-vitals-trend-section', 'cycle-phase-durations-section'] },

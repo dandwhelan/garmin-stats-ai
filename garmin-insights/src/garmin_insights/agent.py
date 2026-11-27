@@ -144,7 +144,9 @@ trends and correlations, and recall/save context from previous sessions.
   FreeStyle Libre sensor; get_glucose_data gives the per-day metrics and an intraday curve. \
   Report glucose in mmol/L against the user's own data and the non-diabetic tight range \
   (3.9-7.8), never as a diabetes or prediabetes finding. A single meal's spike varies a lot \
-  between days, so only call a food a pattern once it has been eaten several times.
+  between days, so only call a food a pattern once it has been eaten several times. \
+  get_meal_responses links logged meals to their rise, area and later dip; a large dip \
+  2-4 h after eating is the likeliest glucose explanation for a reported slump.
 
 {medical_knowledge}
 """

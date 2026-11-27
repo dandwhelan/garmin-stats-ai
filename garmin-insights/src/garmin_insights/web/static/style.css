@@ -2542,3 +2542,37 @@ input[type="date"] { border-radius: 999px; border-color: var(--hair); background
 .glucose-import { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
 .glucose-import h2 { font-size: 1rem; margin-bottom: 8px; }
 .glucose-import input[type="file"] { max-width: 100%; color: var(--muted); font-size: 0.85rem; }
+
+/* ---- Meals ---- */
+.meal-form { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.meal-form h2 { font-size: 1rem; margin-bottom: 8px; }
+.meal-row { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+.meal-row label, .meal-tags { display: flex; flex-direction: column; font-size: 0.8rem; color: var(--muted); gap: 4px; }
+.meal-row .meal-desc { flex: 1 1 240px; }
+.meal-row input, .meal-tags input, .meal-small { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface2); color: var(--text); font: inherit; min-width: 0; }
+.meal-tags { margin: 8px 0; }
+.meal-small { width: 120px; }
+.meal-macros { margin-top: 4px; }
+.meal-staples { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.meal-chip { border: 1px solid var(--border); background: var(--surface2); color: var(--text); border-radius: 999px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; }
+.meal-chip small { color: var(--muted); margin-left: 4px; }
+.meal-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.meal-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.85rem; }
+.meal-item .meal-when { color: var(--muted); font-variant-numeric: tabular-nums; }
+.meal-item .meal-name { flex: 1 1 160px; color: var(--text); }
+.meal-item button { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 0.8rem; }
+.resp-chip { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; background: var(--surface2); color: var(--muted); }
+.resp-chip.good { background: var(--good-soft); color: var(--green); }
+.resp-chip.warn { background: var(--warn-soft); color: var(--yellow); }
+.resp-chip.bad { background: var(--bad-soft); color: var(--red); }
+.meal-foods { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.meal-food { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 0.8rem; min-width: 150px; }
+.meal-food b { display: block; color: var(--text); }
+.meal-food small { color: var(--muted); }
+.meal-table-wrap { overflow: auto; max-height: 360px; }
+.meal-table th { position: sticky; top: 0; background: var(--surface); }
+.meal-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.meal-table th, .meal-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.meal-table th { color: var(--muted); font-weight: 500; }
+.meal-table td.meal-name { white-space: normal; min-width: 140px; }
+.meal-unlogged { margin-top: 10px; font-size: 0.8rem; color: var(--muted); }

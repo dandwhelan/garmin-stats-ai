@@ -24,6 +24,7 @@ from garmin_insights.db.sqlite_repo import (
 from garmin_insights.db.memory import MemoryStore
 from garmin_insights.insights.glucose import SUMMARY_KEYS as GLUCOSE_SUMMARY_KEYS
 from garmin_insights.insights.glucose import daily_metrics as glucose_daily_metrics
+from garmin_insights.insights.meals import daily_meal_metrics
 from garmin_insights.stats_utils import metabolic_age_years, to_kg
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,12 @@ class CacheBuilder:
             logger.debug("Glucose metrics failed for %s..%s: %s", start, end, e)
             glucose_by_day = {}
 
+        try:
+            meals_by_day = daily_meal_metrics(repo.db_path, start, end)
+        except Exception as e:
+            logger.debug("Meal metrics failed for %s..%s: %s", start, end, e)
+            meals_by_day = {}
+
         lj = repo.query_lifestyle_journal(start, end)
         lj_by_day: dict[str, list[pd.Series]] = {}
         if not lj.empty and "date" in lj.columns:
@@ -171,6 +178,7 @@ class CacheBuilder:
             "bc": bc_by_day,
             "scale": scale_by_day,
             "glucose": glucose_by_day,
+            "meals": meals_by_day,
             "lj": lj_by_day,
         }
 
@@ -282,6 +290,9 @@ class CacheBuilder:
         for key, val in (data.get("glucose", {}).get(date) or {}).items():
             if key in GLUCOSE_SUMMARY_KEYS:
                 summary[key] = val
+
+        # -- Meal log (count, carbs, first/last meal time) --
+        summary.update(data.get("meals", {}).get(date) or {})
 
         # -- LifestyleJournal --
         lifestyle: dict[str, Any] = {}
