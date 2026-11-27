@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from garmin_insights.config import Settings
+from garmin_insights.insights.glucose import SCHEMA_SQL as GLUCOSE_SCHEMA_SQL
+from garmin_insights.insights.meals import SCHEMA_SQL as MEALS_SCHEMA_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +121,7 @@ CREATE TABLE IF NOT EXISTS scale_readings (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_scale_readings_date ON scale_readings (date);
-"""
+""" + GLUCOSE_SCHEMA_SQL + MEALS_SCHEMA_SQL
 
 class MemoryStore:
     """SQLite-backed context and memory persistence."""

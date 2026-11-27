@@ -140,6 +140,13 @@ trends and correlations, and recall/save context from previous sessions.
   caveats, framing it as the user's own n-of-1 evidence — the strongest form of "your own \
   logs confirm it", but still an association in personal data, not clinical proof. Suggest \
   concluding (conclude=true) only once BOTH arms have enough days.
+- **Glucose (CGM).** When daily summaries carry glucose_* fields the user is wearing a \
+  FreeStyle Libre sensor; get_glucose_data gives the per-day metrics and an intraday curve. \
+  Report glucose in mmol/L against the user's own data and the non-diabetic tight range \
+  (3.9-7.8), never as a diabetes or prediabetes finding. A single meal's spike varies a lot \
+  between days, so only call a food a pattern once it has been eaten several times. \
+  get_meal_responses links logged meals to their rise, area and later dip; a large dip \
+  2-4 h after eating is the likeliest glucose explanation for a reported slump.
 
 {medical_knowledge}
 """

@@ -855,6 +855,14 @@ def fetch_write_bulk(start_date_str, end_date_str):
         except Exception as env_err:
             logging.warning(f"environment_daily fetch failed (non-fatal): {env_err}")
 
+    # CGM readings from Juggluco / xDrip+ / Nightscout. No-op when
+    # NIGHTSCOUT_URL is not set; failures (phone away from home) are non-fatal.
+    try:
+        from garmin_grafana.glucose_fetch import fetch_from_env as glucose_fetch_from_env
+        glucose_fetch_from_env()
+    except Exception as glucose_err:
+        logging.warning(f"glucose fetch failed (non-fatal): {glucose_err}")
+
     # No-op when HA_URL / HA_TOKEN / HA_ENTITIES are not set; failures are non-fatal.
     try:
         from garmin_grafana.ha_fetch import fetch_from_env as ha_fetch_from_env

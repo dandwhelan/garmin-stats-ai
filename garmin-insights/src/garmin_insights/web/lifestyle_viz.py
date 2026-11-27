@@ -16,6 +16,7 @@ import logging
 import sqlite3
 import time
 from collections import Counter, OrderedDict, defaultdict
+import threading
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -103,6 +104,10 @@ class LifestyleService:
         # so the least recently used entry is the one evicted at the ceiling.
         self._load_cache: OrderedDict[tuple[str, str, str], tuple[float, pd.DataFrame]] = \
             OrderedDict()
+        # /api/lifestyle runs ~15 analytics concurrently on executor threads,
+        # all sharing this cache; unguarded, the expiry sweep could iterate
+        # while another thread inserted ("OrderedDict mutated during iteration").
+        self._load_lock = threading.Lock()
 
     def _conn(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path, timeout=10)
@@ -113,21 +118,24 @@ class LifestyleService:
         (set_index, column assignment) never corrupt the shared cache entry."""
         key = (kind, start, end)
         now = time.monotonic()
-        # Sweep every expired entry, not just this key's: a range the user
-        # visited once and never returned to would otherwise hold its frame
-        # for the life of the process.
-        for stale in [k for k, (ts, _) in self._load_cache.items()
-                      if now - ts >= _LOAD_CACHE_TTL_SECONDS]:
-            self._load_cache.pop(stale, None)
-        hit = self._load_cache.get(key)
-        if hit is not None:
-            self._load_cache.move_to_end(key)
-            return hit[1].copy()
+        with self._load_lock:
+            # Sweep every expired entry, not just this key's: a range the user
+            # visited once and never returned to would otherwise hold its frame
+            # for the life of the process.
+            for stale in [k for k, (ts, _) in self._load_cache.items()
+                          if now - ts >= _LOAD_CACHE_TTL_SECONDS]:
+                self._load_cache.pop(stale, None)
+            hit = self._load_cache.get(key)
+            if hit is not None:
+                self._load_cache.move_to_end(key)
+                return hit[1].copy()
+        # Read outside the lock so a slow query doesn't serialise every analytic.
         df = self._read_summaries(start, end) if kind == "summaries" \
             else self._read_journal(start, end)
-        self._load_cache[key] = (now, df)
-        while len(self._load_cache) > _LOAD_CACHE_MAX_ENTRIES:
-            self._load_cache.popitem(last=False)
+        with self._load_lock:
+            self._load_cache[key] = (now, df)
+            while len(self._load_cache) > _LOAD_CACHE_MAX_ENTRIES:
+                self._load_cache.popitem(last=False)
         return df.copy()
 
     # ------------------------------------------------------------------

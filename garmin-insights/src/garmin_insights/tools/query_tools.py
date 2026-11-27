@@ -527,6 +527,68 @@ class QueryToolHandler:
             return json.dumps({"message": "No scale readings found in this range"})
         return json.dumps(_clean_records(readings))
 
+    def get_glucose_data(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        intraday_date: str | None = None,
+    ) -> str:
+        """CGM (FreeStyle Libre) glucose: per-day metrics + optional intraday curve.
+
+        Daily metrics exclude the first 24 h of each sensor and overnight
+        compression lows (both artefacts, not physiology). ``intraday_date``
+        adds that local day's curve at 15-minute resolution.
+        """
+        from garmin_insights.insights import glucose
+
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
+        try:
+            result = glucose.summary(self._repo.db_path, start_date, end_date, include_series=False)
+        except Exception as e:
+            logger.error("glucose summary failed: %s", e)
+            return json.dumps({"error": f"glucose summary failed: {e}"})
+        if not result.get("available"):
+            return json.dumps({
+                "available": False,
+                "message": "No CGM glucose readings in this range (no sensor worn, "
+                           "or NIGHTSCOUT_URL / LibreView import not set up).",
+            })
+        if intraday_date:
+            df = glucose.load_flagged(self._repo.db_path, intraday_date, intraday_date)
+            if not df.empty:
+                series = glucose.intraday_series(df)
+                # 15-min digest keeps a whole day around ~100 points.
+                digest = {}
+                for p in series:
+                    hhmm = p["t"][11:16]
+                    if hhmm[3:] in ("00", "15", "30", "45") or p.get("f"):
+                        digest[hhmm] = p["v"] if not p.get("f") else f"{p['v']} ({p['f']})"
+                result["intraday"] = {"date": intraday_date, "mmol_by_time": digest}
+        return json.dumps(_round_floats(result), default=str)
+
+    def get_meal_responses(self, start_date: str | None = None, end_date: str | None = None) -> str:
+        """Logged meals with their CGM glucose responses + per-food medians."""
+        from garmin_insights.insights import meals
+
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
+        try:
+            result = meals.analyse(self._repo.db_path, start_date, end_date)
+        except Exception as e:
+            logger.error("meal analysis failed: %s", e)
+            return json.dumps({"error": f"meal analysis failed: {e}"})
+        if not result["meals"]:
+            return json.dumps({"message": "No meals logged in this range."})
+        for m in result["meals"]:
+            for k in ("id", "date", "source", "created_at"):
+                m.pop(k, None)
+        return json.dumps(_round_floats(result), default=str)
+
     def get_training_readiness(self, start_date: str, end_date: str) -> str:
         df = self._repo.query_training_readiness(start_date, end_date)
         if df.empty:
@@ -1905,6 +1967,56 @@ def get_all_tools_anthropic(handler: QueryToolHandler) -> list[dict]:
                     },
                 },
                 "required": ["name"],
+            },
+        },
+        {
+            "name": "get_glucose_data",
+            "description": (
+                "Continuous glucose monitor (FreeStyle Libre CGM) data, in mmol/L. "
+                "Per local day: mean, SD, CV%, time in the non-diabetic tight range "
+                "3.9-7.8 (glucose_tir_pct), % above/below it, min/max, overnight "
+                "mean (00-06h) and a pre-dawn fasting proxy (04-06h), plus sensor "
+                "coverage. The first 24 h of each sensor and overnight COMPRESSION "
+                "LOWS (lying on the sensor arm) are excluded as artefacts. Pass "
+                "intraday_date to get that day's curve at 15-min resolution, e.g. "
+                "to look at the rise after a meal noted in the journal. The sensor "
+                "reads interstitial fluid ~5-15 min behind blood with roughly ±10% "
+                "error (worse when low): describe glucose as a personal trend vs "
+                "the user's own data, never as a diabetes / prediabetes finding. "
+                "Defaults to the last 14 days. Returns available:false when no "
+                "sensor data exists."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date YYYY-MM-DD. Defaults to 14 days before end_date."},
+                    "end_date": {**_DATE_PROP, "description": "End date YYYY-MM-DD. Defaults to today."},
+                    "intraday_date": {**_DATE_PROP, "description": "Optional local day (YYYY-MM-DD) to include the 15-min glucose curve for."},
+                },
+            },
+        },
+        {
+            "name": "get_meal_responses",
+            "description": (
+                "Meals the user logged (local time, description, macros, food-type "
+                "tags) with each meal's CGM glucose response: baseline (30 min "
+                "before), rise_mmol and time_to_peak_min within 2 h, iauc_mmol_h "
+                "(area above baseline 0-2 h), and dip_mmol — how far glucose fell "
+                "BELOW baseline 2-4 h later (post-meal dips predict hunger and "
+                "energy slumps, Wyatt 2021). flags: overlap (another meal within "
+                "2 h), exercise (activity during the rise), partial (sensor gaps) "
+                "— treat flagged responses as confounded. 'foods' gives per-"
+                "description medians; only reliable=true (3+ clean servings) "
+                "supports a food-level conclusion, because the same meal varies a "
+                "lot day to day. 'unlogged_rises' are daytime glucose rises with no "
+                "meal logged (possible missed log). Defaults to the last 14 days."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "start_date": {**_DATE_PROP, "description": "Start date YYYY-MM-DD. Defaults to 14 days before end_date."},
+                    "end_date": {**_DATE_PROP, "description": "End date YYYY-MM-DD. Defaults to today."},
+                },
             },
         },
         {
